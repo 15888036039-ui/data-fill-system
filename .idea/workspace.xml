@@ -4,13 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="be720114-e6ad-4c52-a814-cf7cccffc45e" name="Changes" comment="第一次提交全部代码">
-      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/OPTIMIZATION_AND_ROADMAP.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/README_MAIL_SYSTEM.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/modified_query.sql" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/测试.xlsx" beforeDir="false" />
-    </list>
+    <list default="true" id="be720114-e6ad-4c52-a814-cf7cccffc45e" name="Changes" comment="第一次提交全部代码" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
