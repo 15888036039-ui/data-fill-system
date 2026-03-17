@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据填报系统 - 表单列表</title>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 20px;
+        }
+        .form-card {
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .form-card:hover {
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            transform: translateY(-2px);
+        }
+        .form-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        .form-status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status-active {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-expired {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .form-deadline {
+            color: #666;
+            font-size: 14px;
+            margin: 10px 0;
+        }
+        .form-actions {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            text-decoration: none;
+            display: inline-block;
+            transition: background-color 0.3s;
+        }
+        .btn-primary {
+            background-color: #007bff;
+            color: white;
+        }
+        .btn-primary:hover {
+            background-color: #0056b3;
+        }
+        .btn-success {
+            background-color: #28a745;
+            color: white;
+        }
+        .btn-success:hover {
+            background-color: #1e7e34;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+        .error {
+            color: #dc3545;
+            text-align: center;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📋 数据填报系统</h1>
+            <p>请选择需要填报的表单</p>
+        </div>
+
+        <div id="content">
+            <div class="loading">加载中...</div>
+        </div>
+    </div>
+
+    <script>
+        // 从URL参数获取用户信息
+        const urlParams = new URLSearchParams(window.location.search);
+        const userEmail = urlParams.get('userEmail') || 'user@example.com';
+        const userName = urlParams.get('userName') || '用户';
+
+        // API基础URL，根据实际部署情况修改
+        const API_FILL_BASE = window.location.origin.replace('3000', '8080') + '/api/fill';
+        const API_APPROVAL_BASE = window.location.origin.replace('3000', '8080') + '/api/approval';
+
+        async function loadForms() {
+            try {
+                const response = await fetch(`${API_FILL_BASE}/forms`);
+                if (!response.ok) {
+                    throw new Error('加载表单失败');
+                }
+
+                const forms = await response.json();
+                renderForms(forms);
+            } catch (error) {
+                console.error('加载表单失败:', error);
+                document.getElementById('content').innerHTML = '<div class="error">加载表单失败，请稍后重试</div>';
+            }
+        }
+
+        function renderForms(forms) {
+            const html = forms.map(form => {
+                const status = form.status || 'ACTIVE';
+                const statusClass = status === 'ACTIVE' ? 'status-active' : 'status-expired';
+                const statusText = status === 'ACTIVE' ? '进行中' : '已过期';
+
+                let deadlineText = '';
+                if (form.deadline) {
+                    const deadline = new Date(form.deadline);
+                    deadlineText = `截止时间: ${deadline.toLocaleString()}`;
+                }
+
+                const canFill = status === 'ACTIVE' || hasValidApproval(form.id);
+
+                return `
+                    <div class="form-card" onclick="openForm('${form.id}')">
+                        <div class="form-title">${form.name || form.tableName}</div>
+                        <div class="form-status ${statusClass}">${statusText}</div>
+                        <div class="form-deadline">${deadlineText}</div>
+                        <div class="form-description">${form.description || '暂无描述'}</div>
+                        <div class="form-actions">
+                            ${canFill ?
+                                `<button class="btn btn-primary" onclick="event.stopPropagation(); openForm('${form.id}')">开始填报</button>` :
+                                `<button class="btn btn-success" onclick="event.stopPropagation(); requestApproval('${form.id}', '${form.name || form.tableName}')">申请填报</button>`
+                            }
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            document.getElementById('content').innerHTML = `
+                <div class="form-grid">
+                    ${html}
+                </div>
+            `;
+        }
+
+        function openForm(formId) {
+            // 在新窗口或iframe中打开填报页面
+            const fillUrl = `embed-form-fill.html?formId=${formId}&userEmail=${encodeURIComponent(userEmail)}&userName=${encodeURIComponent(userName)}`;
+            window.open(fillUrl, '_blank');
+        }
+
+        async function requestApproval(formId, formName) {
+            const reason = prompt(`请输入申请填报 ${formName} 的理由:`);
+            if (!reason || reason.trim() === '') {
+                alert('申请理由不能为空');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_APPROVAL_BASE}/request`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        formId: formId,
+                        applicantEmail: userEmail,
+                        applicantName: userName,
+                        reason: reason.trim()
+                    })
+                });
+
+                if (response.ok) {
+                    alert('申请已提交，请等待管理员审批');
+                } else {
+                    throw new Error('申请提交失败');
+                }
+            } catch (error) {
+                console.error('提交申请失败:', error);
+                alert('申请提交失败，请稍后重试');
+            }
+        }
+
+        async function hasValidApproval(formId) {
+            // 这里可以检查用户是否有有效的批准
+            // 简化实现，返回false
+            return false;
+        }
+
+        // 页面加载完成后获取表单列表
+        document.addEventListener('DOMContentLoaded', loadForms);
+    </script>
+</body>
+</html>

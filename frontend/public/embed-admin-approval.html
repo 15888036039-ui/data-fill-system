@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理员审批</title>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        .approval-list {
+            padding: 20px;
+        }
+        .approval-item {
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+        .approval-item:hover {
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .approval-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .approval-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+        .approval-time {
+            color: #666;
+            font-size: 14px;
+        }
+        .approval-content {
+            margin: 15px 0;
+        }
+        .approval-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        .info-item {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #666;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        .info-value {
+            color: #333;
+            margin-top: 5px;
+        }
+        .approval-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            text-decoration: none;
+            display: inline-block;
+            transition: background-color 0.3s;
+        }
+        .btn-success {
+            background-color: #28a745;
+            color: white;
+        }
+        .btn-success:hover {
+            background-color: #1e7e34;
+        }
+        .btn-danger {
+            background-color: #dc3545;
+            color: white;
+        }
+        .btn-danger:hover {
+            background-color: #c82333;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+        .error {
+            color: #dc3545;
+            text-align: center;
+            padding: 20px;
+        }
+        .empty {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 1000;
+        }
+        .modal-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 500px;
+            width: 90%;
+        }
+        .modal-header {
+            margin-bottom: 15px;
+        }
+        .modal-title {
+            margin: 0;
+            font-size: 18px;
+        }
+        .modal-body {
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        .form-control {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛡️ 管理员审批中心</h1>
+            <p>处理逾期填报审批申请</p>
+        </div>
+
+        <div class="approval-list" id="content">
+            <div class="loading">加载中...</div>
+        </div>
+    </div>
+
+    <!-- 审批模态框 -->
+    <div class="modal" id="approvalModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title" id="modalTitle">审批申请</h3>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">审批意见</label>
+                    <textarea class="form-control" id="approvalComment" rows="4" placeholder="请输入审批意见..."></textarea>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-danger" onclick="closeModal()">取消</button>
+                <button class="btn btn-success" id="confirmBtn" onclick="confirmApproval()">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 从URL参数获取管理员信息
+        const urlParams = new URLSearchParams(window.location.search);
+        const adminEmail = urlParams.get('adminEmail') || 'admin@company.com';
+        const adminName = urlParams.get('adminName') || '管理员';
+
+        // API基础URL
+        const API_BASE = window.location.origin.replace('3000', '8080') + '/api/approval';
+
+        let currentApprovalId = null;
+        let currentAction = null;
+
+        async function loadApprovals() {
+            try {
+                const response = await fetch(`${API_BASE}/pending`);
+                if (!response.ok) {
+                    throw new Error('加载审批列表失败');
+                }
+
+                const approvals = await response.json();
+                renderApprovals(approvals);
+            } catch (error) {
+                console.error('加载审批列表失败:', error);
+                document.getElementById('content').innerHTML = '<div class="error">加载审批列表失败，请稍后重试</div>';
+            }
+        }
+
+        function renderApprovals(approvals) {
+            if (approvals.length === 0) {
+                document.getElementById('content').innerHTML = '<div class="empty">暂无待审批申请</div>';
+                return;
+            }
+
+            const html = approvals.map(approval => `
+                <div class="approval-item">
+                    <div class="approval-header">
+                        <div class="approval-title">${approval.applicantName} 的填报申请</div>
+                        <div class="approval-time">申请时间: ${new Date(approval.appliedTime).toLocaleString()}</div>
+                    </div>
+                    <div class="approval-info">
+                        <div class="info-item">
+                            <div class="info-label">申请人</div>
+                            <div class="info-value">${approval.applicantName}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">邮箱</div>
+                            <div class="info-value">${approval.applicantEmail}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">表单ID</div>
+                            <div class="info-value">${approval.formId}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">申请理由</div>
+                            <div class="info-value">${approval.reason}</div>
+                        </div>
+                    </div>
+                    <div class="approval-actions">
+                        <button class="btn btn-success" onclick="showApprovalModal('${approval.id}', 'approve')">批准</button>
+                        <button class="btn btn-danger" onclick="showApprovalModal('${approval.id}', 'reject')">拒绝</button>
+                    </div>
+                </div>
+            `).join('');
+
+            document.getElementById('content').innerHTML = html;
+        }
+
+        function showApprovalModal(approvalId, action) {
+            currentApprovalId = approvalId;
+            currentAction = action;
+
+            const modal = document.getElementById('approvalModal');
+            const modalTitle = document.getElementById('modalTitle');
+            const confirmBtn = document.getElementById('confirmBtn');
+
+            modalTitle.textContent = action === 'approve' ? '批准申请' : '拒绝申请';
+            confirmBtn.textContent = action === 'approve' ? '批准' : '拒绝';
+            confirmBtn.className = action === 'approve' ? 'btn btn-success' : 'btn btn-danger';
+
+            modal.style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('approvalModal').style.display = 'none';
+            document.getElementById('approvalComment').value = '';
+            currentApprovalId = null;
+            currentAction = null;
+        }
+
+        async function confirmApproval() {
+            if (!currentApprovalId || !currentAction) {
+                return;
+            }
+
+            const comment = document.getElementById('approvalComment').value.trim();
+
+            try {
+                const endpoint = currentAction === 'approve' ? 'approve' : 'reject';
+                const response = await fetch(`${API_BASE}/${currentApprovalId}/${endpoint}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        approverEmail: adminEmail,
+                        comment: comment
+                    })
+                });
+
+                if (response.ok) {
+                    alert(`${currentAction === 'approve' ? '批准' : '拒绝'}成功`);
+                    closeModal();
+                    loadApprovals(); // 重新加载列表
+                } else {
+                    throw new Error('操作失败');
+                }
+
+            } catch (error) {
+                console.error('审批操作失败:', error);
+                alert('操作失败，请稍后重试');
+            }
+        }
+
+        // 点击模态框背景关闭
+        document.getElementById('approvalModal').addEventListener('click', function(event) {
+            if (event.target === this) {
+                closeModal();
+            }
+        });
+
+        // 页面加载完成后获取审批列表
+        document.addEventListener('DOMContentLoaded', loadApprovals);
+    </script>
+</body>
+</html>

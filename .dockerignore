@@ -1,0 +1,20 @@
+# 前端
+# 建议忽略 node_modules 以免 Windows 和 Alpine 环境冲突
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+# 后端
+backend/target
+
+# 版本与 IDE
+.git
+.gitignore
+.cursor
+.idea
+*.iml
+.vscode
+
+# 文档与杂项（不影响构建）
+*.md
+!backend/README.md

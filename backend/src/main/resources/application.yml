@@ -1,0 +1,50 @@
+server:
+  port: 8080
+
+spring:
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    # 请根据您的本地 PostgreSQL 配置修改
+    url: jdbc:postgresql://localhost:5432/postgres
+    username: postgres
+    password: admin123456
+  jackson:
+    time-zone: GMT+8
+    date-format: yyyy-MM-dd HH:mm:ss
+
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema-data-fill.sql
+
+  mail:
+    host: smtp.qiye.aliyun.com    # 阿里企业邮箱固定 SMTP 地址
+    port: 465                     # 推荐使用 465 走安全加密端口
+    username: donghao-he@furniwell.com  # 填入您用来往外发信的官方面孔邮箱
+    password: Hellohi0924 # 强烈建议在阿里邮箱后台生成独立客户端密码
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true          # 465 端口需要开启纯 SSL 模式
+          starttls:
+            enable: false         # 开启 ssl 后关闭 starttls
+
+
+data-fill:
+  scheduler:
+    enabled: true
+    cron: 0 * * * * ?           # 每天 9 点执行
+  mail:
+    subject-prefix: "[数据填报系统] "
+    admin-email: 15888036039@163.com   # TODO: 修改为实际管理员邮箱
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl # 打印 SQL 方便调试
+    map-underscore-to-camel-case: true
