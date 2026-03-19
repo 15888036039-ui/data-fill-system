@@ -6,7 +6,15 @@ const router = createRouter({
     {
       path: '/',
       name: 'home',
-      redirect: '/forms'
+      redirect: (to) => {
+        // 管理员默认进入模板管理，普通用户默认进入填报工作台
+        const userParam = to.query.user || ''
+        // finereport_manage 可能是明文或加密形式
+        if (userParam === 'finereport_manage' || userParam.includes('finereport_manage')) {
+          return { path: '/forms', query: to.query }
+        }
+        return { path: '/tasks', query: to.query }
+      }
     },
     {
       path: '/tasks',
@@ -39,6 +47,19 @@ const router = createRouter({
       component: () => import('../views/SystemSettings.vue')
     }
   ]
+})
+
+router.beforeEach((to, from, next) => {
+  // Preserve the 'user' query parameter across navigations
+  if (from.query.user && !to.query.user) {
+    next({
+      name: to.name,
+      params: to.params,
+      query: { ...to.query, user: from.query.user }
+    })
+  } else {
+    next()
+  }
 })
 
 export default router

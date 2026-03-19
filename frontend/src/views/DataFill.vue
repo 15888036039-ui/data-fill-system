@@ -10,12 +10,24 @@
 
     <div v-else-if="formMeta" class="content-wrapper">
       <!-- 状态提示 Banner -->
-      <div v-if="timeLeftMessage" 
+      <div v-if="timeLeftMessage || lockStatus.hasSubmitted" 
            class="deadline-banner" 
-           :class="{ 'warning': isNearDeadline, 'expired': isExpired, 'success': hasSubmitted }">
-        <el-icon v-if="hasSubmitted"><CircleCheck /></el-icon>
+           :class="{ 
+             'warning': isNearDeadline || (lockStatus.hasSubmitted && !lockStatus.isLocked), 
+             'expired': isExpired || lockStatus.isLocked, 
+             'success': lockStatus.hasSubmitted && !lockStatus.isLocked 
+           }">
+        <el-icon v-if="lockStatus.hasSubmitted && !lockStatus.isLocked"><CircleCheck /></el-icon>
+        <el-icon v-else-if="lockStatus.isLocked"><CircleCheck /></el-icon>
         <el-icon v-else><AlarmClock /></el-icon>
-        <span>{{ hasSubmitted ? '您本期已完成填报，感谢配合！' : timeLeftMessage }}</span>
+        
+        <span v-if="lockStatus.hasSubmitted && !lockStatus.isLocked">
+          您本期已完成填报，如需调整请在宽限期内操作。检查倒计时：<b style="color: #e6a23c">{{ graceTimeLeft }}</b>
+        </span>
+        <span v-else-if="lockStatus.isLocked">
+          您本期填报已被锁定（已过 24h 宽限期）{{ isAdmin ? ' —— 您目前处于管理员模式，仍可强制修改' : '，如需修改请联系管理员。' }}
+        </span>
+        <span v-else>{{ timeLeftMessage }}</span>
       </div>
 
       <div class="form-title-section">
@@ -43,27 +55,27 @@
       <div class="workbench">
         <div class="action-bar">
           <div class="left">
-            <el-button type="primary" size="large" @click="handleAddNew" icon="Plus">单行录入</el-button>
+            <el-button type="primary" size="large" @click="handleAddNew" icon="Plus" :disabled="isLocked">单行录入</el-button>
             <el-button size="large" @click="downloadTemplate" icon="Download">下载模板</el-button>
             <el-upload
               :show-file-list="false"
               :http-request="handleUpload"
               accept=".xlsx"
-              :disabled="isUploading"
+              :disabled="isUploading || isLocked"
               class="upload-btn"
             >
-              <el-button icon="Upload" type="warning" size="large" :loading="isUploading">
+              <el-button icon="Upload" type="warning" size="large" :loading="isUploading" :disabled="isLocked">
                 {{ isUploading ? '导入中...' : '上传数据' }}
               </el-button>
             </el-upload>
           </div>
           
-          <div class="right" v-if="isAdmin">
-             <el-radio-group v-model="importMode" size="small" style="margin-right: 15px;">
+          <div class="right">
+             <el-radio-group v-if="isAdmin" v-model="importMode" size="small" style="margin-right: 15px;">
               <el-radio-button label="append">追加</el-radio-button>
               <el-radio-button label="overwrite">覆盖</el-radio-button>
             </el-radio-group>
-            <el-button type="danger" plain icon="Delete" :disabled="selectedIds.length === 0" @click="handleBatchDelete">批量删除</el-button>
+            <el-button type="danger" plain icon="Delete" :disabled="selectedIds.length === 0 || isLocked" @click="handleBatchDelete">批量删除 ({{ selectedIds.length }})</el-button>
           </div>
         </div>
 
@@ -112,7 +124,7 @@
             @selection-change="handleSelectionChange"
             class="custom-table"
           >
-            <el-table-column v-if="isAdmin" type="selection" width="55" align="center" />
+            <el-table-column type="selection" width="55" align="center" />
             <el-table-column type="index" label="序号" width="70" align="center" />
             
             <el-table-column 
@@ -139,10 +151,25 @@
 
             <el-table-column label="操作" width="160" align="center" fixed="right">
               <template #default="scope">
-                <el-button type="primary" size="small" link @click="handleEdit(scope.row)">编辑</el-button>
-                <el-popconfirm title="确定删除这条记录吗？" @confirm="handleDelete(scope.row.id)">
+                <el-button 
+                  type="primary" 
+                  size="small" 
+                  link 
+                  @click="handleEdit(scope.row)" 
+                  :disabled="isLocked || isRowLocked(scope.row)"
+                >编辑</el-button>
+                <el-popconfirm 
+                  title="确定删除这条记录吗？" 
+                  @confirm="handleDelete(scope.row.id)" 
+                  :disabled="isLocked || isRowLocked(scope.row)"
+                >
                   <template #reference>
-                    <el-button type="danger" size="small" link>删除</el-button>
+                    <el-button 
+                      type="danger" 
+                      size="small" 
+                      link 
+                      :disabled="isLocked || isRowLocked(scope.row)"
+                    >删除</el-button>
                   </template>
                 </el-popconfirm>
               </template>
@@ -167,7 +194,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, reactive, inject } from 'vue'
+import { ref, onMounted, onUnmounted, computed, reactive, inject } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { AlarmClock, CircleCheck } from '@element-plus/icons-vue'
@@ -176,19 +203,21 @@ import DynamicForm from '../components/DynamicForm.vue'
 
 const route = useRoute()
 const formId = route.params.id
-const userEmail = ref(localStorage.getItem('df_user_email') || route.query.userEmail || '')
+
+const currentUser = inject('currentUser', ref(''))
+const userEmail = computed(() => currentUser.value)
 
 const loading = ref(true)
 const tableLoading = ref(false)
 const formMeta = ref(null)
 const tableData = ref([])
+const totalCount = ref(0)
 const isFilling = ref(false)
 const editingRowId = ref(null)
 const editingData = ref({})
 
 const currentPage = ref(1)
 const pageSize = ref(10)
-const totalCount = ref(0)
 const importMode = ref('append')
 const isUploading = ref(false)
 
@@ -225,9 +254,48 @@ const isExpired = computed(() => {
   return new Date() > new Date(formMeta.value.deadline)
 })
 
-const hasSubmitted = computed(() => {
-  return tableData.value.length > 0
+const lockStatus = ref({
+  isLocked: false,
+  hasSubmitted: false,
+  graceEndTime: null
 })
+
+const isLocked = computed(() => {
+  return lockStatus.value.isLocked && !isAdmin.value
+})
+
+const graceTimeLeft = ref('')
+let timer = null
+
+const isRowLocked = (row) => {
+  if (isAdmin.value) return false
+  const createTime = row.w_insert_dt || row.create_time
+  if (!createTime) return false
+  const diff = new Date() - new Date(createTime)
+  return diff > (1000 * 60 * 60 * 24) // 24小时锁定
+}
+
+const updateGraceCountdown = () => {
+  if (!lockStatus.value.graceEndTime) return
+  const end = new Date(lockStatus.value.graceEndTime).getTime()
+  const now = new Date().getTime()
+  const diff = end - now
+
+  if (diff <= 0) {
+    graceTimeLeft.value = ''
+    lockStatus.value.isLocked = true // 倒计时结束，自动锁定
+    if (timer) {
+      clearInterval(timer)
+      timer = null
+    }
+    return
+  }
+
+  const hours = Math.floor(diff / (1000 * 60 * 60))
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+  const seconds = Math.floor((diff % (1000 * 60)) / 1000)
+  graceTimeLeft.value = `${hours}时${minutes}分${seconds}秒`
+}
 
 const handleSelectionChange = (val) => {
   selectedIds.value = val.map(item => item.id)
@@ -294,7 +362,7 @@ const loadTableData = async () => {
   }
   
   try {
-    const res = await axios.post(`/api/fill/data/${formId}/list`, params, {
+    const res = await axios.post(`/api/fill/data/${formId}/list?userEmail=${userEmail.value}&isAdmin=${isAdmin.value}`, params, {
       params: {
         page: currentPage.value,
         size: pageSize.value
@@ -302,6 +370,13 @@ const loadTableData = async () => {
     })
     tableData.value = res.data.records || []
     totalCount.value = res.data.total || 0
+    if (res.data.lockStatus) {
+      lockStatus.value = res.data.lockStatus
+      if (lockStatus.value.graceEndTime && !lockStatus.value.isLocked) {
+        if (!timer) timer = setInterval(updateGraceCountdown, 1000)
+        updateGraceCountdown()
+      }
+    }
   } catch (e) {
     ElMessage.error('加载表格数据失败')
   } finally {
@@ -411,6 +486,7 @@ const handleSizeChange = (val) => { pageSize.value = val; handleSearch() }
 const handleCurrentChange = (val) => { currentPage.value = val; loadTableData() }
 
 onMounted(() => { if (formId) loadFormMeta() })
+onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
 
 <style scoped>

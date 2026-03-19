@@ -69,8 +69,12 @@ public class DynamicDataDmlService {
      */
 
     @Transactional
-
     public void insertRowData(String formId, Map<String, Object> rowData) {
+        // 注入提取 email 逻辑
+        String userEmail = rowData.containsKey("load_user") ? rowData.get("load_user").toString() : (rowData.containsKey("creator") ? rowData.get("creator").toString() : null);
+        
+        // 1. 填报锁定校验
+        checkFillLock(formId, userEmail, false); // 插入操作通常由普通用户发起
 
         DataFillForm form = formMapper.selectById(formId);
 
@@ -176,7 +180,7 @@ public class DynamicDataDmlService {
 
             if (key.equalsIgnoreCase("extra_data")) {
 
-                placeholders.add("::jsonb");
+                placeholders.add("?::jsonb");
 
             } else {
 
@@ -210,7 +214,7 @@ public class DynamicDataDmlService {
 
             columns.add("\"extra_data\"");
 
-            placeholders.add("::jsonb");
+            placeholders.add("?::jsonb");
 
             args.add("{}");
 
@@ -247,10 +251,21 @@ public class DynamicDataDmlService {
      */
 
     @Transactional
-
     public void batchInsertRowData(String formId, List<Map<String, Object>> rows) {
-
         if (rows == null || rows.isEmpty()) return;
+
+        String firstUser = null;
+        for (Map<String, Object> row : rows) {
+            Object u = row.get("load_user");
+            if (u == null) u = row.get("creator");
+            if (u != null && !u.toString().isBlank()) {
+                firstUser = u.toString();
+                break;
+            }
+        }
+        
+        // 1. 填报锁定校验
+        checkFillLock(formId, firstUser, false); 
 
         DataFillForm form = formMapper.selectById(formId);
 
@@ -318,7 +333,7 @@ public class DynamicDataDmlService {
 
             if ("\"extra_data\"".equalsIgnoreCase(col)) {
 
-                placeholders.add("::jsonb");
+                placeholders.add("?::jsonb");
 
             } else {
 
@@ -377,47 +392,6 @@ public class DynamicDataDmlService {
         }
 
         jdbcTemplate.batchUpdate(sql, batchArgs);
-
-        // 记录日志：为本次上传者记录填报标记，使工作台能识别出已填报状态
-
-        String firstUser = null;
-
-        for (Map<String, Object> row : rows) {
-
-            Object u = row.get("load_user");
-
-            if (u == null) u = row.get("creator");
-
-            if (u != null && !u.toString().isBlank()) {
-
-                firstUser = u.toString();
-
-                break;
-
-            }
-
-        }
-
-        if (firstUser != null) {
-
-            UserFillLog log = new UserFillLog();
-
-            log.setFormId(formId);
-
-            log.setDataId("BATCH_" + java.util.UUID.randomUUID().toString().substring(0, 8));
-
-            log.setUserEmail(firstUser);
-
-            log.setSubmitTime(now);
-
-            log.setCreateTime(now);
-
-            log.setUpdateTime(now);
-
-            userFillLogMapper.insert(log);
-
-        }
-
     }
 
     /**
@@ -427,6 +401,8 @@ public class DynamicDataDmlService {
      */
 
     public void updateRowData(String formId, String dataId, Map<String, Object> rowData, String operatorEmail, boolean isAdmin) {
+        // 1. 填报锁定校验
+        checkFillLock(formId, operatorEmail, isAdmin);
 
         DataFillForm form = formMapper.selectById(formId);
 
@@ -434,24 +410,26 @@ public class DynamicDataDmlService {
 
         String tableName = form.getTableName();
 
-        // 归属权限校验：非本人且非管理员无法修改
-
+        // 归属权限校验 & 行级宽限期校验
         if (!isAdmin && operatorEmail != null) {
-
-            String checkSql = String.format("SELECT \"load_user\" FROM \"%s\" WHERE \"id\" = ", tableName);
-
+            String checkSql = String.format("SELECT \"load_user\", \"w_insert_dt\" FROM \"%s\" WHERE \"id\" = ?", tableName);
             try {
+                Map<String, Object> record = jdbcTemplate.queryForMap(checkSql, dataId);
+                String owner = (String) record.get("load_user");
+                LocalDateTime insertDt = (LocalDateTime) record.get("w_insert_dt");
 
-                String owner = jdbcTemplate.queryForObject(checkSql, String.class, dataId);
-
+                // 1. 归属校验
                 if (owner != null && !owner.equalsIgnoreCase(operatorEmail)) {
-
                     throw new RuntimeException("权限不足：您只能修改自己填报的数据");
-
                 }
 
+                // 2. 行级宽限期校验：只能修改 24 小时内创建的记录
+                if (insertDt != null && LocalDateTime.now().isAfter(insertDt.plusHours(24))) {
+                    throw new RuntimeException("操作已锁定：该记录已超过 24 小时修改宽限期，请联系管理员处理。");
+                }
+            } catch (RuntimeException e) {
+                throw e;
             } catch (Exception ignored) {}
-
         }
 
         StringJoiner sets = new StringJoiner(", ");
@@ -487,35 +465,29 @@ public class DynamicDataDmlService {
     }
 
     /**
-
+    /**
      * 3. 查询动态物理表的数据（分页 + 条件筛选）（防止 SQL 注入）
-
      */
-
-    public Map<String, Object> getTableDataPage(String formId, int page, int size, Map<String, String> filters) {
-
+    public Map<String, Object> getTableDataPage(String formId, int page, int size, Map<String, String> filters, String userEmail, boolean isAdmin) {
         DataFillForm form = formMapper.selectById(formId);
-
         if (form == null) throw new RuntimeException("表单不存在");
-
         String tableName = form.getTableName();
-
         if (!tableName.matches("^[a-zA-Z0-9_]+$")) {
-
             throw new RuntimeException("非法的物理表名称: " + tableName);
-
         }
 
         StringBuilder whereClause = new StringBuilder(" WHERE (is_deleted IS NULL OR is_deleted = 0) ");
-
         List<Object> args = new ArrayList<>();
 
+        // 核心隔离逻辑：非管理员只能看自己的数据
+        if (!isAdmin && userEmail != null && !userEmail.isBlank()) {
+            whereClause.append(" AND \"load_user\" = ? ");
+            args.add(userEmail);
+        }
+
         if (filters != null) {
-
             for (Map.Entry<String, String> entry : filters.entrySet()) {
-
                 String val = entry.getValue();
-
                 if (val != null && !val.trim().isEmpty()) {
 
                     String col = entry.getKey();
@@ -621,13 +593,40 @@ public class DynamicDataDmlService {
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
-
         result.put("total", total);
-
         result.put("records", records);
 
-        return result;
+        // 注入锁定状态信息
+        if (userEmail != null && !userEmail.isBlank()) {
+            try {
+                UserFillLog lastLog = userFillLogMapper.selectLastByFormAndUser(formId, userEmail);
+                LocalDateTime firstSubmitTime = (lastLog != null) ? lastLog.getSubmitTime() : null;
+                
+                // 兼容逻辑：如果没有 log，查物理表
+                if (firstSubmitTime == null) {
+                    String checkSql = String.format("SELECT MIN(w_insert_dt) FROM \"%s\" WHERE load_user = ? AND (is_deleted IS NULL OR is_deleted = 0)", tableName);
+                    firstSubmitTime = jdbcTemplate.queryForObject(checkSql, LocalDateTime.class, userEmail);
+                }
 
+                if (firstSubmitTime != null) {
+                    LocalDateTime now = LocalDateTime.now();
+                    LocalDateTime graceEndTime = firstSubmitTime.plusHours(24);
+                    boolean isLocked = now.isAfter(graceEndTime);
+                    
+                    Map<String, Object> lockStatus = new java.util.HashMap<>();
+                    lockStatus.put("isLocked", !isAdmin && isLocked);
+                    lockStatus.put("graceEndTime", graceEndTime.toString());
+                    lockStatus.put("hasSubmitted", true);
+                    result.put("lockStatus", lockStatus);
+                } else {
+                    result.put("lockStatus", Map.of("isLocked", false, "hasSubmitted", false));
+                }
+            } catch (Exception e) {
+                result.put("lockStatus", Map.of("isLocked", false, "hasSubmitted", false));
+            }
+        }
+
+        return result;
     }
 
     /**
@@ -749,10 +748,11 @@ public class DynamicDataDmlService {
      */
 
     @Transactional
-
     public void batchDeleteRowData(String formId, List<String> dataIds, String operatorEmail, boolean isAdmin) {
-
         if (dataIds == null || dataIds.isEmpty()) return;
+
+        // 1. 填报锁定校验
+        checkFillLock(formId, operatorEmail, isAdmin);
 
         DataFillForm form = formMapper.selectById(formId);
 
@@ -760,32 +760,28 @@ public class DynamicDataDmlService {
 
         String tableName = form.getTableName();
 
-        // 权限校验：非管理员只能删除自己的数据
-
+        // 权限校验 & 行级宽限期校验：非管理员只能删除自己 24h 内的数据
         if (!isAdmin && operatorEmail != null) {
-
             for (String dataId : dataIds) {
-
-                String checkSql = String.format("SELECT \"load_user\" FROM \"%s\" WHERE \"id\" = ", tableName);
-
+                String checkSql = String.format("SELECT \"load_user\", \"w_insert_dt\" FROM \"%s\" WHERE \"id\" = ?", tableName);
                 try {
-
-                    String owner = jdbcTemplate.queryForObject(checkSql, String.class, dataId);
+                    Map<String, Object> record = jdbcTemplate.queryForMap(checkSql, dataId);
+                    String owner = (String) record.get("load_user");
+                    LocalDateTime insertDt = (LocalDateTime) record.get("w_insert_dt");
 
                     if (owner != null && !owner.equalsIgnoreCase(operatorEmail)) {
-
                         throw new RuntimeException("权限不足：您包含非本人填报的数据，无法批量删除");
-
                     }
 
+                    if (insertDt != null && LocalDateTime.now().isAfter(insertDt.plusHours(24))) {
+                        throw new RuntimeException("操作已锁定：包含已过 24 小时宽限期的数据，无法删除。");
+                    }
+                } catch (RuntimeException e) {
+                    throw e;
                 } catch (Exception e) {
-
-                    if (e.getMessage().contains("权限不足")) throw e;
-
+                    // 记录不存在或查询失败，跳过或记录日志
                 }
-
             }
-
         }
 
         if (!tableName.matches("^[a-zA-Z0-9_]+$")) {
@@ -831,10 +827,52 @@ public class DynamicDataDmlService {
      */
 
     public void deleteRowData(String formId, String dataId, String operatorEmail, boolean isAdmin) {
-
         batchDeleteRowData(formId, List.of(dataId), operatorEmail, isAdmin);
-
     }
 
+    /**
+     * 校验当前用户是否已被锁定（本期已填报）
+     */
+    private void checkFillLock(String formId, String userEmail, boolean isAdmin) {
+        if (isAdmin || userEmail == null || userEmail.isBlank()) return;
+
+        DataFillForm form = formMapper.selectById(formId);
+        if (form == null) return;
+
+        // 查询该用户最近一次填报记录
+        UserFillLog lastLog = userFillLogMapper.selectLastByFormAndUser(formId, userEmail);
+        LocalDateTime lastSubmitTime = (lastLog != null) ? lastLog.getSubmitTime() : null;
+
+        // 如果日志不存在，尝试从物理表直接探测数据（解决存量数据同步问题）
+        if (lastSubmitTime == null && form.getTableName() != null) {
+            try {
+                String checkSql = String.format("SELECT MAX(w_insert_dt) FROM \"%s\" WHERE load_user = ? AND (is_deleted IS NULL OR is_deleted = 0)", form.getTableName());
+                lastSubmitTime = jdbcTemplate.queryForObject(checkSql, LocalDateTime.class, userEmail);
+            } catch (Exception ignored) {}
+        }
+
+        if (lastSubmitTime == null) return;
+
+        LocalDateTime now = LocalDateTime.now();
+        Integer cycleDays = form.getCycleDays();
+        
+        // 核心逻辑升级：增加 24 小时宽限期
+        // 如果现在还在“首次填报时间 + 24小时”之内，则不锁定（允许检查修改）
+        LocalDateTime graceEndTime = lastSubmitTime.plusHours(24);
+        if (now.isBefore(graceEndTime)) {
+            return; // 宽限期内，允许操作
+        }
+
+        boolean isLocked;
+        if (cycleDays != null && cycleDays > 0) {
+            isLocked = now.isBefore(lastSubmitTime.plusDays(cycleDays));
+        } else {
+            isLocked = true;
+        }
+
+        if (isLocked) {
+            throw new RuntimeException("您本期填报已过 24 小时宽限期，已被锁定。如需修改请联系管理员。");
+        }
+    }
 }
 

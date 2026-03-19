@@ -5,27 +5,10 @@
         <h1 class="page-title">数据填报工作台</h1>
         <p class="page-subtitle">查看并完成您的数据采集与周期性报送任务</p>
       </div>
-      <div class="user-identity card-style">
-        <el-input 
-          v-model="userEmail" 
-          placeholder="输入您的邮箱以同步任务" 
-          @change="loadTasks"
-          class="email-input"
-        >
-          <template #prefix>
-            <el-icon><User /></el-icon>
-          </template>
-          <template #append>
-            <el-button @click="loadTasks">同步</el-button>
-          </template>
-        </el-input>
-      </div>
     </div>
 
-    <div v-if="!userEmail" class="empty-state-onboarding">
-      <el-empty description="请输入您的邮箱地址，我们将为您同步相关的填报任务">
-        <el-button type="primary" size="large" @click="focusEmailInput">立即同步数据</el-button>
-      </el-empty>
+    <div v-if="!userEmail" class="empty-state">
+      <el-empty description="请在上方的身份确认框中输入您的邮箱以同步填报任务" />
     </div>
 
     <div v-else class="task-content">
@@ -71,14 +54,15 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, watch } from 'vue'
+import { ref, reactive, onMounted, watch, inject, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 import TaskList from '../components/TaskList.vue'
 
 const route = useRoute()
-const userEmail = ref(localStorage.getItem('df_user_email') || route.query.userEmail || '')
+const currentUser = inject('currentUser', ref(''))
+const userEmail = computed(() => currentUser.value)
 const activeTab = ref('pending')
 
 const taskData = reactive({
@@ -87,17 +71,10 @@ const taskData = reactive({
   expired: []
 })
 
-const focusEmailInput = () => {
-  document.querySelector('.email-input input')?.focus()
-}
-
 const loadTasks = async () => {
-  if (!userEmail.value || !userEmail.value.includes('@')) {
-    if (userEmail.value) ElMessage.warning('请输入有效的邮箱')
+  if (!userEmail.value) {
     return
   }
-  
-  localStorage.setItem('df_user_email', userEmail.value)
   
   try {
     const res = await axios.get(`/api/fill/user/tasks?userEmail=${encodeURIComponent(userEmail.value)}`)
@@ -115,9 +92,9 @@ onMounted(() => {
   }
 })
 
-watch(() => route.query.userEmail, (newEmail) => {
-  if (newEmail && newEmail !== userEmail.value) {
-    userEmail.value = newEmail
+// Watch for user changes (e.g. from App.vue login)
+watch(userEmail, (newEmail) => {
+  if (newEmail) {
     loadTasks()
   }
 })

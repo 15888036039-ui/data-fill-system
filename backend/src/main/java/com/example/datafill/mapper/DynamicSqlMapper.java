@@ -1,8 +1,6 @@
 package com.example.datafill.mapper;
 
 import org.apache.ibatis.annotations.*;
-import java.util.List;
-import java.util.LinkedHashMap;
 
 @Mapper
 public interface DynamicSqlMapper {

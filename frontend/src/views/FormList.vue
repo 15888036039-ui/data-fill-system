@@ -7,7 +7,7 @@
       </div>
       <div class="header-actions">
         <el-button type="success" size="large" icon="Collection" @click="$router.push('/tasks')">进入填报集</el-button>
-        <el-button type="primary" size="large" icon="Plus" @click="$router.push('/designer')">新建表单模板</el-button>
+        <el-button v-if="isAdmin" type="primary" size="large" icon="Plus" @click="$router.push('/designer')">新建表单模板</el-button>
       </div>
     </div>
 
@@ -55,10 +55,11 @@
               <el-tooltip content="查看并管理数据" placement="top">
                 <el-button type="info" size="small" plain icon="View" @click="$router.push(`/fill/${scope.row.id}?admin=true`)">数据</el-button>
               </el-tooltip>
-              <el-tooltip content="编辑模板配置" placement="top">
+              <el-tooltip v-if="isAdmin" content="编辑模板配置" placement="top">
                 <el-button type="primary" size="small" plain icon="Edit" @click="$router.push(`/designer/${scope.row.id}`)">设计</el-button>
               </el-tooltip>
               <el-popconfirm 
+                v-if="isAdmin"
                 title="警告: 此操作将永久物理删除该表及其所有数据，无法恢复。确定删除吗？" 
                 confirm-button-text="确定删除"
                 cancel-button-text="取消"
@@ -78,9 +79,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, inject, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
+
+const currentUser = inject('currentUser', ref(''))
+const isAdmin = inject('isAdmin', ref(false))
 
 const forms = ref([])
 const loading = ref(false)
@@ -88,7 +92,10 @@ const loading = ref(false)
 const loadForms = async () => {
   loading.value = true
   try {
-    const res = await axios.get('/api/fill/forms')
+    const params = {}
+    if (currentUser.value) params.userEmail = currentUser.value
+    if (isAdmin.value) params.isAdmin = true
+    const res = await axios.get('/api/fill/forms', { params })
     forms.value = res.data
   } catch (e) {
     ElMessage.error('获取表单模板失败')

@@ -4,7 +4,32 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="be720114-e6ad-4c52-a814-cf7cccffc45e" name="Changes" comment="第一次提交全部代码" />
+    <list default="true" id="be720114-e6ad-4c52-a814-cf7cccffc45e" name="Changes" comment="第一次提交全部代码">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Dockerfile" beforeDir="false" afterPath="$PROJECT_DIR$/Dockerfile" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/pom.xml" beforeDir="false" afterPath="$PROJECT_DIR$/backend/pom.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/controller/DataFillController.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/controller/DataFillController.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/mapper/DynamicSqlMapper.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/mapper/DynamicSqlMapper.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/ApprovalService.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/ApprovalService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/DynamicDataDmlService.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/DynamicDataDmlService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/ExcelService.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/ExcelService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/DataFillController.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/DataFillController.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ApprovalService.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ApprovalService.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService$1.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService$1.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService$2.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService$2.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService$3.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService$3.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService$1ColumnStat.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService$1ColumnStat.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService$3.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService$3.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/App.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/App.vue" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/router/index.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/router/index.js" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/views/DataFill.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/views/DataFill.vue" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/views/FormDesigner.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/views/FormDesigner.vue" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/views/FormList.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/views/FormList.vue" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/views/SystemSettings.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/views/SystemSettings.vue" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/views/UserTasks.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/views/UserTasks.vue" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -19,15 +44,15 @@
     </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
-  "lastFilter": {
-    "state": "OPEN",
-    "assignee": "15888036039-ui"
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;15888036039-ui&quot;
   }
-}]]></component>
+}</component>
   <component name="GithubPullRequestsUISettings"><![CDATA[{
   "selectedUrlAndAccountId": {
-    "url": "https://github.com/15888036039-ui/data-fill-system",
+    "url": "https://github.com/15888036039-ui/data-fill-system.git",
     "accountId": "a6a64d70-8be9-41d3-b56b-64c20838fedc"
   }
 }]]></component>
@@ -45,6 +70,7 @@
     "ModuleVcsDetector.initialDetectionPerformed": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
     "git-widget-placeholder": "main",
     "kotlin-language-version-configured": "true",
     "last_opened_file_path": "D:/data-fill-system",
@@ -52,7 +78,7 @@
     "project.structure.last.edited": "Modules",
     "project.structure.proportion": "0.15",
     "project.structure.side.proportion": "0.2",
-    "settings.editor.selected.configurable": "project.propVCSSupport.DirectoryMappings"
+    "settings.editor.selected.configurable": "preferences.pluginManager"
   }
 }]]></component>
   <component name="RunManager" selected="Application.DataFillApplication">
@@ -75,6 +101,12 @@
       <method v="2">
         <option name="Make" enabled="true" />
       </method>
+    </configuration>
+    <configuration default="true" type="docker-deploy" factoryName="dockerfile" temporary="true">
+      <deployment type="dockerfile">
+        <settings />
+      </deployment>
+      <method v="2" />
     </configuration>
     <recent_temporary>
       <list>

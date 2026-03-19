@@ -27,10 +27,30 @@ public class DataFillController {
     private final ExcelService excelService;
     private final DataFillFormMapper formMapper;
 
-    // 获取所有创建过的表单模板列表
+    // 获取表单模板列表（支持按用户权限过滤）
     @GetMapping("/forms")
-    public List<DataFillForm> getForms() {
-        return formMapper.selectList(null);
+    public List<DataFillForm> getForms(
+            @RequestParam(required = false) String userEmail,
+            @RequestParam(defaultValue = "false") boolean isAdmin) {
+        List<DataFillForm> allForms = formMapper.selectList(null);
+        if (isAdmin || userEmail == null || userEmail.isBlank()) {
+            return allForms;
+        }
+        // 非管理员：只返回 fillUserEmails 为空（对所有人开放）或包含当前用户的表单
+        return allForms.stream().filter(form -> {
+            String fillEmails = form.getFillUserEmails();
+            if (fillEmails == null || fillEmails.isBlank()) {
+                return true; // 未配置权限 = 对所有人开放
+            }
+            try {
+                List<String> allowed = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readValue(fillEmails, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+                if (allowed == null || allowed.isEmpty()) return true;
+                return allowed.stream().anyMatch(e -> e != null && e.equalsIgnoreCase(userEmail));
+            } catch (Exception e) {
+                return true; // 解析异常时放行
+            }
+        }).toList();
     }
 
     // 根据ID获取某个表单的配置
@@ -73,8 +93,10 @@ public class DataFillController {
     public Map<String, Object> listData(
             @PathVariable String formId,
             @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "10") int size) {
-        return dataDmlService.getTableDataPage(formId, page, size, null);
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String userEmail,
+            @RequestParam(defaultValue = "false") boolean isAdmin) {
+        return dataDmlService.getTableDataPage(formId, page, size, null, userEmail, isAdmin);
     }
 
     /**
@@ -103,8 +125,10 @@ public class DataFillController {
             @PathVariable String formId,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String userEmail,
+            @RequestParam(defaultValue = "false") boolean isAdmin,
             @RequestBody(required = false) Map<String, String> filters) {
-        return dataDmlService.getTableDataPage(formId, page, size, filters);
+        return dataDmlService.getTableDataPage(formId, page, size, filters, userEmail, isAdmin);
     }
 
     // [用户端核心]: 批量软删除动态物理表里的数据
@@ -181,7 +205,8 @@ public class DataFillController {
     public List<com.example.datafill.dto.FieldDef> parseExcelHeaders(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "mode", defaultValue = "density") String mode,
-            @RequestParam(value = "smartType", defaultValue = "true") boolean smartType) throws IOException {
-        return excelService.parseExcelHeaders(file, mode, smartType, true);
+            @RequestParam(value = "smartType", defaultValue = "true") boolean smartType,
+            @RequestParam(value = "kvPairEnabled", defaultValue = "true") boolean kvPairEnabled) throws IOException {
+        return excelService.parseExcelHeaders(file, mode, smartType, kvPairEnabled);
     }
 }

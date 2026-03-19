@@ -14,6 +14,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.RequiredArgsConstructor;
 
+import lombok.extern.slf4j.Slf4j;
+
 import org.apache.poi.ss.usermodel.Cell;
 
 import org.apache.poi.ss.usermodel.Row;
@@ -23,11 +25,9 @@ import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 
@@ -49,8 +49,8 @@ import net.sourceforge.pinyin4j.format.HanyuPinyinOutputFormat;
 
 import net.sourceforge.pinyin4j.format.HanyuPinyinToneType;
 
+@Slf4j
 @Service
-
 @RequiredArgsConstructor
 
 public class ExcelService {
@@ -282,59 +282,38 @@ public class ExcelService {
 
                 boolean allEmpty = true;
 
-                // 专家增强：通用启发式键值对提取 (Heuristic KV Extraction)
-
-                // 1. 按序号对列进行分
-                Map<Integer, List<Integer>> groupedBySuffix = new java.util.HashMap<>();
-
-                java.util.regex.Pattern suffixPattern = java.util.regex.Pattern.compile("(.*)(\\d+)$");
+                // 1. 按序号对列进行分组 (支持可选序号，无序号视作 0)
+                Map<String, List<Integer>> groupedBySuffix = new java.util.HashMap<>();
+                java.util.regex.Pattern suffixPattern = java.util.regex.Pattern.compile("(.*?)(\\d*)$");
 
                 for (int c = 0; c < lastColumn; c++) {
-
                     String h = headers[c];
-
                     if (h == null) continue;
-
                     java.util.regex.Matcher sm = suffixPattern.matcher(h.trim());
-
-                    if (sm.find()) {
-
-                        int suffix = Integer.parseInt(sm.group(2));
-
+                    if (sm.matches()) {
+                        String base = sm.group(1).replaceAll("[_\\s]+$", "");
+                        String suffix = sm.group(2);
+                        if (suffix.isEmpty()) suffix = "0";
                         groupedBySuffix.computeIfAbsent(suffix, k -> new ArrayList<>()).add(c);
-
                     }
-
                 }
 
                 // 2. 在每个分组内识别有序 Key-Value
                 Set<Integer> consumedCols = new HashSet<>();
 
-                Map<String, String> kwPairs = configService.getKwPairs();
+                // 内置默认值始终加载，用户自定义配对覆盖/追加
+                Map<String, String> kwPairs = new HashMap<>();
+                kwPairs.put("description", "amount");
+                kwPairs.put("desc", "amt");
+                kwPairs.put("name", "price");
+                kwPairs.put("type", "val");
+                kwPairs.put("key", "value");
+                kwPairs.put("item", "total");
+                kwPairs.put("label", "val");
+                kwPairs.put("msg", "count");
+                kwPairs.putAll(configService.getKwPairs());
 
-                if (kwPairs.isEmpty()) {
-
-                    kwPairs = new HashMap<>();
-
-                    kwPairs.put("description", "amount");
-
-                    kwPairs.put("desc", "amt");
-
-                    kwPairs.put("name", "price");
-
-                    kwPairs.put("type", "val");
-
-                    kwPairs.put("key", "value");
-
-                    kwPairs.put("item", "total");
-
-                    kwPairs.put("label", "val");
-
-                    kwPairs.put("msg", "count");
-
-                }
-
-                for (Map.Entry<Integer, List<Integer>> entry : groupedBySuffix.entrySet()) {
+                for (Map.Entry<String, List<Integer>> entry : groupedBySuffix.entrySet()) {
 
                     List<Integer> colIndices = entry.getValue();
 
@@ -358,13 +337,11 @@ public class ExcelService {
                         Integer foundVal = null;
 
                         for (Integer idx : colIndices) {
-
-                            String colName = headers[idx].toLowerCase().replaceAll("\\d+$", "").trim();
-
+                            String colName = headers[idx].toLowerCase().trim()
+                                    .replaceAll("\\d+$", "") // 移除尾部数字
+                                    .replaceAll("[_\\s]+$", ""); // 移除尾部连接符
                             if (colName.endsWith(targetKey)) foundKey = idx;
-
                             else if (colName.endsWith(targetVal)) foundVal = idx;
-
                         }
 
                         if (foundKey != null && foundVal != null) {
@@ -607,54 +584,35 @@ public class ExcelService {
             Set<String> usedColNames = new HashSet<>(java.util.Arrays.asList("id", "create_time", "is_deleted", "extra_data", "w_insert_dt", "w_update_dt", "load_user", "job_instance"));
 
             // 专家增强：精确一对一全量识别并跳过（仅在 kvPairEnabled 开启时生效）
+            // 内置默认值始终加载，用户自定义配对覆盖/追加
             Map<String, String> kwPairs = new HashMap<>();
 
             Map<String, List<Integer>> groupedBySuffix = new HashMap<>();
-
-            java.util.regex.Pattern numPattern = java.util.regex.Pattern.compile("(.*)(\\d+)$");
+            java.util.regex.Pattern numPattern = java.util.regex.Pattern.compile("(.*?)(\\d*)$");
 
             if (kvPairEnabled) {
+                kwPairs.put("description", "amount");
+                kwPairs.put("desc", "amt");
+                kwPairs.put("name", "price");
+                kwPairs.put("type", "val");
+                kwPairs.put("key", "value");
+                kwPairs.put("item", "total");
+                kwPairs.put("label", "val");
+                kwPairs.put("msg", "count");
+                kwPairs.putAll(configService.getKwPairs());
 
-                kwPairs = configService.getKwPairs();
-
-                if (kwPairs.isEmpty()) {
-
-                    kwPairs = new HashMap<>();
-
-                    kwPairs.put("description", "amount");
-
-                    kwPairs.put("desc", "amt");
-
-                    kwPairs.put("name", "price");
-
-                    kwPairs.put("type", "val");
-
-                    kwPairs.put("key", "value");
-
-                    kwPairs.put("item", "total");
-
-                    kwPairs.put("label", "val");
-
-                    kwPairs.put("msg", "count");
-
-                }
+                log.info("[KV-Pair] 启用键值对模式, 有效配对规则: {}", kwPairs);
 
                 for (int i = 0; i < stats.size(); i++) {
-
                     String hHeader = stats.get(i).headerName.trim();
-
-                    java.util.regex.Matcher m = numPattern.matcher(hHeader);
-
-                    if (m.matches()) {
-
-                        String suffix = m.group(2);
-
+                    java.util.regex.Matcher sm = numPattern.matcher(hHeader);
+                    if (sm.matches()) {
+                        String suffix = sm.group(2);
+                        if (suffix.isEmpty()) suffix = "0";
                         groupedBySuffix.computeIfAbsent(suffix, k -> new ArrayList<>()).add(i);
-
                     }
-
                 }
-
+                log.info("[KV-Pair] 按数字后缀分组结果: {} 组", groupedBySuffix.size());
             }
 
             for (int i = 0; i < targetColumns.size(); i++) {
@@ -664,54 +622,39 @@ public class ExcelService {
                 // 只有当该列命中了定义的精确对，且组内确实存在“另一半”时，才视作技术列跳过
 
                 java.util.regex.Matcher m = numPattern.matcher(s.headerName.trim());
-
                 if (m.matches()) {
-
-                    String baseName = m.group(1).toLowerCase().trim();
-
                     String suffix = m.group(2);
-
+                    if (suffix.isEmpty()) suffix = "0";
+                    String baseName = m.group(1).toLowerCase().trim().replaceAll("[_\\s]+$", "");
+                    
                     List<Integer> siblings = groupedBySuffix.get(suffix);
-
                     boolean isVerifiedPair = false;
+                    if (siblings != null) {
+                        for (Map.Entry<String, String> pair : kwPairs.entrySet()) {
+                            String k = pair.getKey().toLowerCase();
+                            String v = pair.getValue().toLowerCase();
 
-                    for (Map.Entry<String, String> pair : kwPairs.entrySet()) {
-
-                        String k = pair.getKey().toLowerCase();
-
-                        String v = pair.getValue().toLowerCase();
-
-                        if (baseName.endsWith(k) || baseName.endsWith(v)) {
-
-                            // 检查伴随基因是否存在
-                            String targetSibling = baseName.endsWith(k) ? v : k;
-
-                            for (int siblingIdx : siblings) {
-
-                                String sName = stats.get(siblingIdx).headerName.toLowerCase().replaceAll("\\d+$", "").trim();
-
-                                if (sName.endsWith(targetSibling)) {
-
-                                    isVerifiedPair = true;
-
-                                    break;
-
+                            if (baseName.endsWith(k) || baseName.endsWith(v)) {
+                                // 检查伴随基因是否存在
+                                String targetSibling = baseName.endsWith(k) ? v : k;
+                                for (int siblingIdx : siblings) {
+                                    String sName = stats.get(siblingIdx).headerName.toLowerCase().trim()
+                                            .replaceAll("\\d+$", "")
+                                            .replaceAll("[_\\s]+$", "");
+                                    if (sName.endsWith(targetSibling)) {
+                                        isVerifiedPair = true;
+                                        break;
+                                    }
                                 }
-
                             }
-
+                            if (isVerifiedPair) break;
                         }
-
-                        if (isVerifiedPair) break;
-
                     }
 
                     if (isVerifiedPair) {
-
                         anyPairFound = true;
-
+                        log.debug("[KV-Pair] 列 '{}' 被识别为键值对成员，将归集到 extra_data JSON", s.headerName);
                         continue;
-
                     }
 
                 }

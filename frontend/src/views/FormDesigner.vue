@@ -104,12 +104,23 @@
             </div>
 
             <el-form-item label="收件人邮箱 (管理员通知)">
-              <el-input
-                v-model="formMeta.recipientEmails"
-                type="textarea"
-                :rows="2"
-                placeholder="逗号分隔，用于接收重要异常通知"
-              />
+              <el-select
+                v-model="recipientList"
+                multiple
+                filterable
+                allow-create
+                default-first-option
+                placeholder="选择通知收件人"
+                style="width: 100%"
+                :loading="userListLoading"
+              >
+                <el-option
+                  v-for="u in allUserEmails"
+                  :key="u"
+                  :label="u"
+                  :value="u"
+                />
+              </el-select>
             </el-form-item>
           </el-form>
         </el-card>
@@ -190,20 +201,31 @@
             <el-icon><User /></el-icon> 权限访问控制
           </div>
           <el-form label-position="top">
-            <el-form-item label="允许查看并填报的用户邮箱列表">
-              <el-input
-                v-model="formMeta.fillUserEmails"
-                type="textarea"
-                :rows="3"
-                placeholder="请输入邮箱，以逗号分隔。留空表示该任务对所有用户开放。"
-              />
+            <el-form-item label="授权用户列表">
+              <el-select
+                v-model="fillUserList"
+                multiple
+                filterable
+                allow-create
+                default-first-option
+                placeholder="选择或搜索用户，留空表示对所有人开放"
+                style="width: 100%"
+                :loading="userListLoading"
+              >
+                <el-option
+                  v-for="u in allUsers"
+                  :key="u"
+                  :label="u"
+                  :value="u"
+                />
+              </el-select>
+              <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">不选择任何用户 = 所有人都可以查看和填报</div>
             </el-form-item>
           </el-form>
         </el-card>
       </div>
     </div>
 
-    <!-- Excel 识别配置对话框 -->
     <el-dialog
       v-model="importDialogVisible"
       title="Excel 结构识别配置"
@@ -211,8 +233,24 @@
       destroy-on-close
       class="custom-dialog"
     >
-      <div class="import-config-body">
-        <!-- 移除冗余勾选，默认开启全量智能识别以简化界面 -->
+      <div class="import-config-body" v-loading="isParsing" element-loading-text="正在智能解析 Excel 结构...">
+        <div class="config-section">
+          <div class="item-label">识别模式</div>
+          <el-radio-group v-model="importConfig.kvPairEnabled" class="mode-cards">
+            <el-radio :label="false" border>
+              <div class="radio-content">
+                <span class="m-title">标准字段模式</span>
+                <span class="m-desc">推荐：将每一列都识别为独立的数据库字段。</span>
+              </div>
+            </el-radio>
+            <el-radio :label="true" border>
+              <div class="radio-content">
+                <span class="m-title">键值对模式 (Key/Value)</span>
+                <span class="m-desc">灵活：自动识别成对的属性并归集到 JSON 容器中。</span>
+              </div>
+            </el-radio>
+          </el-radio-group>
+        </div>
 
         <div class="upload-area">
           <el-upload
@@ -238,7 +276,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, onMounted, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Setting, Notification, Grid, User, Plus, Upload, Delete, Check, Platform, UploadFilled } from '@element-plus/icons-vue'
@@ -271,9 +309,32 @@ const fields = ref([
 const importDialogVisible = ref(false)
 const importConfig = reactive({
   smartType: true,
-  extractOptions: true,
-  inferRequired: true
+  kvPairEnabled: false // 默认改用标准模式
 })
+const isParsing = ref(false)
+
+// 用户列表（权限分配）
+const allUsers = ref([])
+const fillUserList = ref([])
+const userListLoading = ref(false)
+
+const loadUserList = async () => {
+  userListLoading.value = true
+  try {
+    const res = await axios.get('/api/user/list')
+    allUsers.value = res.data || []
+  } catch (e) {
+    allUsers.value = []
+  } finally {
+    userListLoading.value = false
+  }
+}
+
+// 用户名加上 @furniwell.com 后缀生成邮箱列表
+const allUserEmails = computed(() => 
+  allUsers.value.map(u => u.includes('@') ? u : u + '@furniwell.com')
+)
+const recipientList = ref([])
 
 const addField = () => {
   fields.value.push({ name: '', columnName: '', type: 'input', optionsStr: '', required: false, filterable: false })
@@ -291,8 +352,10 @@ const onFileChange = async (uploadFile) => {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('smartType', importConfig.smartType)
+  formData.append('kvPairEnabled', importConfig.kvPairEnabled)
   // 模式统一：前端不再选择模式，由后端执行最全的智能拆分识别
 
+  isParsing.value = true
   try {
     const res = await axios.post('/api/fill/forms/parseExcel', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
@@ -317,14 +380,15 @@ const onFileChange = async (uploadFile) => {
       if (types.select) report += ` 识别 ${types.select} 个下拉列表。`
         
       ElMessage.success(report)
+      if (!formMeta.name) formMeta.name = file.name.replace(/\.[^/.]+$/, "")
+      importDialogVisible.value = false // 成功后关闭
     } else {
       ElMessage.warning('未在 Excel 中识别出有效的业务字段')
     }
-      
-    if (!formMeta.name) formMeta.name = file.name.replace(/\.[^/.]+$/, "")
-    importDialogVisible.value = false // 成功后关闭
   } catch (e) {
     ElMessage.error('解析失败: ' + (e.response?.data?.message || '网络异常'))
+  } finally {
+    isParsing.value = false
   }
 }
 
@@ -345,8 +409,8 @@ const submitFormAndCreateTable = async () => {
   const payload = {
     ...formMeta,
     deadline: formMeta.reminderMode === 'DEADLINE' ? (formMeta.deadline || null) : null,
-    recipientEmails: formMeta.recipientEmails ? JSON.stringify(formMeta.recipientEmails.split(',').map(e => e.trim()).filter(e => e)) : null,
-    fillUserEmails: formMeta.fillUserEmails ? JSON.stringify(formMeta.fillUserEmails.split(',').map(e => e.trim()).filter(e => e)) : null,
+    recipientEmails: recipientList.value.length > 0 ? JSON.stringify(recipientList.value) : null,
+    fillUserEmails: fillUserList.value.length > 0 ? JSON.stringify(fillUserList.value) : null,
     forms: JSON.stringify(formattedFields)
   }
 
@@ -365,10 +429,10 @@ const loadFormForEdit = async () => {
     const res = await axios.get(`/api/fill/forms/${id}`)
     Object.assign(formMeta, res.data)
     if (res.data.recipientEmails) {
-        try { formMeta.recipientEmails = JSON.parse(res.data.recipientEmails).join(',') } catch (e) {}
+        try { recipientList.value = JSON.parse(res.data.recipientEmails) } catch (e) { recipientList.value = [] }
     }
     if (res.data.fillUserEmails) {
-        try { formMeta.fillUserEmails = JSON.parse(res.data.fillUserEmails).join(',') } catch (e) {}
+        try { fillUserList.value = JSON.parse(res.data.fillUserEmails) } catch (e) { fillUserList.value = [] }
     }
     if (res.data.forms) {
         fields.value = JSON.parse(res.data.forms)
@@ -380,8 +444,8 @@ const updateFormMeta = async () => {
   const id = route.params.id
   const payload = {
     ...formMeta,
-    recipientEmails: formMeta.recipientEmails ? JSON.stringify(formMeta.recipientEmails.split(',').map(e => e.trim()).filter(e => e)) : null,
-    fillUserEmails: formMeta.fillUserEmails ? JSON.stringify(formMeta.fillUserEmails.split(',').map(e => e.trim()).filter(e => e)) : null,
+    recipientEmails: recipientList.value.length > 0 ? JSON.stringify(recipientList.value) : null,
+    fillUserEmails: fillUserList.value.length > 0 ? JSON.stringify(fillUserList.value) : null,
   }
   try {
     await axios.put(`/api/fill/forms/${id}`, payload)
@@ -390,7 +454,10 @@ const updateFormMeta = async () => {
   } catch (e) {}
 }
 
-onMounted(() => { if (isEditMode.value) loadFormForEdit() })
+onMounted(() => {
+  loadUserList()
+  if (isEditMode.value) loadFormForEdit()
+})
 </script>
 
 <style scoped>

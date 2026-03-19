@@ -92,6 +92,31 @@
                 <el-input v-model="namingConvention.replace_regex" placeholder="正则表达式" />
                 <div class="form-tip">匹配这些正则的字符将被完全剔除，默认涵盖空格及各类括号</div>
               </el-form-item>
+
+              <el-divider content-position="left">高级补偿规则</el-divider>
+
+              <el-form-item label="数字开头补偿前缀">
+                <el-input v-model="namingConvention.numeric_prefix" placeholder="如：col_" />
+                <div class="form-tip">如果转换后的列名以数字开头，将自动补齐此前缀</div>
+              </el-form-item>
+
+              <el-form-item label="拼音单词分隔符">
+                <el-input v-model="namingConvention.pinyin_separator" placeholder="如：_" />
+                <div class="form-tip">全拼模式下每个拼音字母之间的间隔符号</div>
+              </el-form-item>
+
+              <el-form-item label="括号英文提取长度">
+                <el-input-number v-model="namingConvention.bracket_eng_min_len" :min="1" :max="10" />
+                <div class="form-tip">括号内英文字段至少达到此长度才会被优先提取</div>
+              </el-form-item>
+
+              <el-form-item label="字典匹配模式">
+                <el-select v-model="namingConvention.dict_match_mode" style="width: 100%;">
+                  <el-option label="包含匹配 (推荐，模糊识别)" value="contains" />
+                  <el-option label="精确匹配 (严格对应映射表)" value="exact" />
+                </el-select>
+                <div class="form-tip">数仓字典映射时，是匹配表头包含关键词还是必须完全一致</div>
+              </el-form-item>
             </el-form>
           </div>
         </el-tab-pane>
@@ -112,7 +137,11 @@ const namingConvention = ref({
   column_prefix: 'field_',
   initials_threshold: 4,
   max_length: 50,
-  replace_regex: '[\\s\\[\\]\\(\\)（）【】]'
+  replace_regex: '[\\s\\[\\]\\(\\)（）【】]',
+  numeric_prefix: 'col_',
+  pinyin_separator: '_',
+  bracket_eng_min_len: 2,
+  dict_match_mode: 'contains'
 })
 const saving = ref(false)
 

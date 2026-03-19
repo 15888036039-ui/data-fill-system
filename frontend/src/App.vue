@@ -1,12 +1,8 @@
 <template>
   <el-config-provider :locale="zhCn">
     <div class="app-wrapper">
-      <header v-if="!isEmbedMode" class="app-header">
+      <header v-if="!isEmbedMode && currentUser && isRegistered !== false" class="app-header">
         <div class="header-content">
-          <div class="logo-area" @click="$router.push('/')">
-            <el-icon class="logo-icon" :size="28"><DataAnalysis /></el-icon>
-            <span class="logo-text">数据填报系统</span>
-          </div>
           <el-menu 
             mode="horizontal" 
             router 
@@ -14,51 +10,253 @@
             class="nav-menu"
             :ellipsis="false"
           >
-            <el-menu-item index="/tasks">填报工作台</el-menu-item>
-            <el-menu-item index="/forms">模板管理</el-menu-item>
-            <el-menu-item index="/designer">新建模板</el-menu-item>
-            <el-menu-item index="/settings">系统配置</el-menu-item>
+            <el-menu-item v-if="!isAdmin" index="/tasks">填报工作台</el-menu-item>
+            <el-menu-item v-if="isAdmin" index="/forms">模板管理</el-menu-item>
+            <el-menu-item v-if="isAdmin" index="/designer">新建模板</el-menu-item>
+            <el-menu-item v-if="isAdmin" index="/settings">系统配置</el-menu-item>
           </el-menu>
           <div class="header-right">
-            <!-- User display removed as per request -->
+            <el-tag v-if="currentUser" type="info" effect="plain" class="user-badge" round>
+              {{ maskedUser }}
+            </el-tag>
           </div>
         </div>
       </header>
       
       <main class="main-body" :class="{ 'is-embedded': isEmbedMode }">
         <div class="container">
-          <router-view v-slot="{ Component }">
-            <transition name="fade-transform" mode="out-in">
-              <component :is="Component" />
-            </transition>
-          </router-view>
+          <template v-if="currentUser && (isRegistered === true || loading || isRegistered === null)">
+            <div v-if="loading || isRegistered === null" class="loading-state">
+               <el-skeleton :rows="10" animated />
+            </div>
+            <router-view v-else v-slot="{ Component }">
+              <transition name="fade-transform" mode="out-in">
+                <component :is="Component" />
+              </transition>
+            </router-view>
+          </template>
+          <template v-else-if="currentUser && isRegistered === false">
+            <div class="unauthorized-state">
+              <el-result icon="error" title="系统未注册用户" sub-title="您的账号尚未在组织架构中注册，无法访问填报系统。">
+                <template #extra>
+                  <p class="error-tip">当前用户：{{ currentUser }}</p>
+                  <p style="margin-top: 10px; color: #64748b;">如需申请权限，请联系管理员核对注册信息。</p>
+                </template>
+              </el-result>
+            </div>
+          </template>
+          <template v-else>
+            <div class="login-state">
+              <div class="login-card">
+                <div class="login-icon">📋</div>
+                <h2 class="login-title">数据填报系统</h2>
+                <p class="login-subtitle">请选择您的身份以继续</p>
+                <el-select
+                  v-model="selectedLogin"
+                  filterable
+                  placeholder="搜索并选择用户"
+                  size="large"
+                  style="width: 100%; margin: 20px 0;"
+                  :loading="loginUsersLoading"
+                >
+                  <el-option
+                    v-for="u in loginUsers"
+                    :key="u"
+                    :label="u"
+                    :value="u"
+                  />
+                </el-select>
+                <el-button 
+                  type="primary" 
+                  size="large" 
+                  style="width: 100%;" 
+                  :disabled="!selectedLogin"
+                  @click="handleManualLogin"
+                >
+                  确认登录
+                </el-button>
+              </div>
+            </div>
+          </template>
         </div>
       </main>
-
-      <footer v-if="!isEmbedMode" class="app-footer">
-        <div class="footer-content">
-          <p>© 2026 企业级数据采集平台 | 全流程自动化填报方案</p>
-          <div class="footer-links">
-            <span>帮助中心</span>
-            <span>隐私政策</span>
-            <span>联系支持</span>
-          </div>
-        </div>
-      </footer>
     </div>
   </el-config-provider>
 </template>
 
 <script setup>
-import { provide, ref } from 'vue'
+import { provide, ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
+import axios from 'axios'
+import { decryptUser, encryptUser, isEncrypted } from './utils/crypto.js'
 
-// Simple fixed state as requested - everyone is "Admin" for this project
-const isAdmin = ref(true)
+// Detection from URL (query or hash)
+const getParam = (name) => {
+  const searchParams = new URLSearchParams(window.location.search)
+  if (searchParams.has(name)) return searchParams.get(name)
+  
+  const hashPart = window.location.hash.split('?')[1]
+  if (hashPart) {
+    const hashParams = new URLSearchParams(hashPart)
+    if (hashParams.has(name)) return hashParams.get(name)
+  }
+  return null
+}
+
+const rawUserParam = ref(getParam('user'))
+const isRegistered = ref(null) // null: initial, true: yes, false: no
+const loading = ref(false)
+
+// 如果 URL 中没有 user 参数，调后端检测帆软登录状态
+const detectFineReportUser = async () => {
+  try {
+    const res = await axios.get('/api/user/detect')
+    if (res.data.detected && res.data.username) {
+      rawUserParam.value = res.data.username
+      console.log('[FineReport] 自动识别用户:', res.data.username)
+    }
+  } catch (e) {
+    console.warn('[FineReport] 用户检测失败')
+  }
+}
+
+const route = useRoute()
+const router = useRouter()
+
+// Watch for landing with plain text user and hide it immediately in both search AND hash
+const checkAndObfuscateUser = () => {
+  let changed = false
+  const searchParams = new URLSearchParams(window.location.search)
+  let hash = window.location.hash
+  
+  // 1. Check main search params
+  const searchUser = searchParams.get('user')
+  if (searchUser && !isEncrypted(searchUser)) {
+    searchParams.set('user', encryptUser(searchUser))
+    changed = true
+  }
+  
+  // 2. Check hash params (#/...?user=...)
+  if (hash.includes('?')) {
+    const parts = hash.split('?')
+    const prefix = parts[0]
+    const hashQuery = parts.slice(1).join('?')
+    const hashParams = new URLSearchParams(hashQuery)
+    const hashUser = hashParams.get('user')
+    if (hashUser && !isEncrypted(hashUser)) {
+      hashParams.set('user', encryptUser(hashUser))
+      hash = `${prefix}?${hashParams.toString()}`
+      changed = true
+    }
+  }
+  
+  if (changed) {
+    const newSearch = searchParams.toString() ? '?' + searchParams.toString() : ''
+    // Use window.location.pathname to correctly preserve base path
+    const newUrl = window.location.pathname + newSearch + hash
+    window.history.replaceState({}, '', newUrl)
+    // Re-sync
+    const currentParam = getParam('user')
+    if (currentParam !== rawUserParam.value) {
+      rawUserParam.value = currentParam
+    }
+  }
+}
+
+// Additional watch on route to catch inner navigations or late loads
+watch(() => route.query.user, (newVal) => {
+  if (newVal && !isEncrypted(newVal)) {
+    const encrypted = encryptUser(newVal)
+    router.replace({
+      query: { ...route.query, user: encrypted }
+    }).then(() => {
+      rawUserParam.value = encrypted
+    })
+  }
+}, { immediate: true })
+
+const verifyUser = async (email) => {
+  if (!email) return
+  
+  loading.value = true
+  try {
+    const res = await axios.get(`/api/user/verify?userEmail=${encodeURIComponent(email)}`)
+    isRegistered.value = res.data.registered
+  } catch (e) {
+    console.error('User verification failed:', e)
+    isRegistered.value = false
+  } finally {
+    loading.value = false
+  }
+}
+
+// Run immediately to hide plain text on landing
+checkAndObfuscateUser()
+
+const currentUser = computed(() => decryptUser(rawUserParam.value))
+provide('currentUser', currentUser)
+
+// Masked user for display
+const maskedUser = computed(() => {
+  if (!currentUser.value) return ''
+  const email = currentUser.value
+  const [name, domain] = email.split('@')
+  if (!domain) return name.slice(0, 1) + '***'
+  return (name.length > 2 ? name.slice(0, 2) : name.slice(0, 1)) + '***@' + domain
+})
+
+const isAdmin = computed(() => currentUser.value === 'finereport_manage')
 provide('isAdmin', isAdmin)
 
 // Embed mode detection
 const isEmbedMode = ref(window.location.search.includes('embed=true') || window.location.hash.includes('embed=true'))
+
+// 手动登录（备用方案）
+const selectedLogin = ref('')
+const loginUsers = ref([])
+const loginUsersLoading = ref(false)
+
+const loadLoginUsers = async () => {
+  loginUsersLoading.value = true
+  try {
+    const res = await axios.get('/api/user/list')
+    loginUsers.value = res.data || []
+  } catch (e) {
+    loginUsers.value = []
+  } finally {
+    loginUsersLoading.value = false
+  }
+}
+
+const handleManualLogin = () => {
+  if (!selectedLogin.value) return
+  // 将用户加密后附加到 URL，然后刷新页面
+  const encrypted = encryptUser(selectedLogin.value)
+  const hash = window.location.hash.split('?')[0] || '#/tasks'
+  window.location.href = window.location.pathname + hash + '?user=' + encrypted
+}
+
+// Utility to preserve user in navigation if needed
+const appendUser = (path) => {
+  if (!rawUserParam.value) return path
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}user=${rawUserParam.value}`
+}
+provide('appendUser', appendUser)
+
+onMounted(async () => {
+  // 如果没有 user 参数，先尝试检测帆软登录状态
+  if (!currentUser.value) {
+    await detectFineReportUser()
+  }
+  if (currentUser.value) {
+    verifyUser(currentUser.value)
+  } else {
+    // 没有检测到用户，加载用户列表供手动选择
+    loadLoginUsers()
+  }
+})
 </script>
 
 <style>
@@ -74,6 +272,25 @@ body {
   background-color: var(--bg-color);
   color: #1e293b;
   -webkit-font-smoothing: antialiased;
+}
+
+.loading-state {
+  padding: 80px 0;
+}
+
+.unauthorized-state {
+  padding: 100px 0;
+  display: flex;
+  justify-content: center;
+}
+
+.error-tip {
+  font-family: monospace;
+  background: #f1f5f9;
+  padding: 8px 16px;
+  border-radius: 6px;
+  color: #ef4444;
+  font-size: 13px;
 }
 
 .app-wrapper {
@@ -100,25 +317,6 @@ body {
   padding: 0 24px;
 }
 
-.logo-area {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  cursor: pointer;
-  margin-right: 48px;
-}
-
-.logo-icon {
-  color: var(--primary-color);
-}
-
-.logo-text {
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  color: #0f172a;
-}
-
 .nav-menu {
   flex: 1;
   border-bottom: none !important;
@@ -138,23 +336,6 @@ body {
   background-color: transparent !important;
 }
 
-.user-dropdown {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  color: #475569;
-  font-weight: 500;
-  padding: 8px 12px;
-  border-radius: 6px;
-  transition: background 0.2s;
-}
-
-.user-dropdown:hover {
-  background: #f1f5f9;
-}
-
 .main-body {
   flex: 1;
   padding: 32px 0;
@@ -169,43 +350,6 @@ body {
   margin: 0;
   padding: 0 24px;
   box-sizing: border-box;
-}
-
-.app-footer {
-  background: white;
-  border-top: 1px solid #e2e8f0;
-  padding: 32px 0;
-  margin-top: auto;
-}
-
-.footer-content {
-  width: 100%;
-  margin: 0;
-  padding: 0 24px;
-  text-align: center;
-}
-
-.footer-content p {
-  font-size: 14px;
-  color: #94a3b8;
-  margin: 0 0 12px;
-}
-
-.footer-links {
-  display: flex;
-  justify-content: center;
-  gap: 24px;
-  font-size: 13px;
-  color: #64748b;
-}
-
-.footer-links span {
-  cursor: pointer;
-  transition: color 0.2s;
-}
-
-.footer-links span:hover {
-  color: var(--primary-color);
 }
 
 /* Transitions */
@@ -236,5 +380,41 @@ body {
   --el-button-border-color: var(--primary-color) !important;
   font-weight: 600 !important;
   border-radius: 8px !important;
+}
+
+.login-state {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 60vh;
+}
+
+.login-card {
+  background: white;
+  border-radius: 16px;
+  padding: 48px 40px;
+  width: 400px;
+  max-width: 90vw;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+  text-align: center;
+  border: 1px solid #e2e8f0;
+}
+
+.login-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.login-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 8px 0;
+}
+
+.login-subtitle {
+  color: #64748b;
+  font-size: 14px;
+  margin: 0;
 }
 </style>
