@@ -1,18 +1,26 @@
 <template>
   <div class="form-list-page">
-    <div class="page-header">
-      <div class="title-section">
-        <h1 class="page-title">表单模板管理</h1>
-        <p class="page-subtitle">设计、发布并管理您的业务数据采集模板</p>
-      </div>
-      <div class="header-actions">
-        <el-button type="success" size="large" icon="Collection" @click="$router.push('/tasks')">进入填报集</el-button>
-        <el-button v-if="isAdmin" type="primary" size="large" icon="Plus" @click="$router.push('/designer')">新建表单模板</el-button>
-      </div>
+    <div class="filter-bar">
+      <el-input
+        v-model="searchQuery"
+        placeholder="搜索模板名称或物理表名..."
+        prefix-icon="Search"
+        clearable
+        class="search-input"
+        @clear="handleFilter"
+      />
+      <el-select v-model="statusFilter" placeholder="模板状态" clearable class="status-select">
+        <el-option label="所有状态" value="" />
+        <el-option label="运行中" value="ACTIVE" />
+        <el-option label="已过期" value="EXPIRED" />
+        <el-option label="待发布" value="DISABLED" />
+      </el-select>
+      <el-button type="primary" icon="Search" @click="handleFilter">查询</el-button>
+      <el-button icon="Refresh" @click="resetFilter">重置</el-button>
     </div>
 
     <el-card class="table-card" shadow="never">
-      <el-table :data="forms" style="width: 100%" v-loading="loading">
+      <el-table :data="filteredForms" style="width: 100%" v-loading="loading">
         <el-table-column prop="name" label="模板名称" min-width="200">
           <template #default="scope">
             <div class="form-name-cell">
@@ -88,6 +96,28 @@ const isAdmin = inject('isAdmin', ref(false))
 
 const forms = ref([])
 const loading = ref(false)
+const searchQuery = ref('')
+const statusFilter = ref('')
+const filteredForms = ref([])
+
+const handleFilter = () => {
+  // 仅在点击“查询”按钮时才过滤数据
+  filteredForms.value = forms.value.filter(form => {
+    const matchesSearch = !searchQuery.value || 
+      form.name.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
+      form.tableName.toLowerCase().includes(searchQuery.value.toLowerCase())
+    
+    const matchesStatus = !statusFilter.value || form.status === statusFilter.value
+    
+    return matchesSearch && matchesStatus
+  })
+}
+
+const resetFilter = () => {
+  searchQuery.value = ''
+  statusFilter.value = ''
+  filteredForms.value = [...forms.value]
+}
 
 const loadForms = async () => {
   loading.value = true
@@ -97,6 +127,8 @@ const loadForms = async () => {
     if (isAdmin.value) params.isAdmin = true
     const res = await axios.get('/api/fill/forms', { params })
     forms.value = res.data
+    // 初始化显示列表
+    handleFilter()
   } catch (e) {
     ElMessage.error('获取表单模板失败')
   } finally {
@@ -150,8 +182,28 @@ onMounted(() => {
   gap: 12px;
 }
 
+.filter-bar {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 20px;
+  background: white;
+  padding: 16px;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  border: 1px solid #f1f5f9;
+}
+
+.search-input {
+  width: 320px;
+}
+
+.status-select {
+  width: 160px;
+}
+
 .table-card {
   padding: 8px;
+  border-radius: 12px;
 }
 
 .form-name-cell {

@@ -1,12 +1,5 @@
 <template>
   <div class="user-tasks-page">
-    <div class="page-header">
-      <div class="title-section">
-        <h1 class="page-title">数据填报工作台</h1>
-        <p class="page-subtitle">查看并完成您的数据采集与周期性报送任务</p>
-      </div>
-    </div>
-
     <div v-if="!userEmail" class="empty-state">
       <el-empty description="请在上方的身份确认框中输入您的邮箱以同步填报任务" />
     </div>

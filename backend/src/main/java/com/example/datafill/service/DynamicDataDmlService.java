@@ -476,63 +476,10 @@ public class DynamicDataDmlService {
             throw new RuntimeException("非法的物理表名称: " + tableName);
         }
 
-        StringBuilder whereClause = new StringBuilder(" WHERE (is_deleted IS NULL OR is_deleted = 0) ");
+        StringBuilder whereClause = new StringBuilder();
         List<Object> args = new ArrayList<>();
+        buildWhereClause(whereClause, args, filters, userEmail, isAdmin);
 
-        // 核心隔离逻辑：非管理员只能看自己的数据
-        if (!isAdmin && userEmail != null && !userEmail.isBlank()) {
-            whereClause.append(" AND \"load_user\" = ? ");
-            args.add(userEmail);
-        }
-
-        if (filters != null) {
-            for (Map.Entry<String, String> entry : filters.entrySet()) {
-                String val = entry.getValue();
-                if (val != null && !val.trim().isEmpty()) {
-
-                    String col = entry.getKey();
-
-                    if (col.startsWith("extra_data.")) {
-
-                        String jsonKey = col.substring("extra_data.".length());
-
-                        if (jsonKey.matches("^[a-zA-Z0-9_]+$")) {
-
-                            // PostgreSQL JSONB ->>>  LIKE 
-
-                            whereClause.append(" AND \"extra_data\"->> ? LIKE ? ? ");
-
-                            args.add(jsonKey);
-
-                            args.add("%" + val + "%");
-
-                        }
-
-                    } else if (col.matches("^[a-zA-Z0-9_]+$")) {
-
-                        // 精确匹配 creator/load_user 或 模糊匹配其他
-
-                        if ("creator".equalsIgnoreCase(col) || "load_user".equalsIgnoreCase(col)) {
-
-                            whereClause.append(" AND \"").append(col).append("\" = ? ");
-
-                            args.add(val);
-
-                        } else {
-
-                            whereClause.append(" AND \"").append(col).append("\" LIKE ? ");
-
-                            args.add("%" + val + "%");
-
-                        }
-
-                    }
-
-                }
-
-            }
-
-        }
 
         // 统计总数
 
@@ -820,14 +767,74 @@ public class DynamicDataDmlService {
 
     }
 
+    @Transactional
+    public void deleteAllFilteredData(String formId, Map<String, String> filters, String operatorEmail, boolean isAdmin) {
+        // 1. 填报锁定校验
+        checkFillLock(formId, operatorEmail, isAdmin);
+
+        DataFillForm form = formMapper.selectById(formId);
+        if (form == null) throw new RuntimeException("表单不存在");
+        String tableName = form.getTableName();
+
+        StringBuilder whereClause = new StringBuilder();
+        List<Object> args = new ArrayList<>();
+        buildWhereClause(whereClause, args, filters, operatorEmail, isAdmin);
+
+        // 先尝试软删除
+        String updateSql = String.format("UPDATE \"%s\" SET is_deleted = 1 %s", tableName, whereClause.toString());
+        try {
+            jdbcTemplate.update(updateSql, args.toArray());
+        } catch (Exception e) {
+            // 降级为物理删除
+            String deleteSql = String.format("DELETE FROM \"%s\" %s", tableName, whereClause.toString());
+            jdbcTemplate.update(deleteSql, args.toArray());
+        }
+    }
+
     /**
-
      * 4. 软删除动态物理表的数据
-
      */
-
     public void deleteRowData(String formId, String dataId, String operatorEmail, boolean isAdmin) {
         batchDeleteRowData(formId, List.of(dataId), operatorEmail, isAdmin);
+    }
+
+    /**
+     * 构建通用的 WHERE 子句（支持数据隔离和条件筛选）
+     */
+    private void buildWhereClause(StringBuilder whereClause, List<Object> args, Map<String, String> filters, String userEmail, boolean isAdmin) {
+        whereClause.append(" WHERE (is_deleted IS NULL OR is_deleted = 0) ");
+        
+        // 核心隔离逻辑：非管理员只能看自己的数据
+        if (!isAdmin && userEmail != null && !userEmail.isBlank()) {
+            whereClause.append(" AND \"load_user\" = ? ");
+            args.add(userEmail);
+        }
+
+        if (filters != null) {
+            for (Map.Entry<String, String> entry : filters.entrySet()) {
+                String val = entry.getValue();
+                if (val == null || val.trim().isEmpty()) continue;
+
+                String col = entry.getKey();
+                if (col.startsWith("extra_data.")) {
+                    String jsonKey = col.substring("extra_data.".length());
+                    if (jsonKey.matches("^[a-zA-Z0-9_]+$")) {
+                        whereClause.append(" AND \"extra_data\"->> ? LIKE ? ");
+                        args.add(jsonKey);
+                        args.add("%" + val + "%");
+                    }
+                } else if (col.matches("^[a-zA-Z0-9_]+$")) {
+                    if ("creator".equalsIgnoreCase(col) || "load_user".equalsIgnoreCase(col)) {
+                        whereClause.append(" AND \"").append(col).append("\" = ? ");
+                        args.add(val);
+                    } else {
+                        // 强制转为文本以支持数字等其他类型的模糊查询
+                        whereClause.append(" AND CAST(\"").append(col).append("\" AS TEXT) LIKE ? ");
+                        args.add("%" + val + "%");
+                    }
+                }
+            }
+        }
     }
 
     /**

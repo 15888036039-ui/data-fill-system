@@ -142,6 +142,17 @@ public class DataFillController {
         return "success";
     }
 
+    // [用户端核心]: 根据筛选条件删除所有匹配数据
+    @PostMapping("/data/{formId}/deleteAllFiltered")
+    public String deleteAllFiltered(
+            @PathVariable String formId,
+            @RequestParam(required = false) String userEmail,
+            @RequestParam(defaultValue = "false") boolean isAdmin,
+            @RequestBody(required = false) Map<String, String> filters) {
+        dataDmlService.deleteAllFilteredData(formId, filters, userEmail, isAdmin);
+        return "success";
+    }
+
     // [用户端核心]: 软删除某张动态物理表里的一条数据
     @DeleteMapping("/data/{formId}/{dataId}")
     public String deleteData(

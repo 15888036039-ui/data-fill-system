@@ -7,10 +7,13 @@ const router = createRouter({
       path: '/',
       name: 'home',
       redirect: (to) => {
-        // 管理员默认进入模板管理，普通用户默认进入填报工作台
         const userParam = to.query.user || ''
-        // finereport_manage 可能是明文或加密形式
-        if (userParam === 'finereport_manage' || userParam.includes('finereport_manage')) {
+        let user = ''
+        if (userParam) {
+          user = isEncrypted(userParam) ? decryptUser(userParam) : userParam
+        }
+        
+        if (user === 'finereport_manage') {
           return { path: '/forms', query: to.query }
         }
         return { path: '/tasks', query: to.query }
@@ -61,9 +64,14 @@ router.beforeEach((to, from, next) => {
   }
   const isAdmin = user === 'finereport_manage'
 
-  // 管理员强制进入模板管理
+  // 管理员强制进入模板管理，禁止进入填报工作台
   if (isAdmin && to.path === '/tasks') {
     return next({ path: '/forms', query: { ...to.query, user: userParam } })
+  }
+
+  // 普通用户禁止进入模板管理，强制回到填报工作台
+  if (!isAdmin && to.path === '/forms') {
+    return next({ path: '/tasks', query: { ...to.query, user: userParam } })
   }
 
   // Preserve the 'user' query parameter across navigations

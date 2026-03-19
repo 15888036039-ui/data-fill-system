@@ -1,7 +1,18 @@
 <template>
   <div class="data-fill-page">
-    <div class="header-nav">
-      <el-page-header @back="$router.push('/tasks')" title="返回我的任务" />
+    <div class="header-nav flat-header">
+      <el-page-header @back="$router.push('/tasks')">
+        <template #content>
+          <div class="header-content-box">
+            <span class="nav-form-name">{{ formMeta?.name }}</span>
+            <div class="header-sub-info">
+              <span v-if="isAdmin && formMeta" class="nav-table-name">创建人: 管理员</span>
+              <el-divider direction="vertical" />
+              <el-icon class="info-icon"><InfoFilled /></el-icon>
+            </div>
+          </div>
+        </template>
+      </el-page-header>
     </div>
     
     <div v-if="loading" class="loading-state">
@@ -9,32 +20,26 @@
     </div>
 
     <div v-else-if="formMeta" class="content-wrapper">
-      <!-- 状态提示 Banner -->
+      <!-- 状态提示 Banner (更扁平化) -->
       <div v-if="timeLeftMessage || lockStatus.hasSubmitted" 
-           class="deadline-banner" 
+           class="slim-banner" 
            :class="{ 
              'warning': isNearDeadline || (lockStatus.hasSubmitted && !lockStatus.isLocked), 
              'expired': isExpired || lockStatus.isLocked, 
              'success': lockStatus.hasSubmitted && !lockStatus.isLocked 
            }">
-        <el-icon v-if="lockStatus.hasSubmitted && !lockStatus.isLocked"><CircleCheck /></el-icon>
-        <el-icon v-else-if="lockStatus.isLocked"><CircleCheck /></el-icon>
+        <el-icon v-if="lockStatus.isLocked"><CircleCheck /></el-icon>
         <el-icon v-else><AlarmClock /></el-icon>
         
         <span v-if="lockStatus.hasSubmitted && !lockStatus.isLocked">
-          您本期已完成填报，如需调整请在宽限期内操作。检查倒计时：<b style="color: #e6a23c">{{ graceTimeLeft }}</b>
+          已完成填报，如需调整请在宽限期内操作。倒计时：<b>{{ graceTimeLeft }}</b>
         </span>
         <span v-else-if="lockStatus.isLocked">
-          您本期填报已被锁定（已过 24h 宽限期）{{ isAdmin ? ' —— 您目前处于管理员模式，仍可强制修改' : '，如需修改请联系管理员。' }}
+          填报锁定 {{ isAdmin ? '(管理员模式)' : '' }}
         </span>
         <span v-else>{{ timeLeftMessage }}</span>
       </div>
 
-      <div class="form-title-section">
-        <h1 class="form-title">{{ formMeta.name }}</h1>
-        <p class="form-subtitle" v-if="isAdmin">物理表: {{ formMeta.tableName }}</p>
-      </div>
-      
       <!-- 填报区域 (新增/编辑) -->
       <el-dialog 
         v-model="isFilling" 
@@ -51,69 +56,90 @@
         />
       </el-dialog>
 
-      <!-- 数据表格工具栏 -->
-      <div class="workbench">
-        <div class="action-bar">
-          <div class="left">
-            <el-button type="primary" size="large" @click="handleAddNew" icon="Plus" :disabled="isLocked">单行录入</el-button>
-            <el-button size="large" @click="downloadTemplate" icon="Download">下载模板</el-button>
+      <!-- 全新扁平工具栏 -->
+      <div class="flat-toolbar">
+        <div class="toolbar-row main-actions">
+          <div class="left-group">
+            <el-button type="primary" icon="Plus" @click="handleAddNew" :disabled="isLocked">新增数据</el-button>
+            <el-button icon="Download" @click="downloadTemplate" class="action-btn">下载模板</el-button>
             <el-upload
               :show-file-list="false"
               :http-request="handleUpload"
               accept=".xlsx"
               :disabled="isUploading || isLocked"
-              class="upload-btn"
+              class="inline-upload"
             >
-              <el-button icon="Upload" type="warning" size="large" :loading="isUploading" :disabled="isLocked">
-                {{ isUploading ? '导入中...' : '上传数据' }}
-              </el-button>
+              <el-button icon="Upload" :loading="isUploading" :disabled="isLocked" class="action-btn">上传数据</el-button>
             </el-upload>
           </div>
           
-          <div class="right">
-             <el-radio-group v-if="isAdmin" v-model="importMode" size="small" style="margin-right: 15px;">
-              <el-radio-button label="append">追加</el-radio-button>
-              <el-radio-button label="overwrite">覆盖</el-radio-button>
-            </el-radio-group>
-            <el-button type="danger" plain icon="Delete" :disabled="selectedIds.length === 0 || isLocked" @click="handleBatchDelete">批量删除 ({{ selectedIds.length }})</el-button>
+          <div class="right-group">
+             <div v-if="isAdmin" class="import-mode-select">
+               <el-radio-group v-model="importMode" size="small">
+                <el-radio-button label="append">追加</el-radio-button>
+                <el-radio-button label="overwrite">覆盖</el-radio-button>
+              </el-radio-group>
+            </div>
+            <div class="divider"></div>
+            <el-button 
+              type="danger" 
+              link 
+              icon="Delete" 
+              :disabled="selectedIds.length === 0 || isLocked" 
+              @click="handleBatchDelete"
+            >
+              <span v-if="selectedIds.length > 0">
+                {{ isSelectAllFiltered ? `全部删除 (${totalCount})` : `批量删除 (${selectedIds.length})` }}
+              </span>
+            </el-button>
+            <el-tooltip content="刷新数据" placement="top">
+              <el-button icon="Refresh" link @click="loadTableData" />
+            </el-tooltip>
           </div>
         </div>
 
-        <!-- 过滤器 -->
-        <div class="filter-panel card-style">
-          <div class="filters">
+        <div class="toolbar-row filter-line">
+          <div class="filter-inputs">
             <template v-for="field in filterFields" :key="'filter_'+field.columnName">
-              <div class="filter-item">
-                <span class="filter-label">按 {{ field.name }} 筛选</span>
-                <el-select
-                  v-model="searchParams[field.columnName]"
-                  placeholder="全选"
-                  clearable
-                  filterable
-                  @change="handleSearch"
-                >
-                  <el-option
-                    v-for="opt in (filterOptions[field.columnName] || [])"
-                    :key="opt"
-                    :label="opt"
-                    :value="opt"
-                  />
-                </el-select>
-              </div>
+              <el-select
+                v-model="searchParams[field.columnName]"
+                :placeholder="field.name"
+                size="default"
+                clearable
+                filterable
+                class="filter-select"
+                @change="handleSearch"
+              >
+                <el-option
+                  v-for="opt in (filterOptions[field.columnName] || [])"
+                  :key="opt"
+                  :label="opt"
+                  :value="opt"
+                />
+              </el-select>
             </template>
-            <div class="filter-item action-buttons" style="margin-left: auto;">
-               <el-button type="primary" @click="handleSearch">立即查询</el-button>
-               <el-button @click="resetSearch">重置</el-button>
+            <div class="filter-actions-inline">
+              <el-button type="primary" size="default" icon="Search" @click="handleSearch">查询</el-button>
+              <el-button size="default" icon="RefreshRight" @click="resetSearch">重置</el-button>
             </div>
           </div>
         </div>
+      </div>
 
-        <!-- 主表格 -->
+        <!-- 批量操作扩展提示 -->
+        <div v-if="selectedIds.length > 0 && totalCount > tableData.length" class="selection-banner">
+          <template v-if="!isSelectAllFiltered">
+            已选择本页 {{ selectedIds.length }} 条数据。
+            <el-button type="primary" link @click="selectAllFiltered">选择所有 {{ totalCount }} 条符合筛选条件的数据</el-button>
+          </template>
+          <template v-else>
+            已选择所有 {{ totalCount }} 条符合筛选条件的数据。
+            <el-button type="primary" link @click="isSelectAllFiltered = false">取消全选</el-button>
+          </template>
+        </div>
+
+        <!-- 主表格 (标题已移除) -->
         <div class="table-container card-style" v-loading="loading">
-          <div class="table-header">
-             <h3 class="table-title">{{ isAdmin ? '全量数据管理' : '我填报的数据' }}</h3>
-             <!-- Redundant total count removed as per request -->
-          </div>
           
           <el-table 
             :data="tableData" 
@@ -131,16 +157,10 @@
               v-for="field in schemaFields" 
               :key="field.columnName" 
               :prop="field.columnName" 
+              :label="field.name"
               show-overflow-tooltip
-              min-width="170"
-            >
-              <template #header>
-                <div class="header-content">
-                  <span class="label-name">{{ field.name }}</span>
-                  <span class="column-code">{{ field.columnName }}</span>
-                </div>
-              </template>
-            </el-table-column>
+              min-width="150"
+            />
               
             <el-table-column prop="creator" label="填写人" width="150" sortable />
             <el-table-column prop="update_time" label="最后修改" width="180">
@@ -190,8 +210,7 @@
         </div>
       </div>
     </div>
-  </div>
-</template>
+  </template>
 
 <script setup>
 import { ref, onMounted, onUnmounted, computed, reactive, inject } from 'vue'
@@ -224,6 +243,7 @@ const isUploading = ref(false)
 const searchParams = ref({})
 const filterOptions = ref({})
 const selectedIds = ref([])
+const isSelectAllFiltered = ref(false)
 
 const isAdminGlobal = inject('isAdmin', ref(true))
 const isAdmin = computed(() => isAdminGlobal.value)
@@ -297,8 +317,12 @@ const updateGraceCountdown = () => {
   graceTimeLeft.value = `${hours}时${minutes}分${seconds}秒`
 }
 
-const handleSelectionChange = (val) => {
-  selectedIds.value = val.map(item => item.id)
+const handleSelectionChange = (selection) => {
+  selectedIds.value = selection.map(row => row.id)
+  // 如果不是全选本页，则取消“全选所有过滤数据”的状态
+  if (selection.length < tableData.value.length) {
+    isSelectAllFiltered.value = false
+  }
 }
 
 const handleSearch = () => {
@@ -356,10 +380,6 @@ const loadFormMeta = async () => {
 const loadTableData = async () => {
   tableLoading.value = true
   const params = { ...searchParams.value }
-  // 个人工作台模式：强制只看自己填的数据
-  if (!isAdmin.value) {
-    params.load_user = userEmail.value
-  }
   
   try {
     const res = await axios.post(`/api/fill/data/${formId}/list?userEmail=${userEmail.value}&isAdmin=${isAdmin.value}`, params, {
@@ -424,17 +444,44 @@ const submitData = async (formDataVal) => {
 
 const handleBatchDelete = async () => {
   if (selectedIds.value.length === 0) return
+  
+  const count = isSelectAllFiltered.value ? totalCount.value : selectedIds.value.length
+  const title = isSelectAllFiltered.value ? '危险：全部删除' : '批量删除'
+  const message = `确定要删除${isSelectAllFiltered.value ? '所有筛选出的' : '选中的'} ${count} 条数据吗？`
+  
   try {
-    await ElMessageBox.confirm(`确定要删除选中的 ${selectedIds.value.length} 条数据吗？`, '警告', {
-      type: 'warning'
+    await ElMessageBox.confirm(message, title, {
+      confirmButtonText: '确定删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+      confirmButtonClass: isSelectAllFiltered.value ? 'el-button--danger' : ''
     })
-    await axios.post(`/api/fill/data/${formId}/batchDelete`, selectedIds.value, {
-      params: { userEmail: userEmail.value, isAdmin: isAdmin.value }
-    })
-    ElMessage.success('批量删除成功')
+    
+    if (isSelectAllFiltered.value) {
+      // 调用批量删除所有过滤数据的接口
+      await axios.post(`/api/fill/data/${formId}/deleteAllFiltered`, searchParams.value, {
+        params: { userEmail: userEmail.value, isAdmin: isAdmin.value }
+      })
+    } else {
+      // 调用普通批量删除接口
+      await axios.post(`/api/fill/data/${formId}/batchDelete`, selectedIds.value, {
+        params: { userEmail: userEmail.value, isAdmin: isAdmin.value }
+      })
+    }
+    
+    ElMessage.success('删除成功')
     selectedIds.value = []
+    isSelectAllFiltered.value = false
     await loadTableData()
-  } catch(e) {}
+  } catch(e) {
+    if (e !== 'cancel') {
+        ElMessage.error(e.response?.data?.message || '操作失败')
+    }
+  }
+}
+
+const selectAllFiltered = () => {
+  isSelectAllFiltered.value = true
 }
 
 const handleDelete = async (dataId) => {
@@ -508,14 +555,15 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   backdrop-filter: blur(8px);
   border: 1px solid #fee2e2;
   color: #991b1b;
-  padding: 14px 24px;
-  border-radius: 12px;
-  margin-bottom: 32px;
+  padding: 10px 20px;
+  border-radius: 10px;
+  margin-bottom: 24px;
   display: flex;
   align-items: center;
   gap: 12px;
   font-weight: 600;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  font-size: 14px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
 .deadline-banner.warning {
@@ -530,126 +578,140 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   color: #64748b;
 }
 
-.form-title-section {
-  margin-bottom: 40px;
+.header-nav {
+  margin-bottom: 8px;
 }
 
-.form-title {
-  font-size: 32px;
-  font-weight: 800;
-  color: #0f172a;
-  margin: 0;
-  letter-spacing: -0.025em;
+.flat-header :deep(.el-page-header__left) {
+  margin-right: 16px;
 }
 
-.form-subtitle {
-  color: #64748b;
-  font-size: 15px;
-  margin-top: 8px;
-}
-
-.action-bar {
+.header-content-box {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
-}
-
-.action-bar .left {
-  display: flex;
   gap: 16px;
 }
 
-.upload-btn {
-  display: inline-block;
-}
-
-.card-style {
-  background: white;
-  border-radius: 16px;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
-  padding: 24px;
-  margin-bottom: 24px;
-  border: 1px solid #f1f5f9;
-}
-
-.filter-panel .filters {
+.header-sub-info {
   display: flex;
-  flex-wrap: wrap;
-  gap: 24px;
-  align-items: flex-end;
-}
-
-.filter-item {
-  display: flex;
-  flex-direction: column;
+  align-items: center;
+  font-size: 13px;
+  color: #64748b;
   gap: 8px;
 }
 
-.filter-label {
-  font-size: 13px;
-  color: #64748b;
-  font-weight: 600;
+.info-icon {
+  font-size: 16px;
+  cursor: help;
+  color: #94a3b8;
 }
 
-.table-header {
+.slim-banner {
+  padding: 6px 12px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+}
+
+.slim-banner.success {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  color: #166534;
+}
+
+.slim-banner.expired, .slim-banner.locked {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #475569;
+}
+
+.flat-toolbar {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  margin-bottom: 16px;
+}
+
+.toolbar-row {
+  padding: 8px 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+}
+
+.toolbar-row.main-actions {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.left-group, .right-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.filter-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.filter-actions-inline {
+  display: flex;
+  gap: 8px;
+}
+
+.filter-select {
+  width: 120px;
+}
+
+.divider {
+  width: 1px;
+  height: 14px;
+  background: #e2e8f0;
+}
+
+.table-header {
+  padding: 0 4px;
+  margin-bottom: 8px;
 }
 
 .table-title {
-  font-size: 18px;
-  font-weight: 700;
-  margin: 0;
-  color: #1e293b;
-}
-
-.custom-table {
-  border-radius: 12px;
-  overflow: hidden;
-}
-
-:deep(.el-table__header th .cell) {
-  white-space: nowrap !important;
-  color: #334155;
-  font-weight: 700;
-  padding: 12px 0;
-}
-
-.header-content {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.2;
-}
-
-.label-name {
-  font-size: 14px;
-}
-
-.column-code {
-  font-size: 11px;
-  color: #94a3b8;
-  font-weight: normal;
-  margin-top: 2px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.deadline-banner.success {
-  background: rgba(236, 253, 245, 0.9);
-  border-color: #a7f3d0;
-  color: #065f46;
+  font-size: 15px;
+  font-weight: 600;
+  color: #475569;
 }
 
 .pagination-footer {
-  margin-top: 24px;
+  margin-top: 12px;
   display: flex;
   justify-content: flex-end;
+  padding-bottom: 8px;
 }
 
 .loading-state {
   padding: 80px 0;
+}
+
+.selection-banner {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  color: #0369a1;
+  padding: 8px 16px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  animation: fadeIn 0.3s ease;
 }
 
 @keyframes fadeIn {

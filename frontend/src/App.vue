@@ -328,7 +328,7 @@ body {
 
 .main-body {
   flex: 1;
-  padding: 32px 0;
+  padding: 16px 0;
 }
 
 .main-body.is-embedded {

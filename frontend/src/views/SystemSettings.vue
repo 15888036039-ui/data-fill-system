@@ -1,12 +1,12 @@
 <template>
   <div class="system-settings">
-    <el-card class="settings-card">
-      <template #header>
-        <div class="card-header">
-          <span>系统基因库 & 数仓字典管理</span>
-          <el-button type="primary" @click="saveAll" :loading="saving">保存配置</el-button>
-        </div>
-      </template>
+    <div class="page-header">
+      <div class="header-actions">
+        <el-button type="primary" size="large" icon="Check" @click="saveAll" :loading="saving">保存配置</el-button>
+      </div>
+    </div>
+
+    <el-card class="settings-card" shadow="never">
 
       <el-tabs v-model="activeTab">
         <!-- 字典管理 -->
@@ -228,12 +228,22 @@ onMounted(() => {
   margin: 0 auto;
 }
 
-.card-header {
+.page-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
-  font-weight: bold;
-  font-size: 18px;
+  margin-bottom: 24px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.system-settings {
+  padding: 0;
+  max-width: 1200px;
+  margin: 0 auto;
 }
 
 .tab-content {

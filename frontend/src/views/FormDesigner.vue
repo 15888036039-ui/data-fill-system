@@ -1,10 +1,6 @@
 <template>
   <div class="form-designer-page">
     <div class="page-header">
-      <div class="title-section">
-        <h1 class="page-title">{{ isEditMode ? '修改模板配置' : '新建数据填报模板' }}</h1>
-        <p class="page-subtitle">定义填报周期、提醒策略及动态物理存储结构</p>
-      </div>
       <div class="header-actions">
         <el-button @click="$router.push('/forms')">取消返回</el-button>
         <el-button v-if="!isEditMode" type="primary" size="large" icon="Platform" @click="submitFormAndCreateTable">创建并发布</el-button>
