@@ -291,7 +291,6 @@ public class ExcelService {
                     if (h == null) continue;
                     java.util.regex.Matcher sm = suffixPattern.matcher(h.trim());
                     if (sm.matches()) {
-                        String base = sm.group(1).replaceAll("[_\\s]+$", "");
                         String suffix = sm.group(2);
                         if (suffix.isEmpty()) suffix = "0";
                         groupedBySuffix.computeIfAbsent(suffix, k -> new ArrayList<>()).add(c);

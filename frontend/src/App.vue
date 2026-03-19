@@ -108,19 +108,6 @@ const rawUserParam = ref(getParam('user'))
 const isRegistered = ref(null) // null: initial, true: yes, false: no
 const loading = ref(false)
 
-// 如果 URL 中没有 user 参数，调后端检测帆软登录状态
-const detectFineReportUser = async () => {
-  try {
-    const res = await axios.get('/api/user/detect')
-    if (res.data.detected && res.data.username) {
-      rawUserParam.value = res.data.username
-      console.log('[FineReport] 自动识别用户:', res.data.username)
-    }
-  } catch (e) {
-    console.warn('[FineReport] 用户检测失败')
-  }
-}
-
 const route = useRoute()
 const router = useRouter()
 
@@ -231,10 +218,16 @@ const loadLoginUsers = async () => {
 
 const handleManualLogin = () => {
   if (!selectedLogin.value) return
-  // 将用户加密后附加到 URL，然后刷新页面
   const encrypted = encryptUser(selectedLogin.value)
-  const hash = window.location.hash.split('?')[0] || '#/tasks'
-  window.location.href = window.location.pathname + hash + '?user=' + encrypted
+  // 使用 router.push 而不是 window.location.href，确保路由触发更新
+  router.push({
+    path: route.path,
+    query: { ...route.query, user: encrypted }
+  }).then(() => {
+    rawUserParam.value = encrypted
+    // 强制执行校验
+    verifyUser(selectedLogin.value)
+  })
 }
 
 // Utility to preserve user in navigation if needed
@@ -245,15 +238,12 @@ const appendUser = (path) => {
 }
 provide('appendUser', appendUser)
 
-onMounted(async () => {
-  // 如果没有 user 参数，先尝试检测帆软登录状态
-  if (!currentUser.value) {
-    await detectFineReportUser()
-  }
+onMounted(() => {
+  // User is identified via URL parameter or manual login
   if (currentUser.value) {
     verifyUser(currentUser.value)
   } else {
-    // 没有检测到用户，加载用户列表供手动选择
+    // 没有检测到用户，加载列表供手动选择
     loadLoginUsers()
   }
 })

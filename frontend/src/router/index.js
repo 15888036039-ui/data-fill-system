@@ -49,7 +49,23 @@ const router = createRouter({
   ]
 })
 
+import { decryptUser, isEncrypted } from '../utils/crypto.js'
+
 router.beforeEach((to, from, next) => {
+  const userParam = to.query.user || from.query.user || ''
+  
+  // 识别身份
+  let user = ''
+  if (userParam) {
+    user = isEncrypted(userParam) ? decryptUser(userParam) : userParam
+  }
+  const isAdmin = user === 'finereport_manage'
+
+  // 管理员强制进入模板管理
+  if (isAdmin && to.path === '/tasks') {
+    return next({ path: '/forms', query: { ...to.query, user: userParam } })
+  }
+
   // Preserve the 'user' query parameter across navigations
   if (from.query.user && !to.query.user) {
     next({
