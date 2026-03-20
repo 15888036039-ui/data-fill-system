@@ -23,8 +23,10 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.poi.util.IOUtils;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -64,6 +66,19 @@ public class ExcelService {
     private final JdbcTemplate jdbcTemplate;
 
     private final SystemConfigService configService;
+
+    static {
+        // 针对 50MB 压缩文件，解压后的单个 Record 块可能超过默认的 100MB 限制
+        // 这里设置为 500MB，允许处理更大或更复杂的 Excel 结构
+        IOUtils.setByteArrayMaxOverride(500 * 1024 * 1024);
+    }
+
+    /**
+     * 5.1 对外提供列名生成逻辑的测试接口
+     */
+    public String testNaming(String originalName) {
+        return generateDwColumnName(originalName, 0);
+    }
 
     /**
 
@@ -144,324 +159,141 @@ public class ExcelService {
 
      */
 
+    /**
+     * 6. 将 Excel 数据批量导入物理表
+     * 优化：元数据计算外提，分片分批入库
+     */
+    @Transactional
     public int importData(String formId, MultipartFile file, String mode, String creator) throws IOException {
-
         DataFillForm form = formMapper.selectById(formId);
-
-        if (form == null) {
-
-            throw new RuntimeException("表单不存在");
-
-        }
+        if (form == null) throw new RuntimeException("表单不存在");
 
         String tableName = form.getTableName();
-
-        if (!tableName.matches("^[a-zA-Z0-9_]+$")) {
-            throw new RuntimeException("表名称非 " + tableName);
-        }
-
         if ("overwrite".equals(mode)) {
-
-            // mode = overwrite. In the refactored soft-delete scheme, maybe we just delete them all.
-
-            String sql = "UPDATE \"" + tableName + "\" SET is_deleted = 1";
-
-            try {
-
-                jdbcTemplate.update(sql);
-
-            } catch (Exception e) {
-
-                 // 退化处                 jdbcTemplate.update("DELETE FROM \"" + tableName + "\"");
-
-            }
-
+            jdbcTemplate.update("UPDATE \"" + tableName + "\" SET is_deleted = 1, w_update_dt = NOW()");
         }
 
         List<FieldDef> fields;
-
         try {
-
             fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
-
         } catch (JsonProcessingException e) {
-
-             throw new RuntimeException("表单字段解析异常", e);
-
+            throw new RuntimeException("表单解析错误", e);
         }
 
-        // 建立灵活的映射，允许通过 数据库字段名(Template) 中文原Excel) 来匹
-        Map<String, String> headerToDbColumnMap = new java.util.HashMap<>();
-
+        Map<String, String> headerMap = new HashMap<>();
         for (FieldDef f : fields) {
-
-            if (f.getColumnName() != null) {
-
-                headerToDbColumnMap.put(f.getColumnName().trim(), f.getColumnName());
-
-            }
-
+            if (f.getColumnName() != null) headerMap.put(f.getColumnName().trim(), f.getColumnName());
             if (f.getName() != null) {
-
-                headerToDbColumnMap.put(f.getName().trim(), f.getColumnName());
-
-                // 兼容有些换行/回车符差                headerToDbColumnMap.put(f.getName().replaceAll("[\\r\\n]+", "").trim(), f.getColumnName());
-
+                headerMap.put(f.getName().trim(), f.getColumnName());
+                headerMap.put(f.getName().replaceAll("[\\r\\n]+", "").trim(), f.getColumnName());
             }
-
         }
 
-        int successCount = 0;
-
+        int totalCount = 0;
         try (XSSFWorkbook workbook = new XSSFWorkbook(file.getInputStream())) {
-
             Sheet sheet = workbook.getSheetAt(0);
-
-            if (sheet == null) {
-
-                return 0;
-
-            }
-
-            // 第一行作为“列名行
+            if (sheet == null) return 0;
             Row headerRow = sheet.getRow(0);
+            if (headerRow == null) return 0;
 
-            if (headerRow == null) {
-
-                return 0;
-
-            }
-
-            int lastColumn = headerRow.getLastCellNum();
-
-            String[] headers = new String[lastColumn];
-
-            boolean isTemplateMode = false;
-
-            for (int i = 0; i < lastColumn; i++) {
-
-                Cell cell = headerRow.getCell(i);
-
-                if (cell != null) {
-
-                    headers[i] = cell.getStringCellValue().trim();
-
-                    final String headerName = headers[i];
-
-                    // 如果表头直接命中了英文字段名，说明用户传的是系统生成Template（第1行英文，行中文）
-
-                    if (fields.stream().anyMatch(f -> headerName.equals(f.getColumnName()))) {
-
-                        isTemplateMode = true;
-
-                    }
-
-                } else {
-
-                    headers[i] = null;
-
+            int lastCol = headerRow.getLastCellNum();
+            String[] headers = new String[lastCol];
+            boolean isTemplate = false;
+            for (int i = 0; i < lastCol; i++) {
+                Cell c = headerRow.getCell(i);
+                if (c != null) {
+                    headers[i] = c.toString().trim();
+                    final String hn = headers[i];
+                    if (fields.stream().anyMatch(f -> hn.equals(f.getColumnName()))) isTemplate = true;
                 }
-
             }
 
-            int dataStartRow = isTemplateMode ? 2 : 1; // Template 从第3行取数据，原Excel从第2行取数据
+            Map<String, List<Integer>> groups = new HashMap<>();
+            java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("(.*?)(\\d*)$");
+            for (int c = 0; c < lastCol; c++) {
+                if (headers[c] == null) continue;
+                java.util.regex.Matcher m = pattern.matcher(headers[c].trim());
+                if (m.matches()) {
+                    String s = m.group(2); if (s.isEmpty()) s = "0";
+                    groups.computeIfAbsent(s, k -> new ArrayList<>()).add(c);
+                }
+            }
 
+            Map<String, String> kwPairs = new HashMap<>();
+            kwPairs.put("description", "amount"); kwPairs.put("desc", "amt");
+            kwPairs.put("name", "price"); kwPairs.put("type", "val");
+            kwPairs.put("key", "value"); kwPairs.put("item", "total");
+            kwPairs.put("label", "val"); kwPairs.put("msg", "count");
+            kwPairs.putAll(configService.getKwPairs());
+
+            int startRow = isTemplate ? 2 : 1;
             int lastRow = sheet.getLastRowNum();
+            int BATCH_SIZE = 1000;
+            List<Map<String, Object>> buffer = new ArrayList<>(BATCH_SIZE);
 
-            List<Map<String, Object>> rowsToInsert = new ArrayList<>();
-
-            for (int r = dataStartRow; r <= lastRow; r++) { 
-
-                Row row = sheet.getRow(r);
-
-                if (row == null) continue;
-
+            for (int r = startRow; r <= lastRow; r++) {
+                Row row = sheet.getRow(r); if (row == null) continue;
                 Map<String, Object> rowData = new LinkedHashMap<>();
+                Map<String, Object> extra = new LinkedHashMap<>();
+                boolean empty = true;
+                Set<Integer> consumed = new HashSet<>();
 
-                Map<String, Object> extraData = new LinkedHashMap<>();
-
-                boolean allEmpty = true;
-
-                // 1. 按序号对列进行分组 (支持可选序号，无序号视作 0)
-                Map<String, List<Integer>> groupedBySuffix = new java.util.HashMap<>();
-                java.util.regex.Pattern suffixPattern = java.util.regex.Pattern.compile("(.*?)(\\d*)$");
-
-                for (int c = 0; c < lastColumn; c++) {
-                    String h = headers[c];
-                    if (h == null) continue;
-                    java.util.regex.Matcher sm = suffixPattern.matcher(h.trim());
-                    if (sm.matches()) {
-                        String suffix = sm.group(2);
-                        if (suffix.isEmpty()) suffix = "0";
-                        groupedBySuffix.computeIfAbsent(suffix, k -> new ArrayList<>()).add(c);
-                    }
-                }
-
-                // 2. 在每个分组内识别有序 Key-Value
-                Set<Integer> consumedCols = new HashSet<>();
-
-                // 内置默认值始终加载，用户自定义配对覆盖/追加
-                Map<String, String> kwPairs = new HashMap<>();
-                kwPairs.put("description", "amount");
-                kwPairs.put("desc", "amt");
-                kwPairs.put("name", "price");
-                kwPairs.put("type", "val");
-                kwPairs.put("key", "value");
-                kwPairs.put("item", "total");
-                kwPairs.put("label", "val");
-                kwPairs.put("msg", "count");
-                kwPairs.putAll(configService.getKwPairs());
-
-                for (Map.Entry<String, List<Integer>> entry : groupedBySuffix.entrySet()) {
-
-                    List<Integer> colIndices = entry.getValue();
-
-                    if (colIndices.size() < 2) continue;
-
-                    Integer keyColIdx = null;
-
-                    Integer valColIdx = null;
-
-                    // 精确配对逻辑：仅当组内同时存在 Key Value 关键词时才提取
+                for (Map.Entry<String, List<Integer>> entry : groups.entrySet()) {
+                    List<Integer> idxs = entry.getValue(); if (idxs.size() < 2) continue;
+                    Integer foundK = null, foundV = null;
                     outer:
-
                     for (Map.Entry<String, String> pair : kwPairs.entrySet()) {
-
-                        String targetKey = pair.getKey().toLowerCase();
-
-                        String targetVal = pair.getValue().toLowerCase();
-
-                        Integer foundKey = null;
-
-                        Integer foundVal = null;
-
-                        for (Integer idx : colIndices) {
-                            String colName = headers[idx].toLowerCase().trim()
-                                    .replaceAll("\\d+$", "") // 移除尾部数字
-                                    .replaceAll("[_\\s]+$", ""); // 移除尾部连接符
-                            if (colName.endsWith(targetKey)) foundKey = idx;
-                            else if (colName.endsWith(targetVal)) foundVal = idx;
+                        String tk = pair.getKey().toLowerCase(), tv = pair.getValue().toLowerCase();
+                        Integer fk = null, fv = null;
+                        for (Integer idx : idxs) {
+                            String name = headers[idx].toLowerCase().trim().replaceAll("\\d+$", "").replaceAll("[_\\s]+$", "");
+                            if (name.endsWith(tk)) fk = idx; else if (name.endsWith(tv)) fv = idx;
                         }
-
-                        if (foundKey != null && foundVal != null) {
-
-                            keyColIdx = foundKey;
-
-                            valColIdx = foundVal;
-
-                            break outer;
-
-                        }
-
+                        if (fk != null && fv != null) { foundK = fk; foundV = fv; break outer; }
                     }
-
-                    if (keyColIdx != null && valColIdx != null) {
-
-                        Cell kCell = row.getCell(keyColIdx);
-
-                        Cell vCell = row.getCell(valColIdx);
-
-                        Object kVal = (kCell == null) ? null : kCell.toString().trim();
-
-                        Object vVal = (vCell == null) ? null : (vCell.getCellType() == org.apache.poi.ss.usermodel.CellType.NUMERIC ? vCell.getNumericCellValue() : vCell.toString().trim());
-
-                        if (kVal != null && !kVal.toString().isEmpty() && vVal != null && !vVal.toString().isEmpty()) {
-
-                            extraData.put(kVal.toString(), vVal);
-
-                            consumedCols.add(keyColIdx);
-
-                            consumedCols.add(valColIdx);
-
+                    if (foundK != null && foundV != null) {
+                        Cell kc = row.getCell(foundK), vc = row.getCell(foundV);
+                        String kv = (kc == null) ? null : kc.toString().trim();
+                        Object vv = (vc == null) ? null : (vc.getCellType() == org.apache.poi.ss.usermodel.CellType.NUMERIC ? vc.getNumericCellValue() : vc.toString().trim());
+                        if (kv != null && !kv.isEmpty() && vv != null && !"".equals(vv)) {
+                            extra.put(kv, vv); consumed.add(foundK); consumed.add(foundV);
                         }
-
                     }
-
-                    // 移除了之前的 else 兜底逻辑：非配对列将作为普通字段处理，不再强行塞入 JSON 归集单元
-
                 }
 
-                // 3. 处理常规
-                for (int c = 0; c < lastColumn; c++) {
-
-                    if (consumedCols.contains(c)) continue;
-
-                    String columnName = headers[c];
-
-                    if (columnName == null) continue;
-
-                    Cell cell = row.getCell(c);
-
-                    if (cell == null || cell.getCellType() == org.apache.poi.ss.usermodel.CellType.BLANK) continue;
-
-                    Object value = switch (cell.getCellType()) {
-
+                for (int c = 0; c < lastCol; c++) {
+                    if (consumed.contains(c) || headers[c] == null) continue;
+                    Cell cell = row.getCell(c); if (cell == null || cell.getCellType() == org.apache.poi.ss.usermodel.CellType.BLANK) continue;
+                    Object val = switch (cell.getCellType()) {
                         case STRING -> cell.getStringCellValue();
-
-                        case NUMERIC -> {
-
-                            if (org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) yield cell.getDateCellValue();
-
-                            yield cell.getNumericCellValue();
-
-                        }
-
+                        case NUMERIC -> org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell) ? cell.getDateCellValue() : cell.getNumericCellValue();
                         case BOOLEAN -> cell.getBooleanCellValue();
-
                         default -> cell.toString();
-
                     };
-
-                    if (value != null && !"".equals(value)) {
-
-                        allEmpty = false;
-
-                        String dbColumnName = headerToDbColumnMap.get(columnName);
-
-                        if (dbColumnName == null) {
-
-                            dbColumnName = headerToDbColumnMap.get(columnName.replaceAll("[\\r\\n]+", ""));
-
-                        }
-
-                        if (dbColumnName != null) {
-
-                            rowData.put(dbColumnName, value);
-
-                        } else {
-
-                            String normalizedKey = generateDwColumnName(columnName, c);
-
-                            extraData.put(normalizedKey, value);
-
-                        }
-
+                    if (val != null && !"".equals(val)) {
+                        empty = false;
+                        String dbCol = headerMap.get(headers[c]);
+                        if (dbCol == null) dbCol = headerMap.get(headers[c].replaceAll("[\\r\\n]+", ""));
+                        if (dbCol != null) rowData.put(dbCol, val);
+                        else extra.put(generateDwColumnName(headers[c], c), val);
                     }
-
                 }
-
-                if (allEmpty && extraData.isEmpty()) continue;
-
-                if (!extraData.isEmpty()) rowData.put("extra_data", extraData);
-
+                if (empty && extra.isEmpty()) continue;
+                if (!extra.isEmpty()) rowData.put("extra_data", extra);
                 if (creator != null && !creator.isBlank()) rowData.put("creator", creator);
+                buffer.add(rowData);
 
-                rowsToInsert.add(rowData);
-
+                if (buffer.size() >= BATCH_SIZE) {
+                    dataDmlService.batchInsertRowData(formId, buffer);
+                    totalCount += buffer.size(); buffer.clear();
+                }
             }
-
-            if (!rowsToInsert.isEmpty()) {
-
-                dataDmlService.batchInsertRowData(formId, rowsToInsert);
-
-                successCount = rowsToInsert.size();
-
+            if (!buffer.isEmpty()) {
+                dataDmlService.batchInsertRowData(formId, buffer);
+                totalCount += buffer.size(); buffer.clear();
             }
-
         }
-
-        return successCount;
-
+        return totalCount;
     }
 
     /**
@@ -681,33 +513,20 @@ public class ExcelService {
                 def.setColumnName(finalColName);
 
                 // 类型探测
-
                 def.setType("input");
+                def.setDbType("VARCHAR(255)");
 
                 if (smartType && s.nonBlankCount > 0) {
-
                     if (s.couldBeDate) {
-
                         def.setType("datetime");
-
+                        def.setDbType("TIMESTAMP");
                     } else if (s.couldBeNumber) {
-
                         def.setType("number");
-
-                    } else if (s.uniqueValues.size() > 1 && s.uniqueValues.size() <= 10 && (double)s.nonBlankCount / s.uniqueValues.size() > 1.5) {
-
-                        // 如果去重值少0个且存在明显重复（平均每个值出现超.5次）
-
-                        def.setType("select");
-
-                        def.setOptions(new ArrayList<>(s.uniqueValues));
-
+                        def.setDbType("INTEGER");
                     } else if (s.nonBlankCount > 0 && s.rawValues.stream().anyMatch(v -> v.length() > 50)) {
-
                         def.setType("textarea");
-
+                        def.setDbType("TEXT");
                     }
-
                 }
 
                 // 启发式：默认不设为必填（Excel 数据通常不均衡），仅前几个设为可筛                def.setRequired(false);

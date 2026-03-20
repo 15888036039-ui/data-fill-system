@@ -128,8 +128,8 @@
             <div class="section-title">
               <el-icon><Grid /></el-icon> 表单字段定义
             </div>
-            <div v-if="!isEditMode" class="field-actions">
-              <el-button icon="Upload" plain @click="importDialogVisible = true">从 Excel 导入结构</el-button>
+            <div class="field-actions">
+              <el-button icon="Upload" plain @click="importDialogVisible = true" v-if="!isEditMode">从 Excel 导入结构</el-button>
               <el-button type="primary" plain icon="Plus" @click="addField">新增字段</el-button>
             </div>
           </div>
@@ -139,8 +139,8 @@
           </p>
           <el-alert
             v-else
-            title="当前处于元数据编辑模式，物理表结构已锁定。如需强制修改表结构，请删除后重新创建。"
-            type="warning"
+            title="当前处于元数据编辑模式，物理表结构已锁定。您可以修改字段显示名称或在末尾新增字段，但不可更改已有字段的物理列名和数据类型。"
+            type="success"
             show-icon
             style="margin-bottom: 24px;"
             :closable="false"
@@ -150,22 +150,34 @@
              <el-table :data="fields" style="width: 100%">
                 <el-table-column label="中文显示名" min-width="180">
                   <template #default="scope">
-                    <el-input v-model="scope.row.name" placeholder="字段标题" :disabled="isEditMode" />
+                    <el-input v-model="scope.row.name" placeholder="字段标题" />
                   </template>
                 </el-table-column>
                 <el-table-column label="物理列名 (英文)" min-width="180">
                   <template #default="scope">
-                    <el-input v-model="scope.row.columnName" placeholder="c_name" :disabled="isEditMode" />
+                    <el-input v-model="scope.row.columnName" placeholder="c_name" :disabled="isEditMode && !!scope.row.id_mark" />
                   </template>
                 </el-table-column>
-                <el-table-column label="控制类型" width="160">
+                <el-table-column label="字段属性 (PG 类型)" min-width="200">
                   <template #default="scope">
-                    <el-select v-model="scope.row.type" :disabled="isEditMode">
-                      <el-option label="单行文本" value="input" />
-                      <el-option label="多行文本" value="textarea" />
-                      <el-option label="数字输入" value="number" />
-                      <el-option label="下拉选择" value="select" />
-                      <el-option label="日期时间" value="datetime" />
+                    <el-select
+                      v-model="scope.row.dbType"
+                      filterable
+                      allow-create
+                      default-first-option
+                      placeholder="例如: VARCHAR(255)"
+                      :disabled="isEditMode && !!scope.row.id_mark"
+                      style="width: 100%"
+                      @change="(val) => handleDbTypeChange(val, scope.row)"
+                    >
+                      <el-option label="VARCHAR(255)" value="VARCHAR(255)" />
+                      <el-option label="TEXT" value="TEXT" />
+                      <el-option label="INTEGER" value="INTEGER" />
+                      <el-option label="NUMERIC(15, 4)" value="NUMERIC(15, 4)" />
+                      <el-option label="TIMESTAMP" value="TIMESTAMP" />
+                      <el-option label="BOOLEAN" value="BOOLEAN" />
+                      <el-option label="JSONB" value="JSONB" />
+                      <el-option label="DATE" value="DATE" />
                     </el-select>
                   </template>
                 </el-table-column>
@@ -179,7 +191,7 @@
                     <el-switch v-model="scope.row.filterable" :disabled="isEditMode" />
                   </template>
                 </el-table-column>
-                <el-table-column v-if="!isEditMode" label="操作" width="80" align="center">
+                <el-table-column label="操作" width="80" align="center">
                   <template #default="scope">
                     <el-button type="danger" icon="Delete" circle plain @click="removeField(scope.$index)" />
                   </template>
@@ -187,7 +199,7 @@
              </el-table>
           </div>
           
-          <div v-if="!isEditMode" class="add-field-placeholder" @click="addField">
+          <div class="add-field-placeholder" @click="addField">
             <el-icon><Plus /></el-icon> <span>点击添加更多业务字段...</span>
           </div>
 
@@ -299,7 +311,7 @@ const formMeta = reactive({
 })
 
 const fields = ref([
-  { name: '', columnName: '', type: 'input', optionsStr: '', required: false, filterable: false }
+  { name: '', columnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false }
 ])
 
 const importDialogVisible = ref(false)
@@ -333,7 +345,22 @@ const allUserEmails = computed(() =>
 const recipientList = ref([])
 
 const addField = () => {
-  fields.value.push({ name: '', columnName: '', type: 'input', optionsStr: '', required: false, filterable: false })
+  fields.value.push({ name: '', columnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false })
+}
+
+const handleDbTypeChange = (dbType, row) => {
+  const typeStr = (dbType || '').toUpperCase()
+  if (typeStr.includes('TIMESTAMP') || typeStr.includes('DATE') || typeStr.includes('TIME')) {
+      row.type = 'datetime'
+  } else if (typeStr.includes('INT') || typeStr.includes('NUMERIC') || typeStr.includes('DECIMAL') || typeStr.includes('FLOAT') || typeStr.includes('DOUBLE')) {
+      row.type = 'number'
+  } else if (typeStr.includes('TEXT') || typeStr.includes('JSON')) {
+      row.type = 'textarea'
+  } else if (typeStr.includes('BOOLEAN') || typeStr.includes('BOOL')) {
+      row.type = 'switch'
+  } else {
+      row.type = 'input'
+  }
 }
 
 const removeField = (index) => {
@@ -357,14 +384,19 @@ const onFileChange = async (uploadFile) => {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
     if (res.data && res.data.length > 0) {
-      fields.value = res.data.map(f => ({
-        name: f.name,
-        columnName: f.columnName,
-        type: f.type || 'input',
-        optionsStr: f.options ? f.options.join(',') : '',
-        required: f.required || false,
-        filterable: f.filterable || false
-      }))
+      fields.value = res.data.map(f => {
+        const row = {
+          name: f.name,
+          columnName: f.columnName,
+          type: f.type || 'input',
+          dbType: f.dbType || 'VARCHAR(255)',
+          required: f.required || false,
+          filterable: f.filterable || false
+        }
+        // 导入时自动执行一次推断识别，确保 type 字段正确
+        handleDbTypeChange(row.dbType, row)
+        return row
+      })
         
       // 汇总报告
       const types = res.data.reduce((acc, f) => {
@@ -397,9 +429,10 @@ const submitFormAndCreateTable = async () => {
     name: f.name,
     columnName: f.columnName,
     type: f.type,
+    dbType: f.dbType,
     required: f.required,
     filterable: f.filterable,
-    options: f.type === 'select' && f.optionsStr ? f.optionsStr.split(',') : null
+    options: null
   }))
 
   const payload = {
@@ -431,7 +464,8 @@ const loadFormForEdit = async () => {
         try { fillUserList.value = JSON.parse(res.data.fillUserEmails) } catch (e) { fillUserList.value = [] }
     }
     if (res.data.forms) {
-        fields.value = JSON.parse(res.data.forms)
+        const parsed = JSON.parse(res.data.forms)
+        fields.value = parsed.map(f => ({ ...f, id_mark: true })) // 标记为已有字段
     }
   } catch (e) {}
 }
@@ -442,6 +476,10 @@ const updateFormMeta = async () => {
     ...formMeta,
     recipientEmails: recipientList.value.length > 0 ? JSON.stringify(recipientList.value) : null,
     fillUserEmails: fillUserList.value.length > 0 ? JSON.stringify(fillUserList.value) : null,
+    forms: JSON.stringify(fields.value.map(f => {
+      const { id_mark, ...rest } = f
+      return rest
+    }))
   }
   try {
     await axios.put(`/api/fill/forms/${id}`, payload)
@@ -529,8 +567,8 @@ onMounted(() => {
 .field-info {
   font-size: 13px;
   color: #94a3b8;
-  margin-top: -12px;
-  margin-bottom: 24px;
+  margin-top: -8px;
+  margin-bottom: 12px;
 }
 
 .fields-list {

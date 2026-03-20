@@ -20,7 +20,7 @@
     </div>
 
     <el-card class="table-card" shadow="never">
-      <el-table :data="filteredForms" style="width: 100%" v-loading="loading">
+      <el-table :data="paginatedForms" style="width: 100%" v-loading="loading">
         <el-table-column prop="name" label="模板名称" min-width="200">
           <template #default="scope">
             <div class="form-name-cell">
@@ -82,6 +82,18 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div class="pagination-container">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          :total="filteredForms.length"
+          @size-change="handlePaginationChange"
+          @current-change="handlePaginationChange"
+        />
+      </div>
     </el-card>
   </div>
 </template>
@@ -100,8 +112,18 @@ const searchQuery = ref('')
 const statusFilter = ref('')
 const filteredForms = ref([])
 
+const currentPage = ref(1)
+const pageSize = ref(10)
+
+// 计算属性：当前页显示的数据
+const paginatedForms = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return filteredForms.value.slice(start, end)
+})
+
 const handleFilter = () => {
-  // 仅在点击“查询”按钮时才过滤数据
+  currentPage.value = 1 // 过滤时重置为第一页
   filteredForms.value = forms.value.filter(form => {
     const matchesSearch = !searchQuery.value || 
       form.name.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
@@ -111,6 +133,10 @@ const handleFilter = () => {
     
     return matchesSearch && matchesStatus
   })
+}
+
+const handlePaginationChange = () => {
+  // 分页改变逻辑，如果需要可以在这里加载后端数据
 }
 
 const resetFilter = () => {
@@ -242,6 +268,13 @@ onMounted(() => {
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+.pagination-container {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 20px;
+  padding: 0 8px;
 }
 
 :deep(.el-table__header) {

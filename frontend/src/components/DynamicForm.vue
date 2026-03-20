@@ -67,6 +67,14 @@
             format="YYYY-MM-DD HH:mm"
             style="width: 100%"
           />
+
+          <!-- 布尔开关 -->
+          <el-switch
+            v-if="field.type === 'switch' || field.type === 'boolean'"
+            v-model="formData[field.columnName]"
+            active-text="是"
+            inactive-text="否"
+          />
         </el-form-item>
       </el-col>
     </el-row>

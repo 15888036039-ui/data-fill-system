@@ -21,6 +21,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -38,10 +39,9 @@ import java.util.List;
 
 import java.util.Map;
 
+@Slf4j
 @Service
-
 @RequiredArgsConstructor
-
 public class DynamicTableDdlService {
 
     private final DataFillFormMapper formMapper;
@@ -113,77 +113,52 @@ public class DynamicTableDdlService {
         for (FieldDef field : fields) {
 
             String colName = field.getColumnName();
-
             if (colName == null || !colName.matches("^[a-zA-Z0-9_]+$")) {
-
                 throw new RuntimeException("列名只能包含字母、数字和下划线: " + colName);
-
             }
-
             if (reservedNames.contains(colName.toLowerCase())) {
-
                 if ("extra_data".equalsIgnoreCase(colName)) {
-
                     // 允许 extra_data 出现在字段列表中（用于视觉提示），但不需要为其生成额外的物理列 DDL
-
                     continue; 
-
                 }
-
                 throw new RuntimeException("列名 '" + colName + "' 是系统保留字段，不允许用户创建，请修改英文字段名");
-
             }
-
             if (!seenNames.add(colName.toLowerCase())) {
-
                 throw new RuntimeException("检测到重复的英文字段名: " + colName);
-
             }
 
             ddl.append("\"").append(field.getColumnName()).append("\" ");
-
-            // 简单的类型映射 (PGSQL 语法)
-
-            switch (field.getType().toLowerCase()) {
-
-                case "varchar":
-
-                case "text":
-
-                case "input":
-
-                case "select":
-
-                    ddl.append("VARCHAR(").append(field.getLength() != null ? field.getLength() : 255).append(")");
-
-                    break;
-
-                case "int":
-
-                case "number":
-
-                    ddl.append("INTEGER");
-
-                    break;
-
-                case "decimal":
-
-                    ddl.append("NUMERIC(15, 4)");
-
-                    break;
-
-                case "datetime":
-
-                case "date":
-
-                    ddl.append("TIMESTAMP");
-
-                    break;
-
-                default:
-
-                    ddl.append("VARCHAR(255)");
-
+            
+            // 优先使用用户自定义的物理类型 (dbType)
+            if (field.getDbType() != null && !field.getDbType().trim().isEmpty()) {
+                ddl.append(field.getDbType());
+            } else {
+                // 简单的类型映射 (PGSQL 语法)
+                switch (field.getType().toLowerCase()) {
+                    case "varchar":
+                    case "text":
+                    case "input":
+                    case "select":
+                    case "textarea":
+                        ddl.append("VARCHAR(").append(field.getLength() != null ? field.getLength() : 255).append(")");
+                        break;
+                    case "int":
+                    case "number":
+                        ddl.append("INTEGER");
+                        break;
+                    case "decimal":
+                        ddl.append("NUMERIC(15, 4)");
+                        break;
+                    case "datetime":
+                    case "date":
+                        ddl.append("TIMESTAMP");
+                        break;
+                    case "boolean":
+                        ddl.append("BOOLEAN");
+                        break;
+                    default:
+                        ddl.append("VARCHAR(255)");
+                }
             }
 
             if (field.getRequired() != null && field.getRequired()) {
@@ -402,10 +377,59 @@ public class DynamicTableDdlService {
 
         exist.setUpdateTime(now);
 
-        // 更新时重新核算截止时间
+        // 1.7 [新增/修改逻辑]: 处理字段变更（仅支持修改中文名和新增列）
+        if (incoming.getForms() != null) {
+            try {
+                List<FieldDef> newFields = objectMapper.readValue(incoming.getForms(), new TypeReference<List<FieldDef>>() {});
+                List<FieldDef> oldFields = objectMapper.readValue(exist.getForms(), new TypeReference<List<FieldDef>>() {});
+                
+                String tableName = exist.getTableName();
+                Map<String, FieldDef> oldFieldMap = new LinkedHashMap<>();
+                for (FieldDef f : oldFields) {
+                    oldFieldMap.put(f.getColumnName().toLowerCase(), f);
+                }
 
-        schedulerService.initOrRefreshDeadline(exist, now);
+                for (FieldDef nf : newFields) {
+                    String colName = nf.getColumnName();
+                    if (colName == null) continue;
+                    
+                    FieldDef of = oldFieldMap.get(colName.toLowerCase());
+                    if (of == null) {
+                        // A: 发现新字段 -> 执行 ALTER TABLE ADD COLUMN
+                        log.info("表单 {} 检测到新字段 {}, 准备执行物理加列", exist.getName(), colName);
+                        StringBuilder addColSql = new StringBuilder();
+                        addColSql.append("ALTER TABLE \"").append(tableName).append("\" ADD COLUMN \"").append(colName).append("\" ");
+                        
+                        if (nf.getDbType() != null && !nf.getDbType().isBlank()) {
+                            addColSql.append(nf.getDbType());
+                        } else {
+                            addColSql.append("VARCHAR(255)");
+                        }
+                        
+                        if (nf.getRequired() != null && nf.getRequired()) {
+                            addColSql.append(" DEFAULT ''"); // 生产环境 ADD COLUMN NOT NULL 建议带 DEFAULT
+                        }
+                        
+                        dynamicSqlMapper.executeDdl(addColSql.toString());
+                        // 同步添加注释
+                        dynamicSqlMapper.executeDdl("COMMENT ON COLUMN \"" + tableName + "\".\"" + colName + "\" IS '" + nf.getName().replace("'", "''") + "';");
+                    } else {
+                        // B: 现有字段 -> 检查名称是否改变，更新备注
+                        if (!nf.getName().equals(of.getName())) {
+                            log.info("表单 {} 字段 {} 名称由 {} 改为 {}, 更新备注", exist.getName(), colName, of.getName(), nf.getName());
+                            dynamicSqlMapper.executeDdl("COMMENT ON COLUMN \"" + tableName + "\".\"" + colName + "\" IS '" + nf.getName().replace("'", "''") + "';");
+                        }
+                    }
+                }
+                // 更新元数据 JSON
+                exist.setForms(incoming.getForms());
+            } catch (Exception e) {
+                log.error("更新表单字段元数据失败", e);
+                throw new RuntimeException("更新表单物理结构失败: " + e.getMessage());
+            }
+        }
 
+        // 1.8 更新元数据
         formMapper.updateById(exist);
 
     }

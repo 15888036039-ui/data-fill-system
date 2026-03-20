@@ -11,5 +11,6 @@ public class FieldDef {
     private Integer length;    // 长度：如 255
     private Boolean required;  // 是否必填
     private Boolean filterable;// 是否作为查询筛选条件
+    private String dbType;     // 物理数据库类型，例如: VARCHAR(255), INTEGER, TEXT
     private List<String> options; // 下拉框选项 (仅给前端使用，建表时忽略)
 }
