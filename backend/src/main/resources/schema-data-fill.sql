@@ -55,6 +55,9 @@ ALTER TABLE data_fill_form
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS fill_user_emails TEXT;
 
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS kv_config TEXT;
+
 
 -- 2. 邮件通知表：email_notification（对应 EmailNotification 实体）
 CREATE TABLE IF NOT EXISTS email_notification (

@@ -393,6 +393,10 @@ public class DynamicTableDdlService {
                     String colName = nf.getColumnName();
                     if (colName == null) continue;
                     
+                    if (!colName.matches("^[a-zA-Z0-9_]+$")) {
+                        throw new RuntimeException("列名只能包含字母、数字和下划线: " + colName);
+                    }
+
                     FieldDef of = oldFieldMap.get(colName.toLowerCase());
                     if (of == null) {
                         // A: 发现新字段 -> 执行 ALTER TABLE ADD COLUMN
@@ -427,6 +431,10 @@ public class DynamicTableDdlService {
                 log.error("更新表单字段元数据失败", e);
                 throw new RuntimeException("更新表单物理结构失败: " + e.getMessage());
             }
+        }
+
+        if (incoming.getKvConfig() != null || incoming.getKvConfig() == null) {
+            exist.setKvConfig(incoming.getKvConfig());
         }
 
         // 1.8 更新元数据

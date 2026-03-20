@@ -158,54 +158,43 @@ public class DynamicDataDmlService {
 
         String applicantEmail = applicantEmailObj != null ? applicantEmailObj.toString() : null;
 
+        // 解析表单定义以识别 JSONB 字段
+        java.util.Set<String> jsonbCols = new java.util.HashSet<>();
+        jsonbCols.add("extra_data");
+        try {
+            List<FieldDef> fields = objectMapper.readValue(form.getForms(), new com.fasterxml.jackson.core.type.TypeReference<List<FieldDef>>() {});
+            for (FieldDef f : fields) {
+                if ("JSONB".equalsIgnoreCase(f.getDbType()) || (f.getColumnName() != null && f.getColumnName().endsWith("_json"))) {
+                    jsonbCols.add(f.getColumnName().toLowerCase());
+                }
+            }
+        } catch (Exception ignored) {}
+
         for (Map.Entry<String, Object> entry : rowData.entrySet()) {
-
             String key = entry.getKey();
-
-            // 过滤系统保留字段和校验工具字段
-
-            if (SYSTEM_FIELDS.contains(key.toLowerCase())) {
-
-                continue;
-
-            }
-
-            if (!key.matches("^[a-zA-Z0-9_]+$")) {
-
-                continue; // 忽略非法列名，防止 SQL 注入
-
-            }
+            if (SYSTEM_FIELDS.contains(key.toLowerCase())) continue;
+            if (!key.matches("^[a-zA-Z0-9_]+$")) continue;
 
             columns.add("\"" + key + "\"");
-
-            if (key.equalsIgnoreCase("extra_data")) {
-
-                placeholders.add("?::jsonb");
-
-            } else {
-
-                placeholders.add("?");
-
-            }
-
+            
             Object val = entry.getValue();
-
-            if (val != null && key.equalsIgnoreCase("extra_data") && !(val instanceof String)) {
-
-                 try {
-
-                     val = objectMapper.writeValueAsString(val);
-
-                 } catch (JsonProcessingException e) {
-
-                     val = "{}";
-
-                 }
-
+            if (jsonbCols.contains(key.toLowerCase())) {
+                placeholders.add("?");
+                if (val != null && !(val instanceof String)) {
+                    try { val = objectMapper.writeValueAsString(val); } catch (com.fasterxml.jackson.core.JsonProcessingException e) { val = "{}"; }
+                }
+                if (val != null) {
+                    try {
+                        org.postgresql.util.PGobject pgObj = new org.postgresql.util.PGobject();
+                        pgObj.setType("jsonb");
+                        pgObj.setValue(val.toString());
+                        val = pgObj;
+                    } catch (Exception e) {}
+                }
+            } else {
+                placeholders.add("?");
             }
-
             args.add(val);
-
         }
 
         // 专家补丁：确保 extra_data 始终参与（如果没有在循环中添加）
@@ -214,9 +203,16 @@ public class DynamicDataDmlService {
 
             columns.add("\"extra_data\"");
 
-            placeholders.add("?::jsonb");
+            placeholders.add("?");
 
-            args.add("{}");
+            try {
+                org.postgresql.util.PGobject pgObj = new org.postgresql.util.PGobject();
+                pgObj.setType("jsonb");
+                pgObj.setValue("{}");
+                args.add(pgObj);
+            } catch (Exception e) {
+                args.add("{}");
+            }
 
         }
 
@@ -291,7 +287,7 @@ public class DynamicDataDmlService {
 
         // 基础列
 
-        String baseSql = String.format("INSERT INTO \"%s\" (%%s) VALUES (%%s)", tableName);
+
 
         List<String> columns = new ArrayList<>();
 
@@ -327,71 +323,77 @@ public class DynamicDataDmlService {
 
         String colPart = String.join(", ", columns);
 
-        List<String> placeholders = new ArrayList<>();
-
-        for (String col : columns) {
-
-            if ("\"extra_data\"".equalsIgnoreCase(col)) {
-
-                placeholders.add("?::jsonb");
-
-            } else {
-
-                placeholders.add("?");
-
+        java.util.Set<String> jsonbCols = new java.util.HashSet<>();
+        jsonbCols.add("extra_data");
+        for (FieldDef f : fields) {
+            if ("JSONB".equalsIgnoreCase(f.getDbType()) || (f.getColumnName() != null && f.getColumnName().endsWith("_json"))) {
+                jsonbCols.add(f.getColumnName().toLowerCase());
             }
-
         }
 
-        String placePart = String.join(", ", placeholders);
+        String copySql = String.format("COPY \"%s\" (%s) FROM STDIN WITH (FORMAT text, DELIMITER '\t', NULL '\\N', ENCODING 'UTF8')", tableName, colPart);
 
-        String sql = String.format(baseSql, colPart, placePart);
+        StringBuilder tsvBuilder = new StringBuilder();
 
-        List<Object[]> batchArgs = new ArrayList<>();
-
-        for (Map<String, Object> row : rows) {
-
-            List<Object> args = new ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) {
+            Map<String, Object> row = rows.get(i);
 
             String rowId = java.util.UUID.randomUUID().toString().replace("-", "");
-
-            args.add(rowId);
-
-            args.add(now);
-
-            args.add(now);
+            
+            // Build the TSV row
+            appendTsv(tsvBuilder, rowId);
+            appendTsv(tsvBuilder, now);
+            appendTsv(tsvBuilder, now);
 
             if (hasLoadUser) {
-
                 Object u = row.get("load_user");
-
                 if (u == null) u = row.get("creator");
-
-                args.add(u);
-
+                appendTsv(tsvBuilder, u);
             }
 
             for (String col : dataColumns) {
-
-                args.add(row.get(col));
-
+                Object val = row.get(col);
+                if (val != null && !(val instanceof String)) {
+                    if (jsonbCols.contains(col.toLowerCase())) {
+                        try { val = objectMapper.writeValueAsString(val); } catch (Exception e) { val = "{}"; }
+                    }
+                }
+                appendTsv(tsvBuilder, val);
             }
 
             Object extra = row.get("extra_data");
-
             if (extra != null && !(extra instanceof String)) {
-
                 try { extra = objectMapper.writeValueAsString(extra); } catch (Exception e) { extra = "{}"; }
-
             }
+            if (extra == null) extra = "{}";
+            appendTsv(tsvBuilder, extra);
 
-            args.add(extra);
-
-            batchArgs.add(args.toArray());
-
+            // Replace last tab with newline
+            tsvBuilder.setCharAt(tsvBuilder.length() - 1, '\n');
         }
 
-        jdbcTemplate.batchUpdate(sql, batchArgs);
+        jdbcTemplate.execute((java.sql.Connection conn) -> {
+            try {
+                org.postgresql.PGConnection pgConn = conn.unwrap(org.postgresql.PGConnection.class);
+                org.postgresql.copy.CopyManager copyManager = pgConn.getCopyAPI();
+                java.io.StringReader reader = new java.io.StringReader(tsvBuilder.toString());
+                copyManager.copyIn(copySql, reader);
+                return null;
+            } catch (Exception e) {
+                throw new RuntimeException("COPY failed: " + e.getMessage(), e);
+            }
+        });
+    }
+
+    private void appendTsv(StringBuilder sb, Object val) {
+        if (val == null) {
+            sb.append("\\N\t");
+        } else {
+            String str = val.toString();
+            // Escape backslashes, tabs, newlines, and carriage returns
+            str = str.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r");
+            sb.append(str).append('\t');
+        }
     }
 
     /**
@@ -416,16 +418,11 @@ public class DynamicDataDmlService {
             try {
                 Map<String, Object> record = jdbcTemplate.queryForMap(checkSql, dataId);
                 String owner = (String) record.get("load_user");
-                LocalDateTime insertDt = (LocalDateTime) record.get("w_insert_dt");
+                // LocalDateTime insertDt = (LocalDateTime) record.get("w_insert_dt");
 
-                // 1. 归属校验
+                // 1. 归属校验 (保留数据隔离，但删掉宽限期锁定)
                 if (owner != null && !owner.equalsIgnoreCase(operatorEmail)) {
                     throw new RuntimeException("权限不足：您只能修改自己填报的数据");
-                }
-
-                // 2. 行级宽限期校验：只能修改 24 小时内创建的记录
-                if (insertDt != null && LocalDateTime.now().isAfter(insertDt.plusHours(24))) {
-                    throw new RuntimeException("操作已锁定：该记录已超过 24 小时修改宽限期，请联系管理员处理。");
                 }
             } catch (RuntimeException e) {
                 throw e;
@@ -436,22 +433,41 @@ public class DynamicDataDmlService {
 
         List<Object> args = new ArrayList<>();
 
-        for (Map.Entry<String, Object> entry : rowData.entrySet()) {
-
-            String key = entry.getKey();
-
-            if (SYSTEM_FIELDS.contains(key.toLowerCase())) {
-
-                continue;
-
+        // 解析表单定义以识别 JSONB 字段
+        java.util.Set<String> jsonbCols = new java.util.HashSet<>();
+        jsonbCols.add("extra_data");
+        try {
+            List<FieldDef> fields = objectMapper.readValue(form.getForms(), new com.fasterxml.jackson.core.type.TypeReference<List<FieldDef>>() {});
+            for (FieldDef f : fields) {
+                if ("JSONB".equalsIgnoreCase(f.getDbType()) || (f.getColumnName() != null && f.getColumnName().endsWith("_json"))) {
+                    jsonbCols.add(f.getColumnName().toLowerCase());
+                }
             }
+        } catch (Exception ignored) {}
 
+        for (Map.Entry<String, Object> entry : rowData.entrySet()) {
+            String key = entry.getKey();
+            if (SYSTEM_FIELDS.contains(key.toLowerCase())) continue;
             if (!key.matches("^[a-zA-Z0-9_]+$")) continue;
 
-            sets.add("\"" + key + "\" = ");
-
-            args.add(entry.getValue());
-
+            Object val = entry.getValue();
+            if (jsonbCols.contains(key.toLowerCase())) {
+                sets.add("\"" + key + "\" = ?");
+                if (val != null && !(val instanceof String)) {
+                    try { val = objectMapper.writeValueAsString(val); } catch (Exception e) { val = "{}"; }
+                }
+                if (val != null) {
+                    try {
+                        org.postgresql.util.PGobject pgObj = new org.postgresql.util.PGobject();
+                        pgObj.setType("jsonb");
+                        pgObj.setValue(val.toString());
+                        val = pgObj;
+                    } catch (Exception e) {}
+                }
+            } else {
+                sets.add("\"" + key + "\" = ?");
+            }
+            args.add(val);
         }
 
         sets.add("\"w_update_dt\" = CURRENT_TIMESTAMP");
@@ -556,13 +572,9 @@ public class DynamicDataDmlService {
                 }
 
                 if (firstSubmitTime != null) {
-                    LocalDateTime now = LocalDateTime.now();
-                    LocalDateTime graceEndTime = firstSubmitTime.plusHours(24);
-                    boolean isLocked = now.isAfter(graceEndTime);
-                    
                     Map<String, Object> lockStatus = new java.util.HashMap<>();
-                    lockStatus.put("isLocked", !isAdmin && isLocked);
-                    lockStatus.put("graceEndTime", graceEndTime.toString());
+                    lockStatus.put("isLocked", false); // 永久开放：不再根据时间锁定
+                    lockStatus.put("graceEndTime", null);
                     lockStatus.put("hasSubmitted", true);
                     result.put("lockStatus", lockStatus);
                 } else {
@@ -714,14 +726,10 @@ public class DynamicDataDmlService {
                 try {
                     Map<String, Object> record = jdbcTemplate.queryForMap(checkSql, dataId);
                     String owner = (String) record.get("load_user");
-                    LocalDateTime insertDt = (LocalDateTime) record.get("w_insert_dt");
+                    // LocalDateTime insertDt = (LocalDateTime) record.get("w_insert_dt");
 
                     if (owner != null && !owner.equalsIgnoreCase(operatorEmail)) {
                         throw new RuntimeException("权限不足：您包含非本人填报的数据，无法批量删除");
-                    }
-
-                    if (insertDt != null && LocalDateTime.now().isAfter(insertDt.plusHours(24))) {
-                        throw new RuntimeException("操作已锁定：包含已过 24 小时宽限期的数据，无法删除。");
                     }
                 } catch (RuntimeException e) {
                     throw e;
@@ -745,24 +753,15 @@ public class DynamicDataDmlService {
 
         }
 
-        String updateSql = String.format("UPDATE \"%s\" SET is_deleted = 1 WHERE id IN (%s)", tableName, placeholders.toString());
+        String updateSql = String.format("UPDATE \"%s\" SET is_deleted = 1 WHERE \"id\" IN (%s)", tableName, placeholders.toString());
 
         List<Object> args = new ArrayList<>(dataIds);
 
-        // 由于有些老表可能没有 is_deleted 列，在尝试更新前，可以选择忽略错误，或者让管理员执行老表升级，这里直接尝试更新
-
         try {
-
             jdbcTemplate.update(updateSql, args.toArray());
-
         } catch (Exception e) {
-
-            // 如果报错列不存在，可以这里做真正的 DELETE 降级，或者抛出异常。为了兼容老结构，降级执行真删除
-
-            String deleteSql = String.format("DELETE FROM \"%s\" WHERE id IN (%s)", tableName, placeholders.toString());
-
+            String deleteSql = String.format("DELETE FROM \"%s\" WHERE \"id\" IN (%s)", tableName, placeholders.toString());
             jdbcTemplate.update(deleteSql, args.toArray());
-
         }
 
     }
@@ -841,45 +840,7 @@ public class DynamicDataDmlService {
      * 校验当前用户是否已被锁定（本期已填报）
      */
     private void checkFillLock(String formId, String userEmail, boolean isAdmin) {
-        if (isAdmin || userEmail == null || userEmail.isBlank()) return;
-
-        DataFillForm form = formMapper.selectById(formId);
-        if (form == null) return;
-
-        // 查询该用户最近一次填报记录
-        UserFillLog lastLog = userFillLogMapper.selectLastByFormAndUser(formId, userEmail);
-        LocalDateTime lastSubmitTime = (lastLog != null) ? lastLog.getSubmitTime() : null;
-
-        // 如果日志不存在，尝试从物理表直接探测数据（解决存量数据同步问题）
-        if (lastSubmitTime == null && form.getTableName() != null) {
-            try {
-                String checkSql = String.format("SELECT MAX(w_insert_dt) FROM \"%s\" WHERE load_user = ? AND (is_deleted IS NULL OR is_deleted = 0)", form.getTableName());
-                lastSubmitTime = jdbcTemplate.queryForObject(checkSql, LocalDateTime.class, userEmail);
-            } catch (Exception ignored) {}
-        }
-
-        if (lastSubmitTime == null) return;
-
-        LocalDateTime now = LocalDateTime.now();
-        Integer cycleDays = form.getCycleDays();
-        
-        // 核心逻辑升级：增加 24 小时宽限期
-        // 如果现在还在“首次填报时间 + 24小时”之内，则不锁定（允许检查修改）
-        LocalDateTime graceEndTime = lastSubmitTime.plusHours(24);
-        if (now.isBefore(graceEndTime)) {
-            return; // 宽限期内，允许操作
-        }
-
-        boolean isLocked;
-        if (cycleDays != null && cycleDays > 0) {
-            isLocked = now.isBefore(lastSubmitTime.plusDays(cycleDays));
-        } else {
-            isLocked = true;
-        }
-
-        if (isLocked) {
-            throw new RuntimeException("您本期填报已过 24 小时宽限期，已被锁定。如需修改请联系管理员。");
-        }
+        // 根据需求变更：填报锁定逻辑已移除，用户可以一直操作自己填报过的数据
     }
 }
 

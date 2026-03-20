@@ -26,12 +26,26 @@ public class DataFillController {
     private final DynamicDataDmlService dataDmlService;
     private final ExcelService excelService;
     private final DataFillFormMapper formMapper;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
+    @org.springframework.beans.factory.annotation.Value("${data-fill.mail.admin-email:}")
+    private String adminEmail;
+
+    private boolean isUserAdmin(String email) {
+        if (email == null || email.isBlank()) return false;
+        if (adminEmail == null || adminEmail.isBlank()) return false;
+        String[] admins = adminEmail.split(",");
+        for (String admin : admins) {
+            if (admin.trim().equalsIgnoreCase(email.trim())) return true;
+        }
+        return false;
+    }
 
     // 获取表单模板列表（支持按用户权限过滤）
     @GetMapping("/forms")
     public List<DataFillForm> getForms(
-            @RequestParam(required = false) String userEmail,
-            @RequestParam(defaultValue = "false") boolean isAdmin) {
+            @RequestParam(required = false) String userEmail) {
+        boolean isAdmin = isUserAdmin(userEmail);
         List<DataFillForm> allForms = formMapper.selectList(null);
         if (isAdmin || userEmail == null || userEmail.isBlank()) {
             return allForms;
@@ -43,7 +57,7 @@ public class DataFillController {
                 return true; // 未配置权限 = 对所有人开放
             }
             try {
-                List<String> allowed = new com.fasterxml.jackson.databind.ObjectMapper()
+                List<String> allowed = objectMapper
                         .readValue(fillEmails, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
                 if (allowed == null || allowed.isEmpty()) return true;
                 return allowed.stream().anyMatch(e -> e != null && e.equalsIgnoreCase(userEmail));
@@ -94,8 +108,8 @@ public class DataFillController {
             @PathVariable String formId,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size,
-            @RequestParam(required = false) String userEmail,
-            @RequestParam(defaultValue = "false") boolean isAdmin) {
+            @RequestParam(required = false) String userEmail) {
+        boolean isAdmin = isUserAdmin(userEmail);
         return dataDmlService.getTableDataPage(formId, page, size, null, userEmail, isAdmin);
     }
 
@@ -105,8 +119,8 @@ public class DataFillController {
     @GetMapping("/data/{formId}/filters")
     public Map<String, java.util.List<String>> getFilterOptions(
             @PathVariable String formId,
-            @RequestParam(required = false) String userEmail,
-            @RequestParam(defaultValue = "false") boolean isAdmin) {
+            @RequestParam(required = false) String userEmail) {
+        boolean isAdmin = isUserAdmin(userEmail);
         return dataDmlService.getFilterOptions(formId, userEmail, isAdmin);
     }
 
@@ -126,8 +140,8 @@ public class DataFillController {
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String userEmail,
-            @RequestParam(defaultValue = "false") boolean isAdmin,
             @RequestBody(required = false) Map<String, String> filters) {
+        boolean isAdmin = isUserAdmin(userEmail);
         return dataDmlService.getTableDataPage(formId, page, size, filters, userEmail, isAdmin);
     }
 
@@ -136,8 +150,8 @@ public class DataFillController {
     public String batchDeleteData(
             @PathVariable String formId, 
             @RequestBody List<String> dataIds,
-            @RequestParam(required = false) String userEmail,
-            @RequestParam(defaultValue = "false") boolean isAdmin) {
+            @RequestParam(required = false) String userEmail) {
+        boolean isAdmin = isUserAdmin(userEmail);
         dataDmlService.batchDeleteRowData(formId, dataIds, userEmail, isAdmin);
         return "success";
     }
@@ -147,8 +161,8 @@ public class DataFillController {
     public String deleteAllFiltered(
             @PathVariable String formId,
             @RequestParam(required = false) String userEmail,
-            @RequestParam(defaultValue = "false") boolean isAdmin,
             @RequestBody(required = false) Map<String, String> filters) {
+        boolean isAdmin = isUserAdmin(userEmail);
         dataDmlService.deleteAllFilteredData(formId, filters, userEmail, isAdmin);
         return "success";
     }
@@ -158,8 +172,8 @@ public class DataFillController {
     public String deleteData(
             @PathVariable String formId, 
             @PathVariable String dataId,
-            @RequestParam(required = false) String userEmail,
-            @RequestParam(defaultValue = "false") boolean isAdmin) {
+            @RequestParam(required = false) String userEmail) {
+        boolean isAdmin = isUserAdmin(userEmail);
         dataDmlService.deleteRowData(formId, dataId, userEmail, isAdmin);
         return "success";
     }
@@ -170,8 +184,8 @@ public class DataFillController {
             @PathVariable String formId, 
             @PathVariable String dataId, 
             @RequestBody Map<String, Object> rowData,
-            @RequestParam(required = false) String userEmail,
-            @RequestParam(defaultValue = "false") boolean isAdmin) {
+            @RequestParam(required = false) String userEmail) {
+        boolean isAdmin = isUserAdmin(userEmail);
         dataDmlService.updateRowData(formId, dataId, rowData, userEmail, isAdmin);
         return "success";
     }
@@ -213,7 +227,7 @@ public class DataFillController {
      * 快速导入 Excel 解析表头，生成字段配置
      */
     @PostMapping("/forms/parseExcel")
-    public List<com.example.datafill.dto.FieldDef> parseExcelHeaders(
+    public com.example.datafill.dto.ExcelParseResult parseExcelHeaders(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "mode", defaultValue = "density") String mode,
             @RequestParam(value = "smartType", defaultValue = "true") boolean smartType,

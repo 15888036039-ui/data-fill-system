@@ -1,5 +1,7 @@
 server:
   port: 8080
+  error:
+    include-message: always
 
 spring:
   servlet:
@@ -9,7 +11,7 @@ spring:
   datasource:
     driver-class-name: org.postgresql.Driver
     # 请根据您的本地 PostgreSQL 配置修改
-    url: jdbc:postgresql://localhost:5432/postgres
+    url: jdbc:postgresql://localhost:5432/postgres?reWriteBatchedInserts=true
     username: postgres
     password: admin123456
   jackson:

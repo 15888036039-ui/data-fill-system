@@ -146,6 +146,15 @@
             :closable="false"
           />
 
+          <!-- 键值对预览 -->
+          <div v-if="parsedKvConfig.length > 0" class="kv-preview-banner">
+            <el-icon style="margin-right: 8px"><Connection /></el-icon>
+            <div class="kv-info-text">
+              当前已识别出 <b>{{ parsedKvConfig.length }}</b> 组配对 (共 {{ parsedKvConfig.reduce((acc, p) => acc + p.suffixes.length * 2, 0) }} 列原始字段) 将归集至 <b>extra_data (JSON)</b> 列。
+            </div>
+            <el-button type="primary" link @click="pairConfirmDialogVisible = true">查看记录</el-button>
+          </div>
+
           <div class="fields-list">
              <el-table :data="fields" style="width: 100%">
                 <el-table-column label="中文显示名" min-width="180">
@@ -221,7 +230,7 @@
                 :loading="userListLoading"
               >
                 <el-option
-                  v-for="u in allUsers"
+                  for="u in allUserEmails"
                   :key="u"
                   :label="u"
                   :value="u"
@@ -280,6 +289,43 @@
         </div>
       </div>
     </el-dialog>
+
+    <el-dialog
+      v-model="pairConfirmDialogVisible"
+      title="智能配对确认"
+      width="600px"
+      class="custom-dialog"
+    >
+      <div class="pair-confirm-body">
+        <el-alert v-if="lastParseResult?.truncated" 
+          :title="'由于列数超过上限 (1000)，仅识别了前 1000 列（共 ' + lastParseResult.totalColumns + ' 列），超出部分请手动添加。'"
+          type="warning" show-icon :closable="false" style="margin-bottom: 12px" />
+        <p class="desc-text">我们在 Excel 中检测到以下潜在的“键值对”组合。合并后这些数据在导入时将自动归集到 <code>extra_data</code> (JSON) 中。</p>
+        
+        <el-table :data="confirmingPairs" style="width: 100%">
+          <el-table-column label="配对名称" prop="displayName" />
+          <el-table-column label="包含后缀">
+            <template #default="scope">
+              <el-tag v-for="s in scope.row.suffixes" :key="s" size="small" style="margin-right: 4px">{{ s }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="确认合并" width="100" align="center">
+            <template #default="scope">
+              <el-checkbox v-model="scope.row.confirmed" />
+            </template>
+          </el-table-column>
+        </el-table>
+        
+        <div class="tip-box">
+          <el-icon><InfoFilled /></el-icon>
+          <span>未被勾选的组合将作为“普通字段”平铺展开。</span>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="pairConfirmDialogVisible = false">返回修改</el-button>
+        <el-button type="primary" @click="finalizeFields">确认解析结果</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -287,7 +333,7 @@
 import { reactive, ref, onMounted, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Setting, Notification, Grid, User, Plus, Upload, Delete, Check, Platform, UploadFilled } from '@element-plus/icons-vue'
+import { Setting, Notification, Grid, User, Plus, Upload, Delete, Check, Platform, UploadFilled, InfoFilled, Connection } from '@element-plus/icons-vue'
 import axios from 'axios'
 
 const router = useRouter()
@@ -307,7 +353,8 @@ const formMeta = reactive({
   monthlyDay: 10,
   weeklyDayOfWeek: 1,
   cycleDays: 0,
-  fillUserEmails: ''
+  fillUserEmails: '',
+  kvConfig: ''
 })
 
 const fields = ref([
@@ -317,9 +364,21 @@ const fields = ref([
 const importDialogVisible = ref(false)
 const importConfig = reactive({
   smartType: true,
-  kvPairEnabled: false // 默认改用标准模式
+  kvPairEnabled: true // 恢复启用智能键值对匹配
 })
 const isParsing = ref(false)
+const pairConfirmDialogVisible = ref(false)
+const confirmingPairs = ref([])
+const lastParseResult = ref(null)
+const lastFileName = ref('')
+
+const parsedKvConfig = computed(() => {
+  try {
+    return formMeta.kvConfig ? JSON.parse(formMeta.kvConfig) : []
+  } catch (e) {
+    return []
+  }
+})
 
 // 用户列表（权限分配）
 const allUsers = ref([])
@@ -372,51 +431,161 @@ const removeField = (index) => {
 const onFileChange = async (uploadFile) => {
   if (!uploadFile.raw) return
   const file = uploadFile.raw
+  lastFileName.value = file.name
   const formData = new FormData()
   formData.append('file', file)
   formData.append('smartType', importConfig.smartType)
   formData.append('kvPairEnabled', importConfig.kvPairEnabled)
-  // 模式统一：前端不再选择模式，由后端执行最全的智能拆分识别
 
   isParsing.value = true
   try {
     const res = await axios.post('/api/fill/forms/parseExcel', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
-    if (res.data && res.data.length > 0) {
-      fields.value = res.data.map(f => {
-        const row = {
-          name: f.name,
-          columnName: f.columnName,
-          type: f.type || 'input',
-          dbType: f.dbType || 'VARCHAR(255)',
-          required: f.required || false,
-          filterable: f.filterable || false
-        }
-        // 导入时自动执行一次推断识别，确保 type 字段正确
-        handleDbTypeChange(row.dbType, row)
-        return row
-      })
-        
-      // 汇总报告
-      const types = res.data.reduce((acc, f) => {
-        acc[f.type] = (acc[f.type] || 0) + 1
-        return acc
-      }, {})
-      let report = `成功解析出 ${res.data.length} 个字段。`
-      if (types.datetime) report += ` 自动识别 ${types.datetime} 个日期。`
-      if (types.select) report += ` 识别 ${types.select} 个下拉列表。`
-        
-      ElMessage.success(report)
-      if (!formMeta.name) formMeta.name = file.name.replace(/\.[^/.]+$/, "")
-      importDialogVisible.value = false // 成功后关闭
+    
+    lastParseResult.value = res.data
+    if (res.data.potentialPairs && res.data.potentialPairs.length > 0) {
+      confirmingPairs.value = res.data.potentialPairs.map(p => ({ 
+        ...p, 
+        confirmed: true,
+        suffixes: (p.suffixes || []).sort((a, b) => parseInt(a) - parseInt(b))
+      }))
+      pairConfirmDialogVisible.value = true
+      importDialogVisible.value = false
     } else {
-      ElMessage.warning('未在 Excel 中识别出有效的业务字段')
+      applyParsedResults(res.data)
+      importDialogVisible.value = false
     }
   } catch (e) {
     ElMessage.error('解析失败: ' + (e.response?.data?.message || '网络异常'))
   } finally {
     isParsing.value = false
+  }
+}
+
+const finalizeFields = () => {
+  if (!lastParseResult.value) return
+  
+  const activePairs = confirmingPairs.value.filter(p => p.confirmed)
+  const rejectedPairs = confirmingPairs.value.filter(p => !p.confirmed)
+  // 必须从解析出的基础字段开始，而不是从 fields.value (因为这时候 fields.value 可能还没更新)
+  const finalFields = lastParseResult.value.fields ? [...lastParseResult.value.fields] : []
+  
+  // 1. 处理拒绝的配对：将被排除的原始列还原成标准字段
+  rejectedPairs.forEach(p => {
+    const allIdx = [...(p.keyIndices || []), ...(p.valueIndices || [])]
+    allIdx.forEach(idx => {
+      const headerName = lastParseResult.value.originalHeaders[idx]
+      const colName = generateColumnName(headerName)
+      if (headerName && !finalFields.some(f => f.columnName === colName)) {
+        finalFields.push({
+          name: headerName,
+          columnName: colName,
+          type: 'input',
+          dbType: 'VARCHAR(255)',
+          required: false,
+          filterable: false
+        })
+      }
+    })
+  })
+
+  // 2. 处理确认的配对：添加虚拟 JSON 字段
+  activePairs.forEach(p => {
+    const colName = p.suggestedColumnName || 'extra_data'
+    // 允许通过显示名区分，或者是唯一的列名
+    if (!finalFields.some(f => f.columnName === colName)) {
+      finalFields.push({
+        name: `扩展项 (${p.displayName})`,
+        columnName: colName,
+        type: 'input',
+        dbType: 'JSONB',
+        required: false,
+        filterable: false,
+        id_mark: true // 标记为虚拟/既有
+      })
+    }
+  })
+
+  // 3. 通用扩展字段 (仅当存在未识别列时自动追加，或保持为空以节省空间)
+  // 如果用户所有列都已通过标准字段或配对覆盖，则不再强制添加 extra_data
+  const mappedIndices = new Set()
+  activePairs.forEach(p => {
+    ;[...(p.keyIndices || []), ...(p.valueIndices || [])].forEach(idx => mappedIndices.add(idx))
+  })
+  // 标准字段对应的索引 (这里需要后端配合返回索引，或者前端根据 columnName 简单推测)
+  // 为稳健起见，如果 activePairs 为空且没有标准字段，或者用户手动删除了所有字段，我们保留它
+  const hasUnmapped = lastParseResult.value.totalColumns > mappedIndices.size + (lastParseResult.value.fields?.length || 0)
+  
+  if (hasUnmapped && !finalFields.some(f => f.columnName === 'extra_data')) {
+    finalFields.push({
+      name: '扩展数据 (通用)',
+      columnName: 'extra_data',
+      type: 'input',
+      dbType: 'JSONB',
+      required: false,
+      filterable: false,
+      id_mark: true
+    })
+  }
+
+  formMeta.kvConfig = JSON.stringify(activePairs)
+  applyParsedResults({ fields: finalFields })
+  pairConfirmDialogVisible.value = false
+}
+
+const generateColumnName = (label) => {
+  if (!label) return ''
+  let name = label.toLowerCase().trim()
+  
+  // 特殊业务术语规范：去除 /Territory
+  name = name.replace(/\/territory/g, '')
+  
+  // 规范：去除 #
+  name = name.replace(/#/g, '')
+  
+  // 规范：处理 / (取前半部分，除非是 Country/Code 这种已处理的情况)
+  // 但为了保留 Express or Ground 这种，我们先转空格
+  name = name.replace(/\//g, ' ')
+  
+  // 规范：替换非字母数字为下划线
+  name = name.replace(/[^a-z0-9_]/g, '_')
+  
+  // 规范：合并连续下划线
+  name = name.replace(/__+/g, '_')
+  
+  // 规范：首尾清理
+  name = name.replace(/^_+|_+$/g, '')
+  
+  return name
+}
+
+const applyParsedResults = (data) => {
+  if (!data || !data.fields) return
+  
+  if (data.truncated) {
+    ElMessage.warning(`注意：该 Excel 包含 ${data.totalColumns} 列，系统仅识别了前 1000 列。`)
+  }
+  
+  fields.value = data.fields.map(f => {
+    const row = {
+      ...f,
+      columnName: f.columnName || '',
+      type: f.type || 'input',
+      dbType: f.dbType || 'VARCHAR(255)',
+      required: f.required || false,
+      filterable: f.filterable || false
+    }
+    if (!row.columnName) {
+        row.columnName = generateColumnName(f.name)
+    }
+    handleDbTypeChange(row.dbType, row)
+    return row
+  })
+    
+  ElMessage.success(`成功识别出 ${fields.value.length} 个字段。`)
+  if (!formMeta.name && lastFileName.value) {
+    formMeta.name = lastFileName.value.replace(/\.[^/.]+$/, "")
   }
 }
 
@@ -440,7 +609,8 @@ const submitFormAndCreateTable = async () => {
     deadline: formMeta.reminderMode === 'DEADLINE' ? (formMeta.deadline || null) : null,
     recipientEmails: recipientList.value.length > 0 ? JSON.stringify(recipientList.value) : null,
     fillUserEmails: fillUserList.value.length > 0 ? JSON.stringify(fillUserList.value) : null,
-    forms: JSON.stringify(formattedFields)
+    forms: JSON.stringify(formattedFields),
+    kvConfig: formMeta.kvConfig
   }
 
   try {
@@ -465,9 +635,11 @@ const loadFormForEdit = async () => {
     }
     if (res.data.forms) {
         const parsed = JSON.parse(res.data.forms)
-        fields.value = parsed.map(f => ({ ...f, id_mark: true })) // 标记为已有字段
+        fields.value = parsed.map(f => ({ ...f, id_mark: true }))
     }
-  } catch (e) {}
+  } catch (e) {
+    ElMessage.error('加载任务配置失败')
+  }
 }
 
 const updateFormMeta = async () => {
@@ -479,13 +651,16 @@ const updateFormMeta = async () => {
     forms: JSON.stringify(fields.value.map(f => {
       const { id_mark, ...rest } = f
       return rest
-    }))
+    })),
+    kvConfig: formMeta.kvConfig
   }
   try {
     await axios.put(`/api/fill/forms/${id}`, payload)
     ElMessage.success('修改成功')
     router.push('/forms')
-  } catch (e) {}
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || '保存失败')
+  }
 }
 
 onMounted(() => {
@@ -674,5 +849,49 @@ onMounted(() => {
 
 .text-primary {
   color: var(--primary-color);
+}
+
+.kv-preview-banner {
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  color: #475569;
+}
+
+.kv-info-text {
+  flex: 1;
+}
+
+.kv-info-text b {
+  color: var(--primary-color);
+}
+
+.pair-confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.desc-text {
+  font-size: 14px;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.tip-box {
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #0369a1;
+  font-size: 13px;
 }
 </style>

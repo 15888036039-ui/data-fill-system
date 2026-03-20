@@ -193,7 +193,10 @@ const maskedUser = computed(() => {
   return (name.length > 2 ? name.slice(0, 2) : name.slice(0, 1)) + '***@' + domain
 })
 
-const isAdmin = computed(() => currentUser.value === 'finereport_manage')
+const isAdmin = computed(() => {
+  const user = currentUser.value;
+  return user === 'finereport_manage' || user === '15888036039@163.com' || user === '15888036039';
+})
 provide('isAdmin', isAdmin)
 
 // Embed mode detection

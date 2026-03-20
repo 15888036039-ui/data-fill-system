@@ -31,8 +31,8 @@
         <el-icon v-if="lockStatus.isLocked"><CircleCheck /></el-icon>
         <el-icon v-else><AlarmClock /></el-icon>
         
-        <span v-if="lockStatus.hasSubmitted && !lockStatus.isLocked">
-          已完成填报，如需调整请在宽限期内操作。倒计时：<b>{{ graceTimeLeft }}</b>
+        <span v-if="lockStatus.hasSubmitted">
+          已完成填报，您可以根据需要随时调整已提交的数据。
         </span>
         <span v-else-if="lockStatus.isLocked">
           填报锁定 {{ isAdmin ? '(管理员模式)' : '' }}
@@ -215,7 +215,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed, reactive, inject } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { AlarmClock, CircleCheck } from '@element-plus/icons-vue'
 import axios from 'axios'
 import DynamicForm from '../components/DynamicForm.vue'
@@ -288,11 +288,7 @@ const graceTimeLeft = ref('')
 let timer = null
 
 const isRowLocked = (row) => {
-  if (isAdmin.value) return false
-  const createTime = row.w_insert_dt || row.create_time
-  if (!createTime) return false
-  const diff = new Date() - new Date(createTime)
-  return diff > (1000 * 60 * 60 * 24) // 24小时锁定
+  return false // 根据需求变更：用户可以一直操作自己填报过的数据
 }
 
 const updateGraceCountdown = () => {
@@ -499,8 +495,16 @@ const handleDelete = async (dataId) => {
 const downloadTemplate = () => window.open(`/api/fill/template/${formId}`)
 
 const handleUpload = async (options) => {
+  const file = options.file
+  
+  const loading = ElLoading.service({
+    lock: true,
+    text: '极速解析与写入中，请稍后...',
+    background: 'rgba(255, 255, 255, 0.8)'
+  })
+
   const formData = new FormData()
-  formData.append('file', options.file)
+  formData.append('file', file)
   formData.append('mode', importMode.value)
   if (userEmail.value) formData.append('creator', userEmail.value)
   
@@ -512,6 +516,7 @@ const handleUpload = async (options) => {
     handleImportError(e)
   } finally {
     isUploading.value = false
+    loading.close()
   }
 }
 
