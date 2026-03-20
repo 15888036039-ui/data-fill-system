@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS data_fill_form (
     recipient_emails  TEXT,
     cycle_days        INTEGER,
     fill_user_emails  TEXT,
+    creator         VARCHAR(100),
 
     create_time     TIMESTAMP,
     update_time     TIMESTAMP
@@ -48,6 +49,9 @@ ALTER TABLE data_fill_form
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS recipient_emails TEXT;
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS creator VARCHAR(100);
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS cycle_days INTEGER;
@@ -107,6 +111,17 @@ CREATE TABLE IF NOT EXISTS user_fill_log (
     update_time  TIMESTAMP
 );
 
+
+
+-- 4.5 零侵入操作日志表：operation_log（专门记录单行增删改与批量导入）
+CREATE TABLE IF NOT EXISTS operation_log (
+    id             VARCHAR(64) PRIMARY KEY,
+    form_id        VARCHAR(64),
+    user_email     VARCHAR(255),
+    operation_type VARCHAR(64), -- ADD, UPDATE, DELETE, UPLOAD
+    operation_desc TEXT,
+    create_time    TIMESTAMP
+);
 
 
 -- 5. 系统全局配置表：system_config（用于存储数仓字典、识别关键字等）

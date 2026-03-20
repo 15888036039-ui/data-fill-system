@@ -421,11 +421,12 @@ public class ExcelService {
                 ColumnStat(int idx, String name) { this.colIndex = idx; this.headerName = name; }
             }
 
+            org.apache.poi.ss.usermodel.DataFormatter dataFormatter = new org.apache.poi.ss.usermodel.DataFormatter();
             List<String> originalHeaders = new ArrayList<>();
             List<ColumnStat> stats = new ArrayList<>();
             for (int c = 0; c < lastColumn; c++) {
                 Cell cell = headerRow.getCell(c);
-                String name = (cell == null) ? "" : cell.toString().trim();
+                String name = (cell == null) ? "" : dataFormatter.formatCellValue(cell).trim();
                 originalHeaders.add(name);
                 if (name.isEmpty()) name = "未命名字段" + (c + 1);
                 stats.add(new ColumnStat(c, name));
@@ -442,7 +443,7 @@ public class ExcelService {
                     ColumnStat s = stats.get(c);
                     if (cell == null || cell.getCellType() == org.apache.poi.ss.usermodel.CellType.BLANK) continue;
                     s.nonBlankCount++;
-                    String val = cell.toString().trim();
+                    String val = dataFormatter.formatCellValue(cell).trim();
                     s.uniqueValues.add(val);
                     if (s.rawValues.size() < 100) s.rawValues.add(val);
                     if (cell.getCellType() != org.apache.poi.ss.usermodel.CellType.NUMERIC) {

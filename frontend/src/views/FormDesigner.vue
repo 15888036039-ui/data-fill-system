@@ -610,7 +610,8 @@ const submitFormAndCreateTable = async () => {
     recipientEmails: recipientList.value.length > 0 ? JSON.stringify(recipientList.value) : null,
     fillUserEmails: fillUserList.value.length > 0 ? JSON.stringify(fillUserList.value) : null,
     forms: JSON.stringify(formattedFields),
-    kvConfig: formMeta.kvConfig
+    kvConfig: formMeta.kvConfig,
+    creator: formMeta.creator || currentUser.value
   }
 
   try {
@@ -652,7 +653,8 @@ const updateFormMeta = async () => {
       const { id_mark, ...rest } = f
       return rest
     })),
-    kvConfig: formMeta.kvConfig
+    kvConfig: formMeta.kvConfig,
+    creator: formMeta.creator || currentUser.value
   }
   try {
     await axios.put(`/api/fill/forms/${id}`, payload)

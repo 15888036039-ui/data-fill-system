@@ -56,6 +56,37 @@
         />
       </el-dialog>
 
+      <!-- 操作日志弹窗 -->
+      <el-dialog
+        v-model="logVisible"
+        title="数据操作日志"
+        width="600px"
+        custom-class="log-dialog"
+      >
+        <div v-loading="logLoading" style="min-height: 200px; max-height: 500px; overflow-y: auto; padding: 10px;">
+          <el-empty v-if="!operationLogs.length && !logLoading" description="暂无操作记录" />
+          <el-timeline v-else>
+            <el-timeline-item
+              v-for="(log, index) in operationLogs"
+              :key="log.id"
+              :timestamp="log.createTime"
+              :type="getLogType(log.operationType)"
+              :hollow="index !== 0"
+            >
+              <div class="log-item-content">
+                <div class="log-header">
+                  <span class="log-user">{{ log.userEmail }}</span>
+                  <el-tag size="small" :type="getLogType(log.operationType)" effect="plain" class="log-tag">
+                    {{ getLogTypeText(log.operationType) }}
+                  </el-tag>
+                </div>
+                <div class="log-desc">{{ log.operationDesc }}</div>
+              </div>
+            </el-timeline-item>
+          </el-timeline>
+        </div>
+      </el-dialog>
+
       <!-- 全新扁平工具栏 -->
       <div class="flat-toolbar">
         <div class="toolbar-row main-actions">
@@ -71,6 +102,7 @@
             >
               <el-button icon="Upload" :loading="isUploading" :disabled="isLocked" class="action-btn">上传数据</el-button>
             </el-upload>
+            <el-button icon="Memo" @click="showOperationLogs" class="action-btn">操作日志</el-button>
           </div>
           
           <div class="right-group">
@@ -239,6 +271,44 @@ const currentPage = ref(1)
 const pageSize = ref(10)
 const importMode = ref('append')
 const isUploading = ref(false)
+
+// 操作日志相关
+const logVisible = ref(false)
+const logLoading = ref(false)
+const operationLogs = ref([])
+
+const showOperationLogs = async () => {
+  logVisible.value = true
+  logLoading.value = true
+  try {
+    const res = await axios.get(`/api/fill/data/${formId}/logs`)
+    operationLogs.value = res.data || []
+  } catch (e) {
+    ElMessage.error('加载操作日志失败')
+  } finally {
+    logLoading.value = false
+  }
+}
+
+const getLogType = (type) => {
+  switch (type) {
+    case 'ADD': return 'success'
+    case 'UPDATE': return 'warning'
+    case 'DELETE': return 'danger'
+    case 'UPLOAD': return 'primary'
+    default: return 'info'
+  }
+}
+
+const getLogTypeText = (type) => {
+  switch (type) {
+    case 'ADD': return '新增'
+    case 'UPDATE': return '修改'
+    case 'DELETE': return '删除'
+    case 'UPLOAD': return '导入'
+    default: return type
+  }
+}
 
 const searchParams = ref({})
 const filterOptions = ref({})
@@ -416,6 +486,15 @@ const submitData = async (formDataVal) => {
   try {
     const payload = { ...formDataVal }
     // 注入创建人信息
+    payload.creator = userEmail.value
+    
+    if (editingRowId.value) {
+      await axios.put(`/api/fill/data/${formId}/${editingRowId.value}?userEmail=${userEmail.value}`, payload)
+      ElMessage.success('更新成功')
+    } else {
+      await axios.post(`/api/fill/data/${formId}?userEmail=${userEmail.value}`, payload)
+      ElMessage.success('提交成功')
+    }
     if (userEmail.value) {
       payload.creator = userEmail.value
       payload.applicantEmail = userEmail.value
@@ -722,5 +801,54 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+.log-item-content {
+  padding: 2px 0;
+}
+
+.log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.log-user {
+  font-weight: 600;
+  font-size: 14px;
+  color: #1e293b;
+}
+
+.log-tag {
+  font-weight: 500;
+}
+
+.log-desc {
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.5;
+}
+
+:deep(.el-timeline-item__timestamp) {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-bottom: 8px;
+}
+
+:deep(.el-dialog.log-dialog) {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+:deep(.el-dialog.log-dialog .el-dialog__header) {
+  margin-right: 0;
+  padding: 20px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+:deep(.el-dialog.log-dialog .el-dialog__title) {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
 }
 </style>

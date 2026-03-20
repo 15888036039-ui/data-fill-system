@@ -56,4 +56,7 @@ public class DataFillForm {
 
     /** 键值对配对规则配置 (用于导入时识别 JSON 字段) */
     private String kvConfig;
+
+    /** 表单创建人 */
+    private String creator;
 }

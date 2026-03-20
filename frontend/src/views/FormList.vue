@@ -57,6 +57,21 @@
           </template>
         </el-table-column>
 
+        <el-table-column prop="creator" label="创建人" width="160">
+          <template #default="scope">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <el-icon><User /></el-icon>
+              <span>{{ scope.row.creator || '管理员' }}</span>
+            </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column prop="createTime" label="创建时间" width="180">
+          <template #default="scope">
+            <span style="color: #64748b; font-size: 13px;">{{ scope.row.createTime ? scope.row.createTime.replace('T', ' ') : '-' }}</span>
+          </template>
+        </el-table-column>
+
         <el-table-column label="操作" width="280" align="right" fixed="right">
           <template #default="scope">
             <el-button-group>

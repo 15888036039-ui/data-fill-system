@@ -645,11 +645,8 @@ public class DynamicDataDmlService {
         List<Object> baseArgs = new ArrayList<>();
 
         if (!isAdmin && operatorEmail != null && !operatorEmail.isBlank()) {
-
-            isolationWhere += " AND \"load_user\" = ? ";
-
+            isolationWhere += " AND (\"load_user\" = ? OR \"load_user\" IS NULL) ";
             baseArgs.add(operatorEmail);
-
         }
 
         for (FieldDef field : filterable) {
@@ -803,9 +800,9 @@ public class DynamicDataDmlService {
     private void buildWhereClause(StringBuilder whereClause, List<Object> args, Map<String, String> filters, String userEmail, boolean isAdmin) {
         whereClause.append(" WHERE (is_deleted IS NULL OR is_deleted = 0) ");
         
-        // 核心隔离逻辑：非管理员只能看自己的数据
+        // 核心隔离逻辑：非管理员只能看自己的数据 (兼容旧数据：允许 load_user 为空)
         if (!isAdmin && userEmail != null && !userEmail.isBlank()) {
-            whereClause.append(" AND \"load_user\" = ? ");
+            whereClause.append(" AND (\"load_user\" = ? OR \"load_user\" IS NULL) ");
             args.add(userEmail);
         }
 

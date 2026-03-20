@@ -26,6 +26,7 @@ public class DataFillController {
     private final DynamicDataDmlService dataDmlService;
     private final ExcelService excelService;
     private final DataFillFormMapper formMapper;
+    private final com.example.datafill.mapper.OperationLogMapper operationLogMapper;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     @org.springframework.beans.factory.annotation.Value("${data-fill.mail.admin-email:}")
@@ -39,6 +40,17 @@ public class DataFillController {
             if (admin.trim().equalsIgnoreCase(email.trim())) return true;
         }
         return false;
+    }
+
+    private void recordLog(String formId, String userEmail, String type, String desc) {
+        if (userEmail == null || userEmail.isBlank()) userEmail = "未知用户";
+        com.example.datafill.entity.OperationLog log = new com.example.datafill.entity.OperationLog();
+        log.setFormId(formId);
+        log.setUserEmail(userEmail);
+        log.setOperationType(type);
+        log.setOperationDesc(desc);
+        log.setCreateTime(java.time.LocalDateTime.now());
+        operationLogMapper.insert(log);
     }
 
     // 获取表单模板列表（支持按用户权限过滤）
@@ -97,8 +109,9 @@ public class DataFillController {
 
     // [用户端核心]: 向动态生成的物理表中插入一行数据
     @PostMapping("/data/{formId}")
-    public String insertData(@PathVariable String formId, @RequestBody Map<String, Object> rowData) {
+    public String insertData(@PathVariable String formId, @RequestBody Map<String, Object> rowData, @RequestParam(required = false) String userEmail) {
         dataDmlService.insertRowData(formId, rowData);
+        recordLog(formId, userEmail, "ADD", "新增了1条数据");
         return "success";
     }
 
@@ -153,6 +166,7 @@ public class DataFillController {
             @RequestParam(required = false) String userEmail) {
         boolean isAdmin = isUserAdmin(userEmail);
         dataDmlService.batchDeleteRowData(formId, dataIds, userEmail, isAdmin);
+        recordLog(formId, userEmail, "DELETE", "批量删除了 " + dataIds.size() + " 条数据");
         return "success";
     }
 
@@ -164,6 +178,7 @@ public class DataFillController {
             @RequestBody(required = false) Map<String, String> filters) {
         boolean isAdmin = isUserAdmin(userEmail);
         dataDmlService.deleteAllFilteredData(formId, filters, userEmail, isAdmin);
+        recordLog(formId, userEmail, "DELETE", "按条件清空了匹配的数据");
         return "success";
     }
 
@@ -175,6 +190,7 @@ public class DataFillController {
             @RequestParam(required = false) String userEmail) {
         boolean isAdmin = isUserAdmin(userEmail);
         dataDmlService.deleteRowData(formId, dataId, userEmail, isAdmin);
+        recordLog(formId, userEmail, "DELETE", "删除了1条数据");
         return "success";
     }
 
@@ -187,6 +203,7 @@ public class DataFillController {
             @RequestParam(required = false) String userEmail) {
         boolean isAdmin = isUserAdmin(userEmail);
         dataDmlService.updateRowData(formId, dataId, rowData, userEmail, isAdmin);
+        recordLog(formId, userEmail, "UPDATE", "更新了1条数据");
         return "success";
     }
 
@@ -220,6 +237,7 @@ public class DataFillController {
             @RequestParam(value = "mode", defaultValue = "append") String mode,
             @RequestParam(value = "creator", required = false) String creator) throws IOException {
         int count = excelService.importData(formId, file, mode, creator);
+        recordLog(formId, creator, "UPLOAD", "通过 Excel 导入了 " + count + " 条数据");
         return Map.of("success", true, "count", count);
     }
 
@@ -233,5 +251,15 @@ public class DataFillController {
             @RequestParam(value = "smartType", defaultValue = "true") boolean smartType,
             @RequestParam(value = "kvPairEnabled", defaultValue = "true") boolean kvPairEnabled) throws IOException {
         return excelService.parseExcelHeaders(file, mode, smartType, kvPairEnabled);
+    }
+
+    /**
+     * 获取某张表单的操作日志
+     */
+    @GetMapping("/data/{formId}/logs")
+    public List<com.example.datafill.entity.OperationLog> getLogs(@PathVariable String formId) {
+        return operationLogMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.example.datafill.entity.OperationLog>()
+                .eq("form_id", formId)
+                .orderByDesc("create_time"));
     }
 }
