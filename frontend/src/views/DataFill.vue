@@ -485,28 +485,23 @@ const handleEdit = (row) => {
 const submitData = async (formDataVal) => {
   try {
     const payload = { ...formDataVal }
-    // 注入创建人信息
-    payload.creator = userEmail.value
-    
-    if (editingRowId.value) {
-      await axios.put(`/api/fill/data/${formId}/${editingRowId.value}?userEmail=${userEmail.value}`, payload)
-      ElMessage.success('更新成功')
-    } else {
-      await axios.post(`/api/fill/data/${formId}?userEmail=${userEmail.value}`, payload)
-      ElMessage.success('提交成功')
-    }
+    // 统一注入用户与申请人信息（用于权限与审批流）
     if (userEmail.value) {
       payload.creator = userEmail.value
       payload.applicantEmail = userEmail.value
     }
     
     if (editingRowId.value) {
+      // 更新操作
       await axios.put(`/api/fill/data/${formId}/${editingRowId.value}`, payload, {
         params: { userEmail: userEmail.value, isAdmin: isAdmin.value }
       })
       ElMessage.success('数据已成功修改')
     } else {
-      await axios.post(`/api/fill/data/${formId}`, payload)
+      // 新增操作
+      await axios.post(`/api/fill/data/${formId}`, payload, {
+        params: { userEmail: userEmail.value }
+      })
       ElMessage.success('填报成功！')
     }
     

@@ -78,6 +78,17 @@ public class ExcelService {
         return generateDwColumnName(originalName, 0);
     }
 
+    private static class ColumnStat {
+        int colIndex;
+        String headerName;
+        int nonBlankCount = 0;
+        boolean couldBeDate = true;
+        boolean couldBeNumber = true;
+        Set<String> uniqueValues = new HashSet<>();
+        List<String> rawValues = new ArrayList<>();
+        ColumnStat(int idx, String name) { this.colIndex = idx; this.headerName = name; }
+    }
+
     /**
 
      * 5. 生成当前表单对应Excel 填报模板
@@ -410,17 +421,6 @@ public class ExcelService {
 
             int scanLimit = 100;
 
-            class ColumnStat {
-                int colIndex;
-                String headerName;
-                int nonBlankCount = 0;
-                boolean couldBeDate = true;
-                boolean couldBeNumber = true;
-                Set<String> uniqueValues = new HashSet<>();
-                List<String> rawValues = new ArrayList<>();
-                ColumnStat(int idx, String name) { this.colIndex = idx; this.headerName = name; }
-            }
-
             org.apache.poi.ss.usermodel.DataFormatter dataFormatter = new org.apache.poi.ss.usermodel.DataFormatter();
             List<String> originalHeaders = new ArrayList<>();
             List<ColumnStat> stats = new ArrayList<>();
@@ -480,6 +480,7 @@ public class ExcelService {
                 kwPairs.put("msg", "count");
                 kwPairs.putAll(configService.getKwPairs());
 
+                // 先扫描所有列名，填充 groupedBySuffix
                 for (int i = 0; i < stats.size(); i++) {
                     String hHeader = stats.get(i).headerName.trim();
                     java.util.regex.Matcher sm = numPattern.matcher(hHeader);
@@ -488,103 +489,115 @@ public class ExcelService {
                         groupedBySuffix.computeIfAbsent(suffix, k -> new ArrayList<>()).add(i);
                     }
                 }
-            }
 
-            for (int i = 0; i < targetColumns.size(); i++) {
-                ColumnStat s = targetColumns.get(i);
-                java.util.regex.Matcher m = numPattern.matcher(s.headerName.trim());
-                if (m.matches()) {
-                    String suffix = m.group(2);
-                    String baseName = m.group(1).toLowerCase().trim().replaceAll("[_\\s]+$", "");
-                    
-                    List<Integer> siblings = groupedBySuffix.get(suffix);
-                    boolean isVerifiedPair = false;
-                    String matchedK = null; String matchedV = null;
+                // 按后缀分组处理
+                for (Map.Entry<String, List<Integer>> entry : groupedBySuffix.entrySet()) {
+                    String suffix = entry.getKey();
+                    List<Integer> indices = entry.getValue();
+                    if (indices.size() < 2) continue; // 至少需要两个字段才能组成配对
 
-                    if (kvPairEnabled && siblings != null) {
-                        for (Map.Entry<String, String> pair : kwPairs.entrySet()) {
-                            String k = pair.getKey().toLowerCase();
-                            String v = pair.getValue().toLowerCase();
+                    // 在同一组（相同数字编号）内寻找满足“基因库”定义的配对
+                    for (int i = 0; i < indices.size(); i++) {
+                        int idxA = indices.get(i);
+                        String headerA = stats.get(idxA).headerName.trim();
+                        // 移除数字后缀得到 BaseName
+                        String baseA = headerA.substring(0, headerA.length() - suffix.length()).toLowerCase().trim().replaceAll("[_\\-：:\\s]+$", "");
 
-                            if (baseName.endsWith(k) || baseName.endsWith(v)) {
-                                String targetBase = baseName.endsWith(k) ? k : v;
-                                String otherBase = baseName.endsWith(k) ? v : k;
-                                String prefix = baseName.substring(0, baseName.length() - targetBase.length());
-                                
-                                for (int siblingIdx : siblings) {
-                                    String sName = stats.get(siblingIdx).headerName.toLowerCase().trim()
-                                            .replaceAll("\\d+$", "")
-                                            .replaceAll("[_\\s]+$", "");
-                                    if (sName.equals(prefix + otherBase)) {
-                                        isVerifiedPair = true;
-                                        matchedK = baseName.endsWith(k) ? baseName : sName;
-                                        matchedV = baseName.endsWith(v) ? baseName : sName;
-                                        break;
+                        for (int j = 0; j < indices.size(); j++) {
+                            if (i == j) continue;
+                            int idxB = indices.get(j);
+                            String headerB = stats.get(idxB).headerName.trim();
+                            String baseB = headerB.substring(0, headerB.length() - suffix.length()).toLowerCase().trim().replaceAll("[_\\-：:\\s]+$", "");
+
+                            // 检查 (baseA, baseB) 是否命中基因库中的一对
+                            for (Map.Entry<String, String> pair : kwPairs.entrySet()) {
+                                String k = pair.getKey().toLowerCase().trim();
+                                String v = pair.getValue().toLowerCase().trim();
+
+                                if (baseA.equals(k) && baseB.equals(v)) {
+                                    // 命中配对！记录结果并打标
+                                    final String kFull = headerA;
+                                    final String vFull = headerB;
+                                    final String suff = suffix;
+
+                                    com.example.datafill.dto.ExcelParseResult.DetectedPair existing = potentialPairs.stream()
+                                        .filter(p -> p.getKeyBase().equals(k) && p.getValueBase().equals(v))
+                                        .findFirst().orElse(null);
+
+                                    if (existing == null) {
+                                        existing = new com.example.datafill.dto.ExcelParseResult.DetectedPair();
+                                        existing.setKeyBase(k); existing.setValueBase(v);
+                                        existing.setKeyIndices(new ArrayList<>()); existing.setValueIndices(new ArrayList<>());
+                                        existing.setSuffixes(new ArrayList<>());
+                                        existing.setDisplayName(k + "/" + v);
+                                        existing.setSuggestedColumnName(deriveJsonColumnName(k, v));
+                                        potentialPairs.add(existing);
                                     }
+                                    
+                                    if (!existing.getSuffixes().contains(suff)) existing.getSuffixes().add(suff);
+                                    if (!existing.getKeyIndices().contains(idxA)) existing.getKeyIndices().add(idxA);
+                                    if (!existing.getValueIndices().contains(idxB)) existing.getValueIndices().add(idxB);
                                 }
                             }
-                            if (isVerifiedPair) break;
                         }
                     }
-
-                    if (isVerifiedPair) {
-                        final String kBase = matchedK; final String vBase = matchedV; final String suff = suffix;
-                        com.example.datafill.dto.ExcelParseResult.DetectedPair existing = potentialPairs.stream()
-                            .filter(p -> p.getKeyBase().equals(kBase) && p.getValueBase().equals(vBase))
-                            .filter(p -> {
-                                boolean existingIsNoNum = p.getSuffixes().isEmpty() || p.getSuffixes().get(0).isEmpty();
-                                boolean currentIsNoNum = suff.isEmpty();
-                                return existingIsNoNum == currentIsNoNum;
-                            })
-                            .findFirst().orElse(null);
-                        
-                        if (existing == null) {
-                            existing = new com.example.datafill.dto.ExcelParseResult.DetectedPair();
-                            existing.setKeyBase(kBase); existing.setValueBase(vBase);
-                            existing.setKeyIndices(new ArrayList<>()); existing.setValueIndices(new ArrayList<>());
-                            existing.setSuffixes(new ArrayList<>());
-                            existing.setDisplayName(kBase + "/" + vBase);
-                            existing.setSuggestedColumnName(deriveJsonColumnName(kBase, vBase));
-                            potentialPairs.add(existing);
-                        }
-                        if (!existing.getSuffixes().contains(suff)) existing.getSuffixes().add(suff);
-                        String bName = s.headerName.toLowerCase().trim().replaceAll("\\d+$", "").replaceAll("[_\\s]+$", "");
-                        if (bName.endsWith(kBase)) existing.getKeyIndices().add(i);
-                        else if (bName.endsWith(vBase)) existing.getValueIndices().add(i);
-                        continue; 
-                    }
+                }
+                
+                // 标记已识别为配对的列索引，避免下文重复添加成普通字段
+                java.util.Set<Integer> pairedIndices = new java.util.HashSet<>();
+                for (com.example.datafill.dto.ExcelParseResult.DetectedPair p : potentialPairs) {
+                    pairedIndices.addAll(p.getKeyIndices());
+                    pairedIndices.addAll(p.getValueIndices());
                 }
 
-                FieldDef def = new FieldDef();
-                def.setName(s.headerName);
-                String baseColName = generateDwColumnName(s.headerName, s.colIndex);
-                String finalColName = baseColName;
-                int suffixVal = 1;
-                while (usedColNames.contains(finalColName)) {
-                    finalColName = baseColName + "_" + suffixVal++;
+                // 准备进入下文普通字段处理逻辑
+                for (int i = 0; i < targetColumns.size(); i++) {
+                    if (pairedIndices.contains(i)) continue;
+                    
+                    ColumnStat s = targetColumns.get(i);
+                    FieldDef def = createFieldDef(s, i, usedColNames, smartType);
+                    fields.add(def);
                 }
-                usedColNames.add(finalColName);
-                def.setColumnName(finalColName);
-                def.setType("input"); def.setDbType("VARCHAR(255)");
-                if (smartType && s.nonBlankCount > 0) {
-                    if (s.couldBeDate) { def.setType("datetime"); def.setDbType("TIMESTAMP"); }
-                    else if (s.couldBeNumber) { def.setType("number"); def.setDbType("INTEGER"); }
-                    else if (s.rawValues.stream().anyMatch(val -> val.length() > 50)) { def.setType("textarea"); def.setDbType("TEXT"); }
+            } else {
+                // 原有的非键值对模式逻辑：全部展开为普通字段
+                for (int i = 0; i < targetColumns.size(); i++) {
+                    ColumnStat s = targetColumns.get(i);
+                    FieldDef def = createFieldDef(s, i, usedColNames, smartType);
+                    fields.add(def);
                 }
-                def.setRequired(false);
-                def.setFilterable(i < 5 && s.nonBlankCount > 0);
-                fields.add(def);
             }
         }
+        
         // 5. 最终名称完善 (增加范围提示)
         for (com.example.datafill.dto.ExcelParseResult.DetectedPair p : potentialPairs) {
             String range = formatSuffixRange(p.getSuffixes());
             String suffixDesc = range.isEmpty() ? "无编号" : range;
-            // 此时 p.getKeyBase() 已经是带前缀的全名了，如 tracking_id_charge_description
-            p.setDisplayName(p.getKeyBase() + "/" + p.getValueBase().replace(p.getKeyBase().replaceAll("[^_]+$", ""), "") + " (" + suffixDesc + ")");
+            p.setDisplayName(p.getKeyBase() + "/" + p.getValueBase() + " (" + suffixDesc + ")");
         }
 
         return result;
+    }
+
+    private FieldDef createFieldDef(ColumnStat s, int colIndex, Set<String> usedColNames, boolean smartType) {
+        FieldDef def = new FieldDef();
+        def.setName(s.headerName);
+        String baseColName = generateDwColumnName(s.headerName, colIndex);
+        String finalColName = baseColName;
+        int suffixVal = 1;
+        while (usedColNames.contains(finalColName)) {
+            finalColName = baseColName + "_" + suffixVal++;
+        }
+        usedColNames.add(finalColName);
+        def.setColumnName(finalColName);
+        def.setType("input"); def.setDbType("VARCHAR(255)");
+        if (smartType && s.nonBlankCount > 0) {
+            if (s.couldBeDate) { def.setType("datetime"); def.setDbType("TIMESTAMP"); }
+            else if (s.couldBeNumber) { def.setType("number"); def.setDbType("INTEGER"); }
+            else if (s.rawValues.stream().anyMatch(val -> val.length() > 50)) { def.setType("textarea"); def.setDbType("TEXT"); }
+        }
+        def.setRequired(false);
+        def.setFilterable(colIndex < 5 && s.nonBlankCount > 0);
+        return def;
     }
 
     private String formatSuffixRange(List<String> suffixes) {

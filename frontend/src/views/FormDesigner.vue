@@ -106,6 +106,7 @@
                 filterable
                 allow-create
                 default-first-option
+                :reserve-keyword="false"
                 placeholder="选择通知收件人"
                 style="width: 100%"
                 :loading="userListLoading"
@@ -223,14 +224,14 @@
                 v-model="fillUserList"
                 multiple
                 filterable
-                allow-create
                 default-first-option
+                :reserve-keyword="false"
                 placeholder="选择或搜索用户，留空表示对所有人开放"
                 style="width: 100%"
                 :loading="userListLoading"
               >
                 <el-option
-                  for="u in allUserEmails"
+                  v-for="u in allUserEmails"
                   :key="u"
                   :label="u"
                   :value="u"
@@ -251,24 +252,6 @@
       class="custom-dialog"
     >
       <div class="import-config-body" v-loading="isParsing" element-loading-text="正在智能解析 Excel 结构...">
-        <div class="config-section">
-          <div class="item-label">识别模式</div>
-          <el-radio-group v-model="importConfig.kvPairEnabled" class="mode-cards">
-            <el-radio :label="false" border>
-              <div class="radio-content">
-                <span class="m-title">标准字段模式</span>
-                <span class="m-desc">推荐：将每一列都识别为独立的数据库字段。</span>
-              </div>
-            </el-radio>
-            <el-radio :label="true" border>
-              <div class="radio-content">
-                <span class="m-title">键值对模式 (Key/Value)</span>
-                <span class="m-desc">灵活：自动识别成对的属性并归集到 JSON 容器中。</span>
-              </div>
-            </el-radio>
-          </el-radio-group>
-        </div>
-
         <div class="upload-area">
           <el-upload
             drag
@@ -338,6 +321,7 @@ import axios from 'axios'
 
 const router = useRouter()
 const route = useRoute()
+const currentUser = ref(localStorage.getItem('userEmail') || '管理员')
 
 const isEditMode = ref(!!route.params.id)
 
@@ -397,10 +381,8 @@ const loadUserList = async () => {
   }
 }
 
-// 用户名加上 @furniwell.com 后缀生成邮箱列表
-const allUserEmails = computed(() => 
-  allUsers.value.map(u => u.includes('@') ? u : u + '@furniwell.com')
-)
+// 直接使用原始 ID 列表，不再追加邮箱后缀
+const allUserEmails = computed(() => allUsers.value)
 const recipientList = ref([])
 
 const addField = () => {
@@ -610,8 +592,9 @@ const submitFormAndCreateTable = async () => {
     recipientEmails: recipientList.value.length > 0 ? JSON.stringify(recipientList.value) : null,
     fillUserEmails: fillUserList.value.length > 0 ? JSON.stringify(fillUserList.value) : null,
     forms: JSON.stringify(formattedFields),
+    forms: JSON.stringify(formattedFields),
     kvConfig: formMeta.kvConfig,
-    creator: formMeta.creator || currentUser.value
+    creator: currentUser.value
   }
 
   try {

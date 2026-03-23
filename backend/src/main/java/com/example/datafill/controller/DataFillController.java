@@ -34,6 +34,8 @@ public class DataFillController {
 
     private boolean isUserAdmin(String email) {
         if (email == null || email.isBlank()) return false;
+        // 允许 FineReport 管理账号作为超级管理员
+        if ("finereport_manage".equalsIgnoreCase(email.trim())) return true;
         if (adminEmail == null || adminEmail.isBlank()) return false;
         String[] admins = adminEmail.split(",");
         for (String admin : admins) {
@@ -58,8 +60,8 @@ public class DataFillController {
     public List<DataFillForm> getForms(
             @RequestParam(required = false) String userEmail) {
         boolean isAdmin = isUserAdmin(userEmail);
-        List<DataFillForm> allForms = formMapper.selectList(null);
-        if (isAdmin || userEmail == null || userEmail.isBlank()) {
+        List<DataFillForm> allForms = formMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DataFillForm>().orderByDesc("create_time"));
+        if (isAdmin || (userEmail == null || userEmail.isBlank())) {
             return allForms;
         }
         // 非管理员：只返回 fillUserEmails 为空（对所有人开放）或包含当前用户的表单
