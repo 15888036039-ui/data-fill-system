@@ -268,6 +268,9 @@ public class DynamicDataDmlService {
         if (form == null) throw new RuntimeException("表单不存在");
 
         String tableName = form.getTableName();
+        if (!tableName.matches("^[a-zA-Z0-9_]+$")) {
+            throw new RuntimeException("非法的物理表名称: " + tableName);
+        }
 
         LocalDateTime now = LocalDateTime.now();
 
@@ -487,7 +490,7 @@ public class DynamicDataDmlService {
 
         sets.add("\"w_update_dt\" = CURRENT_TIMESTAMP");
 
-        String updateSql = String.format("UPDATE \"%s\" SET %s WHERE \"id\" = ", tableName, sets.toString());
+        String updateSql = String.format("UPDATE \"%s\" SET %s WHERE \"id\" = ?", tableName, sets.toString());
 
         args.add(dataId);
 
@@ -668,16 +671,11 @@ public class DynamicDataDmlService {
 
             String col = field.getColumnName();
 
-            if (col == null || col.isBlank()) {
-
+            if (col == null || col.isBlank() || !col.matches("^[a-zA-Z0-9_]+$")) {
                 continue;
-
             }
 
             try {
-
-                // 不再进行严格正则校验，因为下面使用了双引号引用标识符
-
                 String sql = "SELECT DISTINCT \"" + col + "\" AS val FROM \"" + tableName + "\" " +
 
                         isolationWhere + " AND \"" + col + "\" IS NOT NULL ORDER BY val LIMIT 100";

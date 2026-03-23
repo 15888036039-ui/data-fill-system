@@ -1,7 +1,7 @@
 <template>
   <el-config-provider :locale="zhCn">
     <div class="app-wrapper">
-      <header v-if="!isEmbedMode && currentUser && isRegistered !== false" class="app-header">
+      <header v-if="!isEmbedMode && currentUser && isRegistered !== false && isAdmin" class="app-header">
         <div class="header-content">
           <el-menu 
             mode="horizontal" 
@@ -10,7 +10,6 @@
             class="nav-menu"
             :ellipsis="false"
           >
-            <el-menu-item v-if="!isAdmin" index="/tasks">填报工作台</el-menu-item>
             <el-menu-item v-if="isAdmin" index="/forms">模板管理</el-menu-item>
             <el-menu-item v-if="isAdmin" index="/designer">新建模板</el-menu-item>
             <el-menu-item v-if="isAdmin" index="/settings">系统配置</el-menu-item>
@@ -331,7 +330,7 @@ body {
 
 .main-body {
   flex: 1;
-  padding: 16px 0;
+  padding: 8px 0;
 }
 
 .main-body.is-embedded {
@@ -341,7 +340,7 @@ body {
 .container {
   width: 100%;
   margin: 0;
-  padding: 0 24px;
+  padding: 0 16px;
   box-sizing: border-box;
 }
 

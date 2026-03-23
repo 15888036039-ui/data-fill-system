@@ -140,7 +140,6 @@
                 clearable
                 filterable
                 class="filter-select"
-                @change="handleSearch"
               >
                 <el-option
                   v-for="opt in (filterOptions[field.columnName] || [])"

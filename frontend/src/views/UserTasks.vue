@@ -18,6 +18,7 @@
         <el-select v-model="statusFilter" placeholder="模板状态" clearable class="status-select">
           <el-option label="所有状态" value="" />
           <el-option label="待填报" value="pending" />
+          <el-option label="未开始" value="upcoming" />
           <el-option label="已填报" value="completed" />
           <el-option label="已截止" value="expired" />
         </el-select>
@@ -39,37 +40,53 @@
           <el-table-column label="状态" min-width="140" align="left">
             <template #default="scope">
               <el-tag
-                :type="scope.row.taskStatus === 'pending' ? 'warning' : (scope.row.taskStatus === 'completed' ? 'success' : 'danger')"
+                :type="scope.row.taskStatus === 'pending' ? 'warning' : (scope.row.taskStatus === 'upcoming' ? 'info' : (scope.row.taskStatus === 'completed' ? 'success' : 'danger'))"
                 effect="light"
                 round
               >
-                {{ scope.row.taskStatus === 'pending' ? '待填报' : (scope.row.taskStatus === 'completed' ? '已填报' : '已截止') }}
+                {{ scope.row.taskStatus === 'pending' ? '待填报' : (scope.row.taskStatus === 'upcoming' ? '未开始' : (scope.row.taskStatus === 'completed' ? '已填报' : '已截止')) }}
               </el-tag>
             </template>
           </el-table-column>
 
-          <el-table-column prop="deadline" label="截止时间" min-width="200">
+          <el-table-column label="填报倒计时 / 填报记录" min-width="280">
             <template #default="scope">
               <div class="time-cell">
-                <el-icon v-if="scope.row.deadline"><Timer /></el-icon>
-                <span>{{ scope.row.deadline ? new Date(scope.row.deadline).toLocaleString() : '长期有效' }}</span>
-              </div>
-            </template>
-          </el-table-column>
+                <template v-if="scope.row.taskStatus === 'pending'">
+                  <el-icon><AlarmClock /></el-icon>
+                  <span style="color: #d97706; font-weight: 600;">
+                    {{ formatTimeLeft(scope.row.secondsLeft) }}
+                  </span>
+                  <span class="sub-text">(截止: {{ scope.row.deadline ? new Date(scope.row.deadline).toLocaleString() : '长期有效' }})</span>
+                </template>
 
-          <el-table-column label="填报倒计时 / 下次填报" min-width="240">
-            <template #default="scope">
-              <div class="time-cell">
-                <el-icon v-if="scope.row.taskStatus === 'pending'"><AlarmClock /></el-icon>
-                <el-icon v-else-if="scope.row.taskStatus === 'completed' && scope.row.nextFillTime"><Calendar /></el-icon>
+                <template v-else-if="scope.row.taskStatus === 'upcoming'">
+                  <el-icon><Calendar /></el-icon>
+                  <span style="color: #64748b;">
+                    预计开始: {{ formatTimeLeft(scope.row.secondsUntilStart) }} 后
+                  </span>
+                  <span class="sub-text">(开启: {{ scope.row.startTimeOfCycle ? new Date(scope.row.startTimeOfCycle).toLocaleString() : '' }})</span>
+                </template>
+
+                <template v-else-if="scope.row.taskStatus === 'completed'">
+                  <el-icon v-if="scope.row.nextFillTime"><Calendar /></el-icon>
+                  <el-icon v-else><Check /></el-icon>
+                  <div class="completed-time-info">
+                    <span v-if="scope.row.nextFillTime" style="color: #059669;">
+                      下次填报: {{ new Date(scope.row.nextFillTime).toLocaleString() }}
+                    </span>
+                    <span v-else style="color: #64748b;">已填报</span>
+                    <span v-if="scope.row.lastSubmitTime" class="sub-text">
+                      (已于 {{ new Date(scope.row.lastSubmitTime).toLocaleString() }} 完成)
+                    </span>
+                  </div>
+                </template>
                 
-                <span v-if="scope.row.taskStatus === 'pending'" style="color: #d97706; font-weight: 600;">
-                  {{ formatTimeLeft(scope.row.secondsLeft) }}
-                </span>
-                <span v-else-if="scope.row.taskStatus === 'completed'" style="color: #64748b;">
-                  {{ scope.row.nextFillTime ? new Date(scope.row.nextFillTime).toLocaleString() : '-' }}
-                </span>
-                <span v-else style="color: #ef4444;">已过期</span>
+                <template v-else>
+                  <el-icon><CircleClose /></el-icon>
+                  <span style="color: #ef4444;">已逾期</span>
+                  <span class="sub-text">(截止于: {{ new Date(scope.row.deadline).toLocaleString() }})</span>
+                </template>
               </div>
             </template>
           </el-table-column>
@@ -110,7 +127,7 @@ import { ref, onMounted, watch, inject, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
-import { Document, Timer, Edit, Calendar, Search, Refresh, AlarmClock } from '@element-plus/icons-vue'
+import { Document, Edit, Calendar, Search, Refresh, AlarmClock, Check, CircleClose } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const currentUser = inject('currentUser', ref(''))
@@ -139,7 +156,7 @@ const loadTasks = async () => {
     const expired = res.data.expired || []
     
     allTasks.value = [
-      ...pending.map(t => ({...t, taskStatus: 'pending'})),
+      ...pending,
       ...completed.map(t => ({...t, taskStatus: 'completed'})),
       ...expired.map(t => ({...t, taskStatus: 'expired'}))
     ]
@@ -219,7 +236,7 @@ const formatTimeLeft = (seconds) => {
 .filter-bar {
   display: flex;
   gap: 16px;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   background: white;
   padding: 16px;
   border-radius: 12px;
@@ -268,9 +285,21 @@ const formatTimeLeft = (seconds) => {
 .time-cell {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-size: 13px;
   color: #64748b;
+}
+
+.sub-text {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-left: 4px;
+}
+
+.completed-time-info {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.4;
 }
 
 .pagination-container {
