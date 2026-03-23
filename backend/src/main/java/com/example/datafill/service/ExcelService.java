@@ -84,6 +84,7 @@ public class ExcelService {
         int nonBlankCount = 0;
         boolean couldBeDate = true;
         boolean couldBeNumber = true;
+        boolean hasDecimal = false;
         Set<String> uniqueValues = new HashSet<>();
         List<String> rawValues = new ArrayList<>();
         ColumnStat(int idx, String name) { this.colIndex = idx; this.headerName = name; }
@@ -245,7 +246,8 @@ public class ExcelService {
 
 
 
-            int startRow = isTemplate ? 2 : 1;
+            int startRow = 1;
+            boolean checkedTemplate = false;
             int BATCH_SIZE = 2000;
             List<Map<String, Object>> buffer = new ArrayList<>(BATCH_SIZE);
 
@@ -298,7 +300,28 @@ public class ExcelService {
 
             while (rowIterator.hasNext()) {
                 Row row = rowIterator.next();
-                if (row == null || row.getRowNum() < startRow) continue;
+                if (row == null) continue;
+                
+                if (!checkedTemplate && row.getRowNum() == 1) {
+                    checkedTemplate = true;
+                    boolean isSecondHeader = false;
+                    for (int c = 0; c < lastCol; c++) {
+                        Cell cell = row.getCell(c);
+                        if (cell != null) {
+                            String val = dataFormatter.formatCellValue(cell).trim();
+                            if (!val.isEmpty() && fields.stream().anyMatch(f -> val.equals(f.getName()))) {
+                                isSecondHeader = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (isSecondHeader) {
+                        startRow = 2;
+                        continue;
+                    }
+                }
+                
+                if (row.getRowNum() < startRow) continue;
                 Map<String, Object> rowData = new LinkedHashMap<>();
                 Map<String, Map<String, Object>> dynamicExtras = new LinkedHashMap<>();
                 Map<String, Object> defaultExtra = new LinkedHashMap<>();
@@ -446,10 +469,23 @@ public class ExcelService {
                     String val = dataFormatter.formatCellValue(cell).trim();
                     s.uniqueValues.add(val);
                     if (s.rawValues.size() < 100) s.rawValues.add(val);
-                    if (cell.getCellType() != org.apache.poi.ss.usermodel.CellType.NUMERIC) {
-                        s.couldBeNumber = false;
+                    if (cell.getCellType() == org.apache.poi.ss.usermodel.CellType.NUMERIC) {
+                        if (!org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) {
+                            s.couldBeDate = false;
+                            double d = cell.getNumericCellValue();
+                            if (d != Math.floor(d)) s.hasDecimal = true;
+                        }
+                    } else if (cell.getCellType() == org.apache.poi.ss.usermodel.CellType.STRING) {
                         s.couldBeDate = false;
-                    } else if (!org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) {
+                        String text = cell.getStringCellValue().trim().replace(",", "");
+                        try {
+                            double d = Double.parseDouble(text);
+                            if (d != Math.floor(d)) s.hasDecimal = true;
+                        } catch (NumberFormatException e) {
+                            s.couldBeNumber = false;
+                        }
+                    } else {
+                        s.couldBeNumber = false;
                         s.couldBeDate = false;
                     }
                 }
@@ -592,7 +628,10 @@ public class ExcelService {
         def.setType("input"); def.setDbType("VARCHAR(255)");
         if (smartType && s.nonBlankCount > 0) {
             if (s.couldBeDate) { def.setType("datetime"); def.setDbType("TIMESTAMP"); }
-            else if (s.couldBeNumber) { def.setType("number"); def.setDbType("INTEGER"); }
+            else if (s.couldBeNumber) { 
+                def.setType("number"); 
+                def.setDbType(s.hasDecimal ? "NUMERIC" : "INTEGER"); 
+            }
             else if (s.rawValues.stream().anyMatch(val -> val.length() > 50)) { def.setType("textarea"); def.setDbType("TEXT"); }
         }
         def.setRequired(false);

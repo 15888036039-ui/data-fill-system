@@ -21,7 +21,7 @@
 
     <el-card class="table-card" shadow="never">
       <el-table :data="paginatedForms" style="width: 100%" v-loading="loading">
-        <el-table-column prop="name" label="模板名称" min-width="200">
+        <el-table-column prop="name" label="模板名称" min-width="220">
           <template #default="scope">
             <div class="form-name-cell">
               <el-icon class="form-icon"><Document /></el-icon>
@@ -30,13 +30,13 @@
           </template>
         </el-table-column>
         
-        <el-table-column prop="tableName" label="物理表名" width="180">
+        <el-table-column prop="tableName" label="物理表名" min-width="180">
           <template #default="scope">
             <code class="table-code">{{ scope.row.tableName }}</code>
           </template>
         </el-table-column>
 
-        <el-table-column prop="status" label="状态" width="120" align="center">
+        <el-table-column prop="status" label="状态" min-width="120" align="center">
           <template #default="scope">
             <el-tag
               :type="scope.row.status === 'ACTIVE' ? 'success' : (scope.row.status === 'EXPIRED' ? 'danger' : 'info')"
@@ -48,7 +48,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="deadline" label="截止时间" width="200">
+        <el-table-column prop="deadline" label="截止时间" min-width="180">
           <template #default="scope">
             <div class="time-cell">
               <el-icon v-if="scope.row.deadline"><Timer /></el-icon>
@@ -57,7 +57,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="creator" label="创建人" width="160">
+        <el-table-column prop="creator" label="创建人" min-width="140">
           <template #default="scope">
             <div style="display: flex; align-items: center; gap: 6px;">
               <el-icon><User /></el-icon>
@@ -66,7 +66,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="createTime" label="创建时间" width="180">
+        <el-table-column prop="createTime" label="创建时间" min-width="180">
           <template #default="scope">
             <span style="color: #64748b; font-size: 13px;">{{ scope.row.createTime ? scope.row.createTime.replace('T', ' ') : '-' }}</span>
           </template>

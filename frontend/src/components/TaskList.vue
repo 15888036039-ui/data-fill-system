@@ -4,58 +4,63 @@
       <el-empty description="当前暂无相关的报送任务" />
     </div>
     
-    <div v-else class="task-grid">
-      <div 
-        v-for="task in tasks" 
-        :key="task.formId" 
-        class="task-card-wrapper"
-        @click="goToFill(task.formId)"
-      >
-        <el-card class="premium-task-card" shadow="hover">
-          <div class="card-status-bar" :class="status"></div>
-          
-          <div class="card-body">
-            <div class="title-row">
-              <h3 class="task-title">{{ task.name }}</h3>
-              <el-tag :type="statusTagType" effect="light" round size="small">
-                {{ statusLabel }}
-              </el-tag>
+    <div v-else class="table-wrapper">
+      <el-table :data="tasks" style="width: 100%" class="task-table" border stripe>
+        <el-table-column prop="name" label="模板名称" min-width="200">
+          <template #default="scope">
+            <div class="form-name-cell">
+              <el-icon class="form-icon" style="margin-right: 8px; color: #1e293b;"><Document /></el-icon>
+              <span class="name-text" style="font-weight: 500; color: #1e293b;">{{ scope.row.name }}</span>
             </div>
-            
-            <div class="info-grid">
-              <div class="info-item">
-                <el-icon><Calendar /></el-icon>
-                <span class="label">截止日期:</span>
-                <span class="value">{{ formatDate(task.deadline) }}</span>
-              </div>
-              
-              <div v-if="status === 'pending'" class="info-item countdown">
-                <el-icon><AlarmClock /></el-icon>
-                <span class="label">剩余时间:</span>
-                <span class="value accent">{{ formatTimeLeft(task.secondsLeft) }}</span>
-              </div>
-              
-              <div v-if="status === 'completed' && task.nextFillTime" class="info-item next">
-                <el-icon><RefreshRight /></el-icon>
-                <span class="label">下次填报:</span>
-                <span class="value">{{ formatDate(task.nextFillTime) }}</span>
-              </div>
+          </template>
+        </el-table-column>
+        
+        <el-table-column label="状态" width="120" align="center">
+          <template #default="scope">
+            <el-tag :type="statusTagType" effect="light" round>
+              {{ statusLabel }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        
+        <el-table-column prop="deadline" label="截止日期" width="180">
+          <template #default="scope">
+            <div style="display: flex; align-items: center; gap: 6px; color: #64748b;">
+              <el-icon v-if="scope.row.deadline"><Calendar /></el-icon>
+              <span>{{ formatDate(scope.row.deadline) }}</span>
             </div>
+          </template>
+        </el-table-column>
 
-            <div class="card-action">
-              <el-button 
-                :type="status === 'pending' ? 'primary' : 'default'" 
-                class="action-btn"
-                icon="ArrowRight"
-                text
-                bg
-              >
-                {{ status === 'pending' ? '立即去填写' : '查看记录 / 修改' }}
-              </el-button>
+        <el-table-column v-if="status === 'pending'" label="剩余时间" width="160">
+          <template #default="scope">
+            <span style="color: #d97706; font-weight: 600;">{{ formatTimeLeft(scope.row.secondsLeft) }}</span>
+          </template>
+        </el-table-column>
+
+        <el-table-column v-else-if="status === 'completed'" label="下次填报" width="180">
+          <template #default="scope">
+            <div style="display: flex; align-items: center; gap: 6px; color: #64748b;">
+              <el-icon v-if="scope.row.nextFillTime"><RefreshRight /></el-icon>
+              <span>{{ scope.row.nextFillTime ? formatDate(scope.row.nextFillTime) : '-' }}</span>
             </div>
-          </div>
-        </el-card>
-      </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="操作" width="160" align="right" fixed="right">
+          <template #default="scope">
+            <el-button 
+              :type="status === 'pending' ? 'primary' : 'default'" 
+              size="small"
+              icon="Edit"
+              @click="goToFill(scope.row.formId)"
+              plain
+            >
+              {{ status === 'pending' ? '立即填报' : '查看/修改' }}
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
     </div>
   </div>
 </template>
@@ -124,107 +129,13 @@ const goToFill = (formId) => {
 </script>
 
 <style scoped>
-.task-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 24px;
+.table-wrapper {
   padding: 16px 0;
 }
 
-.task-card-wrapper {
-  cursor: pointer;
-}
-
-.premium-task-card {
-  height: 100%;
-  border: none !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-  overflow: hidden;
-}
-
-.premium-task-card:hover {
-  transform: translateY(-6px);
-  box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.15) !important;
-}
-
-.card-status-bar {
-  height: 4px;
-  width: 100%;
-  position: absolute;
-  top: 0;
-  left: 0;
-}
-
-.card-status-bar.pending { background: #f59e0b; }
-.card-status-bar.completed { background: #10b981; }
-.card-status-bar.expired { background: #ef4444; }
-
-.card-body {
-  padding: 8px 4px;
-}
-
-.title-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 20px;
-  gap: 12px;
-}
-
-.task-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-  color: #1e293b;
-  line-height: 1.4;
-  flex: 1;
-}
-
-.info-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-bottom: 24px;
-}
-
-.info-item {
+.form-name-cell {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  color: #64748b;
-}
-
-.info-item .el-icon {
-  font-size: 16px;
-  color: #94a3b8;
-}
-
-.info-item .label {
-  color: #94a3b8;
-}
-
-.info-item .value {
-  color: #334155;
-  font-weight: 500;
-}
-
-.info-item .value.accent {
-  color: #d97706;
-  font-weight: 600;
-}
-
-.card-action {
-  border-top: 1px solid #f1f5f9;
-  padding-top: 16px;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.action-btn {
-  font-weight: 600;
-  letter-spacing: 0.5px;
 }
 
 .empty-list {

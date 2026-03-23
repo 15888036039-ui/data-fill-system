@@ -389,7 +389,22 @@ public class DynamicDataDmlService {
         if (val == null) {
             sb.append("\\N\t");
         } else {
-            String str = val.toString();
+            String str;
+            if (val instanceof Double) {
+                str = java.math.BigDecimal.valueOf((Double) val).stripTrailingZeros().toPlainString();
+            } else if (val instanceof Float) {
+                str = java.math.BigDecimal.valueOf((Float) val).stripTrailingZeros().toPlainString();
+            } else if (val instanceof java.util.Date) {
+                str = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format((java.util.Date) val);
+            } else if (val instanceof java.time.LocalDateTime) {
+                str = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").format((java.time.LocalDateTime) val);
+            } else {
+                str = val.toString();
+                // 自动嗅探并清洗带千位分隔符的纯数字格式（例如 1,750 或 -1,234.56），满足 PG COPY 对 NUMERIC 的强格式要求
+                if (str.matches("^[-+]?[0-9]{1,3}(,[0-9]{3})*(\\.[0-9]+)?$")) {
+                    str = str.replace(",", "");
+                }
+            }
             // Escape backslashes, tabs, newlines, and carriage returns
             str = str.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r");
             sb.append(str).append('\t');
