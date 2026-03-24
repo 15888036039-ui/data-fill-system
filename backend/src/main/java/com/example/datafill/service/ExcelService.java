@@ -179,6 +179,9 @@ public class ExcelService {
         if (form == null) throw new RuntimeException("表单不存在");
 
         String tableName = form.getTableName();
+        if (!tableName.matches("^[a-zA-Z0-9_]+$")) {
+            throw new RuntimeException("非法的物理表名称: " + tableName);
+        }
         if ("overwrite".equals(mode)) {
             jdbcTemplate.update("UPDATE \"" + tableName + "\" SET is_deleted = 1, w_update_dt = NOW()");
         }
