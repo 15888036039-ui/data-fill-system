@@ -437,6 +437,11 @@ public class DynamicTableDdlService {
             exist.setKvConfig(incoming.getKvConfig());
         }
 
+        // 刷新截止时间逻辑：如果是循环模式且截止时间被清空了，立刻算出第一期
+        if (!"DEADLINE".equalsIgnoreCase(exist.getReminderMode()) && exist.getDeadline() == null) {
+            schedulerService.initOrRefreshDeadline(exist, now);
+        }
+
         // 1.8 更新元数据
         formMapper.updateById(exist);
 
@@ -529,59 +534,81 @@ public class DynamicTableDdlService {
             }
 
             Integer cycleDays = form.getCycleDays();
+            String mode = form.getReminderMode();
+            int remDays = form.getReminderDays() != null ? form.getReminderDays() : 3;
+            
+            // 解析提醒时间 (HH:mm)
+            java.time.LocalTime rt = java.time.LocalTime.of(9, 0);
+            try {
+                if (form.getReminderTime() != null && !form.getReminderTime().isBlank()) {
+                    String[] parts = form.getReminderTime().split(":");
+                    int h = Integer.parseInt(parts[0]);
+                    int m = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
+                    rt = java.time.LocalTime.of(h, m);
+                }
+            } catch (Exception ignored) {}
 
             LocalDateTime nextFillTime = null;
-
+            LocalDateTime startTimeOfCycle = null;
             boolean completedCurrentCycle = false;
 
             if (cycleDays != null && cycleDays > 0 && lastSubmitTime != null) {
-
                 nextFillTime = lastSubmitTime.plusDays(cycleDays);
-
                 completedCurrentCycle = now.isBefore(nextFillTime);
-
+            } else if (deadline != null && ("WEEKLY".equalsIgnoreCase(mode) || "MONTHLY".equalsIgnoreCase(mode))) {
+                // 周期性任务（按周/按月）核心逻辑
+                // 1. 本期开始时间 = 截止日期 - 填报窗口天数，且对齐到提醒时点
+                startTimeOfCycle = deadline.minusDays(remDays).with(rt).withNano(0);
+                
+                // 2. 判定本期是否已完成：只要在【本期开始】之后填报过就算
+                if (lastSubmitTime != null && lastSubmitTime.isAfter(startTimeOfCycle)) {
+                    completedCurrentCycle = true;
+                    // 3. 算出“下一期”的触发时间 (用于显示下次填报)
+                    if ("WEEKLY".equalsIgnoreCase(mode)) {
+                        nextFillTime = startTimeOfCycle.plusDays(7);
+                    } else {
+                        nextFillTime = startTimeOfCycle.plusMonths(1);
+                    }
+                }
             } else if (lastSubmitTime != null) {
-
-                // 没有配置周期，只要填过一次就视为完成
-
                 completedCurrentCycle = true;
-
             }
 
             long secondsLeft = 0;
+            long secondsUntilStart = 0;
 
-            if (deadline != null && now.isBefore(deadline)) {
-
-                secondsLeft = java.time.Duration.between(now, deadline).getSeconds();
-
+            if (deadline != null) {
+                if (now.isBefore(deadline)) {
+                    secondsLeft = java.time.Duration.between(now, deadline).getSeconds();
+                }
+                if (startTimeOfCycle != null && now.isBefore(startTimeOfCycle)) {
+                    secondsUntilStart = java.time.Duration.between(now, startTimeOfCycle).getSeconds();
+                }
             }
 
             Map<String, Object> item = new LinkedHashMap<>();
-
             item.put("formId", form.getId());
-
             item.put("name", form.getName());
-
             item.put("deadline", deadline);
-
             item.put("status", form.getStatus());
-
             item.put("secondsLeft", secondsLeft);
-
+            item.put("secondsUntilStart", secondsUntilStart); // 距开始还剩秒数
+            item.put("startTimeOfCycle", startTimeOfCycle);
             item.put("nextFillTime", nextFillTime);
+            item.put("lastSubmitTime", lastSubmitTime);
 
             if (isExpired) {
-
                 expired.add(item);
-
             } else if (completedCurrentCycle) {
-
                 completed.add(item);
-
             } else {
-
+                // 细分 Pending：如果是还没到开始时间的周期任务，记为 "upcoming"
+                if (startTimeOfCycle != null && now.isBefore(startTimeOfCycle)) {
+                    item.put("taskStatus", "upcoming");
+                } else {
+                    item.put("taskStatus", "pending");
+                }
                 pending.add(item);
-
             }
 
         }
