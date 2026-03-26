@@ -55,6 +55,10 @@ import net.sourceforge.pinyin4j.format.HanyuPinyinToneType;
 
 public class ExcelService {
 
+    private static final java.util.Set<String> EXISTING_TABLE_SYSTEM_COLUMNS = java.util.Set.of(
+            "id", "load_user", "w_insert_dt", "w_update_dt", "is_deleted", "extra_data", "job_instance"
+    );
+
     private final DataFillFormMapper formMapper;
 
     private final DynamicDataDmlService dataDmlService;
@@ -76,6 +80,22 @@ public class ExcelService {
      */
     public String testNaming(String originalName) {
         return generateDwColumnName(originalName, 0);
+    }
+
+    private Set<String> loadPhysicalColumns(String tableName) {
+        List<String> columns = jdbcTemplate.queryForList("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = ?
+                """, String.class, tableName);
+        Set<String> result = new HashSet<>();
+        for (String column : columns) {
+            if (column != null) {
+                result.add(column.toLowerCase());
+            }
+        }
+        return result;
     }
 
     private static class ColumnStat {
@@ -180,7 +200,16 @@ public class ExcelService {
 
         String tableName = form.getTableName();
         if ("overwrite".equals(mode)) {
-            jdbcTemplate.update("UPDATE \"" + tableName + "\" SET is_deleted = 1, w_update_dt = NOW()");
+            Set<String> physicalColumns = loadPhysicalColumns(tableName);
+            if (physicalColumns.contains("is_deleted")) {
+                StringBuilder sql = new StringBuilder("UPDATE \"" + tableName + "\" SET is_deleted = 1");
+                if (physicalColumns.contains("w_update_dt")) {
+                    sql.append(", w_update_dt = NOW()");
+                }
+                jdbcTemplate.update(sql.toString());
+            } else {
+                jdbcTemplate.update("DELETE FROM \"" + tableName + "\"");
+            }
         }
 
         List<FieldDef> fields;
@@ -614,6 +643,98 @@ public class ExcelService {
         return result;
     }
 
+    public com.example.datafill.dto.ExcelParseResult inspectExistingTable(String tableName) {
+        if (tableName == null || tableName.isBlank()) {
+            throw new RuntimeException("物理表名不能为空");
+        }
+        if (!tableName.matches("^[a-zA-Z0-9_]+$")) {
+            throw new RuntimeException("物理表名只能包含字母、数字和下划线");
+        }
+
+        String existenceSql = """
+                SELECT COUNT(1)
+                FROM information_schema.tables
+                WHERE table_schema = current_schema()
+                  AND table_name = ?
+                """;
+        Integer tableCount = jdbcTemplate.queryForObject(existenceSql, Integer.class, tableName);
+        if (tableCount == null || tableCount <= 0) {
+            throw new RuntimeException("指定的物理表不存在: " + tableName);
+        }
+
+        String sql = """
+                SELECT
+                    c.ordinal_position,
+                    c.column_name,
+                    c.data_type,
+                    c.udt_name,
+                    c.character_maximum_length,
+                    c.numeric_precision,
+                    c.numeric_scale,
+                    c.is_nullable,
+                    COALESCE(pgd.description, '') AS column_comment
+                FROM information_schema.columns c
+                LEFT JOIN pg_catalog.pg_class cls
+                    ON cls.relname = c.table_name
+                LEFT JOIN pg_catalog.pg_namespace ns
+                    ON ns.oid = cls.relnamespace
+                   AND ns.nspname = c.table_schema
+                LEFT JOIN pg_catalog.pg_description pgd
+                    ON pgd.objoid = cls.oid
+                   AND pgd.objsubid = c.ordinal_position
+                WHERE c.table_schema = current_schema()
+                  AND c.table_name = ?
+                ORDER BY c.ordinal_position
+                """;
+
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, tableName);
+        if (rows.isEmpty()) {
+            throw new RuntimeException("未读取到表字段: " + tableName);
+        }
+
+        List<FieldDef> fields = new ArrayList<>();
+        List<String> originalHeaders = new ArrayList<>();
+        int businessIndex = 0;
+        for (Map<String, Object> row : rows) {
+            String columnName = asText(row.get("column_name"));
+            if (columnName == null) {
+                continue;
+            }
+            originalHeaders.add(columnName);
+            if (EXISTING_TABLE_SYSTEM_COLUMNS.contains(columnName.toLowerCase())) {
+                continue;
+            }
+
+            FieldDef field = new FieldDef();
+            field.setColumnName(columnName);
+            field.setOriginalColumnName(columnName);
+            String comment = asText(row.get("column_comment"));
+            field.setName((comment != null && !comment.isBlank()) ? comment : columnName);
+
+            String dbType = buildPgType(row);
+            field.setDbType(dbType);
+            applyFieldTypeByDbType(field, dbType);
+
+            String nullable = asText(row.get("is_nullable"));
+            field.setRequired("NO".equalsIgnoreCase(nullable));
+            field.setFilterable(businessIndex < 5);
+            fields.add(field);
+            businessIndex++;
+        }
+
+        if (fields.isEmpty()) {
+            throw new RuntimeException("该表仅包含系统字段，未识别到可配置的业务字段");
+        }
+
+        com.example.datafill.dto.ExcelParseResult result = new com.example.datafill.dto.ExcelParseResult();
+        result.setFields(fields);
+        result.setPotentialPairs(new ArrayList<>());
+        result.setOriginalHeaders(originalHeaders);
+        result.setTotalColumns(rows.size());
+        result.setTruncated(false);
+        return result;
+    }
+
     private FieldDef createFieldDef(ColumnStat s, int colIndex, Set<String> usedColNames, boolean smartType) {
         FieldDef def = new FieldDef();
         def.setName(s.headerName);
@@ -637,6 +758,98 @@ public class ExcelService {
         def.setRequired(false);
         def.setFilterable(colIndex < 5 && s.nonBlankCount > 0);
         return def;
+    }
+
+    private String buildPgType(Map<String, Object> row) {
+        String dataType = lower(asText(row.get("data_type")));
+        String udtName = lower(asText(row.get("udt_name")));
+        Integer charLength = asInteger(row.get("character_maximum_length"));
+        Integer precision = asInteger(row.get("numeric_precision"));
+        Integer scale = asInteger(row.get("numeric_scale"));
+
+        if ("character varying".equals(dataType) || "varchar".equals(dataType)) {
+            return charLength != null && charLength > 0 ? "VARCHAR(" + charLength + ")" : "VARCHAR(255)";
+        }
+        if ("character".equals(dataType) || "bpchar".equals(udtName)) {
+            return charLength != null && charLength > 0 ? "CHAR(" + charLength + ")" : "CHAR(1)";
+        }
+        if ("text".equals(dataType)) {
+            return "TEXT";
+        }
+        if ("integer".equals(dataType) || "int4".equals(udtName)) {
+            return "INTEGER";
+        }
+        if ("bigint".equals(dataType) || "int8".equals(udtName)) {
+            return "BIGINT";
+        }
+        if ("smallint".equals(dataType) || "int2".equals(udtName)) {
+            return "SMALLINT";
+        }
+        if ("boolean".equals(dataType) || "bool".equals(udtName)) {
+            return "BOOLEAN";
+        }
+        if ("date".equals(dataType)) {
+            return "DATE";
+        }
+        if ("timestamp without time zone".equals(dataType) || "timestamp with time zone".equals(dataType)
+                || "timestamp".equals(dataType) || "timestamptz".equals(udtName)) {
+            return "TIMESTAMP";
+        }
+        if ("jsonb".equals(dataType) || "jsonb".equals(udtName)) {
+            return "JSONB";
+        }
+        if ("json".equals(dataType) || "json".equals(udtName)) {
+            return "JSON";
+        }
+        if ("numeric".equals(dataType) || "decimal".equals(dataType) || "numeric".equals(udtName)) {
+            if (precision != null && scale != null) {
+                return "NUMERIC(" + precision + ", " + scale + ")";
+            }
+            return "NUMERIC";
+        }
+        if ("double precision".equals(dataType) || "float8".equals(udtName)) {
+            return "DOUBLE PRECISION";
+        }
+        if ("real".equals(dataType) || "float4".equals(udtName)) {
+            return "REAL";
+        }
+        return dataType != null ? dataType.toUpperCase() : "VARCHAR(255)";
+    }
+
+    private void applyFieldTypeByDbType(FieldDef field, String dbType) {
+        String typeStr = dbType == null ? "" : dbType.toUpperCase();
+        if (typeStr.contains("TIMESTAMP") || "DATE".equals(typeStr) || typeStr.contains("TIME")) {
+            field.setType("datetime");
+        } else if (typeStr.contains("INT") || typeStr.contains("NUMERIC") || typeStr.contains("DECIMAL")
+                || typeStr.contains("DOUBLE") || typeStr.contains("REAL")) {
+            field.setType("number");
+        } else if (typeStr.contains("TEXT") || typeStr.contains("JSON")) {
+            field.setType("textarea");
+        } else if (typeStr.contains("BOOL")) {
+            field.setType("switch");
+        } else {
+            field.setType("input");
+        }
+    }
+
+    private String asText(Object value) {
+        return value == null ? null : String.valueOf(value).trim();
+    }
+
+    private String lower(String value) {
+        return value == null ? null : value.toLowerCase();
+    }
+
+    private Integer asInteger(Object value) {
+        if (value == null) return null;
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private String formatSuffixRange(List<String> suffixes) {

@@ -62,6 +62,26 @@ public class DynamicDataDmlService {
 
     );
 
+    private java.util.Set<String> loadPhysicalColumns(String tableName) {
+        List<String> columns = jdbcTemplate.queryForList("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = ?
+                """, String.class, tableName);
+        java.util.Set<String> result = new java.util.HashSet<>();
+        for (String column : columns) {
+            if (column != null) {
+                result.add(column.toLowerCase());
+            }
+        }
+        return result;
+    }
+
+    private boolean hasColumn(java.util.Set<String> physicalColumns, String columnName) {
+        return physicalColumns.contains(columnName.toLowerCase());
+    }
+
     /**
 
      * 2. 动态向物理表中插入填报数据（使用预编译，防止 SQL 注入）
@@ -112,6 +132,7 @@ public class DynamicDataDmlService {
 
         }
 
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(tableName);
         String rowId = java.util.UUID.randomUUID().toString().replace("-", ""); // 生成主键
 
         StringJoiner columns = new StringJoiner(", ");
@@ -120,17 +141,17 @@ public class DynamicDataDmlService {
 
         List<Object> args = new ArrayList<>();
 
-        columns.add("\"id\"");
-
-        placeholders.add("?");
-
-        args.add(rowId);
+        if (hasColumn(physicalColumns, "id")) {
+            columns.add("\"id\"");
+            placeholders.add("?");
+            args.add(rowId);
+        }
 
         // 如果前端传了 load_user (或者在 UserTasks 中保存的 email)，优先使用
 
         String loadUser = rowData.containsKey("load_user") ? rowData.get("load_user").toString() : (rowData.containsKey("creator") ? rowData.get("creator").toString() : null);
 
-        if (loadUser != null) {
+        if (loadUser != null && hasColumn(physicalColumns, "load_user")) {
 
             columns.add("\"load_user\"");
 
@@ -142,17 +163,16 @@ public class DynamicDataDmlService {
 
         // 自动填充入库和更新时间
 
-        columns.add("\"w_insert_dt\"");
-
-        placeholders.add("?");
-
-        args.add(now);
-
-        columns.add("\"w_update_dt\"");
-
-        placeholders.add("?");
-
-        args.add(now);
+        if (hasColumn(physicalColumns, "w_insert_dt")) {
+            columns.add("\"w_insert_dt\"");
+            placeholders.add("?");
+            args.add(now);
+        }
+        if (hasColumn(physicalColumns, "w_update_dt")) {
+            columns.add("\"w_update_dt\"");
+            placeholders.add("?");
+            args.add(now);
+        }
 
         Object applicantEmailObj = rowData.getOrDefault("applicantEmail", rowData.get("applicant_email"));
 
@@ -160,7 +180,9 @@ public class DynamicDataDmlService {
 
         // 解析表单定义以识别 JSONB 字段
         java.util.Set<String> jsonbCols = new java.util.HashSet<>();
-        jsonbCols.add("extra_data");
+        if (hasColumn(physicalColumns, "extra_data")) {
+            jsonbCols.add("extra_data");
+        }
         try {
             List<FieldDef> fields = objectMapper.readValue(form.getForms(), new com.fasterxml.jackson.core.type.TypeReference<List<FieldDef>>() {});
             for (FieldDef f : fields) {
@@ -199,7 +221,7 @@ public class DynamicDataDmlService {
 
         // 专家补丁：确保 extra_data 始终参与（如果没有在循环中添加）
 
-        if (!rowData.containsKey("extra_data")) {
+        if (hasColumn(physicalColumns, "extra_data") && !rowData.containsKey("extra_data")) {
 
             columns.add("\"extra_data\"");
 
@@ -268,6 +290,7 @@ public class DynamicDataDmlService {
         if (form == null) throw new RuntimeException("表单不存在");
 
         String tableName = form.getTableName();
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(tableName);
 
         LocalDateTime now = LocalDateTime.now();
 
@@ -291,11 +314,15 @@ public class DynamicDataDmlService {
 
         List<String> columns = new ArrayList<>();
 
-        columns.add("\"id\"");
+        boolean hasId = hasColumn(physicalColumns, "id");
+        boolean hasInsertDt = hasColumn(physicalColumns, "w_insert_dt");
+        boolean hasUpdateDt = hasColumn(physicalColumns, "w_update_dt");
+        boolean hasLoadUserColumn = hasColumn(physicalColumns, "load_user");
+        boolean hasExtraDataColumn = hasColumn(physicalColumns, "extra_data");
 
-        columns.add("\"w_insert_dt\"");
-
-        columns.add("\"w_update_dt\"");
+        if (hasId) columns.add("\"id\"");
+        if (hasInsertDt) columns.add("\"w_insert_dt\"");
+        if (hasUpdateDt) columns.add("\"w_update_dt\"");
 
         // 收集业务列：从表单定义中提取，而不是由首行 KeySet 决定（防止首行漏列）
 
@@ -313,18 +340,18 @@ public class DynamicDataDmlService {
 
         }
 
-        boolean hasLoadUser = rows.get(0).containsKey("load_user") || rows.get(0).containsKey("creator");
+        boolean hasLoadUser = hasLoadUserColumn && (rows.get(0).containsKey("load_user") || rows.get(0).containsKey("creator"));
 
         if (hasLoadUser) columns.add("\"load_user\"");
 
         for (String col : dataColumns) columns.add("\"" + col + "\"");
 
-        columns.add("\"extra_data\"");
+        if (hasExtraDataColumn) columns.add("\"extra_data\"");
 
         String colPart = String.join(", ", columns);
 
         java.util.Set<String> jsonbCols = new java.util.HashSet<>();
-        jsonbCols.add("extra_data");
+        if (hasExtraDataColumn) jsonbCols.add("extra_data");
         for (FieldDef f : fields) {
             if ("JSONB".equalsIgnoreCase(f.getDbType()) || (f.getColumnName() != null && f.getColumnName().endsWith("_json"))) {
                 jsonbCols.add(f.getColumnName().toLowerCase());
@@ -341,9 +368,9 @@ public class DynamicDataDmlService {
             String rowId = java.util.UUID.randomUUID().toString().replace("-", "");
             
             // Build the TSV row
-            appendTsv(tsvBuilder, rowId);
-            appendTsv(tsvBuilder, now);
-            appendTsv(tsvBuilder, now);
+            if (hasId) appendTsv(tsvBuilder, rowId);
+            if (hasInsertDt) appendTsv(tsvBuilder, now);
+            if (hasUpdateDt) appendTsv(tsvBuilder, now);
 
             if (hasLoadUser) {
                 Object u = row.get("load_user");
@@ -361,12 +388,14 @@ public class DynamicDataDmlService {
                 appendTsv(tsvBuilder, val);
             }
 
-            Object extra = row.get("extra_data");
-            if (extra != null && !(extra instanceof String)) {
-                try { extra = objectMapper.writeValueAsString(extra); } catch (Exception e) { extra = "{}"; }
+            if (hasExtraDataColumn) {
+                Object extra = row.get("extra_data");
+                if (extra != null && !(extra instanceof String)) {
+                    try { extra = objectMapper.writeValueAsString(extra); } catch (Exception e) { extra = "{}"; }
+                }
+                if (extra == null) extra = "{}";
+                appendTsv(tsvBuilder, extra);
             }
-            if (extra == null) extra = "{}";
-            appendTsv(tsvBuilder, extra);
 
             // Replace last tab with newline
             tsvBuilder.setCharAt(tsvBuilder.length() - 1, '\n');
@@ -426,10 +455,11 @@ public class DynamicDataDmlService {
         if (form == null) throw new RuntimeException("表单不存在");
 
         String tableName = form.getTableName();
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(tableName);
 
         // 归属权限校验 & 行级宽限期校验
-        if (!isAdmin && operatorEmail != null) {
-            String checkSql = String.format("SELECT \"load_user\", \"w_insert_dt\" FROM \"%s\" WHERE \"id\" = ?", tableName);
+        if (!isAdmin && operatorEmail != null && hasColumn(physicalColumns, "id") && hasColumn(physicalColumns, "load_user")) {
+            String checkSql = String.format("SELECT \"load_user\" FROM \"%s\" WHERE \"id\" = ?", tableName);
             try {
                 Map<String, Object> record = jdbcTemplate.queryForMap(checkSql, dataId);
                 String owner = (String) record.get("load_user");
@@ -450,7 +480,9 @@ public class DynamicDataDmlService {
 
         // 解析表单定义以识别 JSONB 字段
         java.util.Set<String> jsonbCols = new java.util.HashSet<>();
-        jsonbCols.add("extra_data");
+        if (hasColumn(physicalColumns, "extra_data")) {
+            jsonbCols.add("extra_data");
+        }
         try {
             List<FieldDef> fields = objectMapper.readValue(form.getForms(), new com.fasterxml.jackson.core.type.TypeReference<List<FieldDef>>() {});
             for (FieldDef f : fields) {
@@ -485,9 +517,19 @@ public class DynamicDataDmlService {
             args.add(val);
         }
 
-        sets.add("\"w_update_dt\" = CURRENT_TIMESTAMP");
+        if (hasColumn(physicalColumns, "w_update_dt")) {
+            sets.add("\"w_update_dt\" = CURRENT_TIMESTAMP");
+        }
 
-        String updateSql = String.format("UPDATE \"%s\" SET %s WHERE \"id\" = ", tableName, sets.toString());
+        if (sets.length() == 0) {
+            return;
+        }
+
+        if (!hasColumn(physicalColumns, "id")) {
+            throw new RuntimeException("当前绑定表缺少 id 字段，暂不支持按行修改");
+        }
+
+        String updateSql = String.format("UPDATE \"%s\" SET %s WHERE \"id\" = ?", tableName, sets.toString());
 
         args.add(dataId);
 
@@ -506,10 +548,11 @@ public class DynamicDataDmlService {
         if (!tableName.matches("^[a-zA-Z0-9_]+$")) {
             throw new RuntimeException("非法的物理表名称: " + tableName);
         }
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(tableName);
 
         StringBuilder whereClause = new StringBuilder();
         List<Object> args = new ArrayList<>();
-        buildWhereClause(whereClause, args, filters, userEmail, isAdmin);
+        buildWhereClause(whereClause, args, filters, userEmail, isAdmin, physicalColumns);
 
 
         // 统计总数
@@ -524,7 +567,10 @@ public class DynamicDataDmlService {
 
         int offset = (page - 1) * size;
 
-        String listSql = "SELECT * FROM \"" + tableName + "\"" + whereClause.toString() + " ORDER BY w_insert_dt DESC LIMIT ? OFFSET ?";
+        String orderBy = hasColumn(physicalColumns, "w_insert_dt")
+                ? " ORDER BY \"w_insert_dt\" DESC"
+                : (hasColumn(physicalColumns, "id") ? " ORDER BY \"id\" DESC" : "");
+        String listSql = "SELECT * FROM \"" + tableName + "\"" + whereClause.toString() + orderBy + " LIMIT ? OFFSET ?";
 
         args.add(size);
 
@@ -538,7 +584,7 @@ public class DynamicDataDmlService {
 
             LinkedHashMap<String, Object> record = new LinkedHashMap<>(row);
 
-            Object extraDataObj = record.get("extra_data");
+            Object extraDataObj = hasColumn(physicalColumns, "extra_data") ? record.get("extra_data") : null;
 
             if (extraDataObj != null) {
 
@@ -564,7 +610,9 @@ public class DynamicDataDmlService {
 
             }
 
-            record.remove("extra_data");
+            if (hasColumn(physicalColumns, "extra_data")) {
+                record.remove("extra_data");
+            }
 
             records.add(record);
 
@@ -582,8 +630,13 @@ public class DynamicDataDmlService {
                 
                 // 兼容逻辑：如果没有 log，查物理表
                 if (firstSubmitTime == null) {
-                    String checkSql = String.format("SELECT MIN(w_insert_dt) FROM \"%s\" WHERE load_user = ? AND (is_deleted IS NULL OR is_deleted = 0)", tableName);
-                    firstSubmitTime = jdbcTemplate.queryForObject(checkSql, LocalDateTime.class, userEmail);
+                    if (hasColumn(physicalColumns, "w_insert_dt") && hasColumn(physicalColumns, "load_user")) {
+                        StringBuilder checkSql = new StringBuilder(String.format("SELECT MIN(\"w_insert_dt\") FROM \"%s\" WHERE \"load_user\" = ?", tableName));
+                        if (hasColumn(physicalColumns, "is_deleted")) {
+                            checkSql.append(" AND (\"is_deleted\" IS NULL OR \"is_deleted\" = 0)");
+                        }
+                        firstSubmitTime = jdbcTemplate.queryForObject(checkSql.toString(), LocalDateTime.class, userEmail);
+                    }
                 }
 
                 if (firstSubmitTime != null) {
@@ -655,11 +708,17 @@ public class DynamicDataDmlService {
 
         // 构建隔离过滤条件
 
-        String isolationWhere = " WHERE (is_deleted IS NULL OR is_deleted = 0) ";
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(tableName);
+
+        String isolationWhere = " WHERE 1 = 1 ";
 
         List<Object> baseArgs = new ArrayList<>();
 
-        if (!isAdmin && operatorEmail != null && !operatorEmail.isBlank()) {
+        if (hasColumn(physicalColumns, "is_deleted")) {
+            isolationWhere += " AND (\"is_deleted\" IS NULL OR \"is_deleted\" = 0) ";
+        }
+
+        if (!isAdmin && operatorEmail != null && !operatorEmail.isBlank() && hasColumn(physicalColumns, "load_user")) {
             isolationWhere += " AND (\"load_user\" = ? OR \"load_user\" IS NULL) ";
             baseArgs.add(operatorEmail);
         }
@@ -672,6 +731,10 @@ public class DynamicDataDmlService {
 
                 continue;
 
+            }
+
+            if (!hasColumn(physicalColumns, col)) {
+                continue;
             }
 
             try {
@@ -732,9 +795,11 @@ public class DynamicDataDmlService {
         String tableName = form.getTableName();
 
         // 权限校验 & 行级宽限期校验：非管理员只能删除自己 24h 内的数据
-        if (!isAdmin && operatorEmail != null) {
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(tableName);
+
+        if (!isAdmin && operatorEmail != null && hasColumn(physicalColumns, "id") && hasColumn(physicalColumns, "load_user")) {
             for (String dataId : dataIds) {
-                String checkSql = String.format("SELECT \"load_user\", \"w_insert_dt\" FROM \"%s\" WHERE \"id\" = ?", tableName);
+                String checkSql = String.format("SELECT \"load_user\" FROM \"%s\" WHERE \"id\" = ?", tableName);
                 try {
                     Map<String, Object> record = jdbcTemplate.queryForMap(checkSql, dataId);
                     String owner = (String) record.get("load_user");
@@ -765,16 +830,16 @@ public class DynamicDataDmlService {
 
         }
 
-        String updateSql = String.format("UPDATE \"%s\" SET is_deleted = 1 WHERE \"id\" IN (%s)", tableName, placeholders.toString());
-
         List<Object> args = new ArrayList<>(dataIds);
-
-        try {
-            jdbcTemplate.update(updateSql, args.toArray());
-        } catch (Exception e) {
-            String deleteSql = String.format("DELETE FROM \"%s\" WHERE \"id\" IN (%s)", tableName, placeholders.toString());
-            jdbcTemplate.update(deleteSql, args.toArray());
+        if (hasColumn(physicalColumns, "is_deleted")) {
+            String updateSql = String.format("UPDATE \"%s\" SET is_deleted = 1 WHERE \"id\" IN (%s)", tableName, placeholders.toString());
+            try {
+                jdbcTemplate.update(updateSql, args.toArray());
+                return;
+            } catch (Exception ignored) {}
         }
+        String deleteSql = String.format("DELETE FROM \"%s\" WHERE \"id\" IN (%s)", tableName, placeholders.toString());
+        jdbcTemplate.update(deleteSql, args.toArray());
 
     }
 
@@ -786,20 +851,23 @@ public class DynamicDataDmlService {
         DataFillForm form = formMapper.selectById(formId);
         if (form == null) throw new RuntimeException("表单不存在");
         String tableName = form.getTableName();
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(tableName);
 
         StringBuilder whereClause = new StringBuilder();
         List<Object> args = new ArrayList<>();
-        buildWhereClause(whereClause, args, filters, operatorEmail, isAdmin);
+        buildWhereClause(whereClause, args, filters, operatorEmail, isAdmin, physicalColumns);
 
-        // 先尝试软删除
-        String updateSql = String.format("UPDATE \"%s\" SET is_deleted = 1 %s", tableName, whereClause.toString());
-        try {
-            jdbcTemplate.update(updateSql, args.toArray());
-        } catch (Exception e) {
-            // 降级为物理删除
-            String deleteSql = String.format("DELETE FROM \"%s\" %s", tableName, whereClause.toString());
-            jdbcTemplate.update(deleteSql, args.toArray());
+        if (hasColumn(physicalColumns, "is_deleted")) {
+            String updateSql = String.format("UPDATE \"%s\" SET is_deleted = 1 %s", tableName, whereClause.toString());
+            try {
+                jdbcTemplate.update(updateSql, args.toArray());
+                return;
+            } catch (Exception ignored) {
+                // ignore and fallback to hard delete
+            }
         }
+        String deleteSql = String.format("DELETE FROM \"%s\" %s", tableName, whereClause.toString());
+        jdbcTemplate.update(deleteSql, args.toArray());
     }
 
     /**
@@ -812,11 +880,15 @@ public class DynamicDataDmlService {
     /**
      * 构建通用的 WHERE 子句（支持数据隔离和条件筛选）
      */
-    private void buildWhereClause(StringBuilder whereClause, List<Object> args, Map<String, String> filters, String userEmail, boolean isAdmin) {
-        whereClause.append(" WHERE (is_deleted IS NULL OR is_deleted = 0) ");
+    private void buildWhereClause(StringBuilder whereClause, List<Object> args, Map<String, String> filters, String userEmail, boolean isAdmin, java.util.Set<String> physicalColumns) {
+        whereClause.append(" WHERE 1 = 1 ");
+
+        if (hasColumn(physicalColumns, "is_deleted")) {
+            whereClause.append(" AND (\"is_deleted\" IS NULL OR \"is_deleted\" = 0) ");
+        }
         
         // 核心隔离逻辑：非管理员只能看自己的数据 (兼容旧数据：允许 load_user 为空)
-        if (!isAdmin && userEmail != null && !userEmail.isBlank()) {
+        if (!isAdmin && userEmail != null && !userEmail.isBlank() && hasColumn(physicalColumns, "load_user")) {
             whereClause.append(" AND (\"load_user\" = ? OR \"load_user\" IS NULL) ");
             args.add(userEmail);
         }
@@ -827,15 +899,15 @@ public class DynamicDataDmlService {
                 if (val == null || val.trim().isEmpty()) continue;
 
                 String col = entry.getKey();
-                if (col.startsWith("extra_data.")) {
+                if (col.startsWith("extra_data.") && hasColumn(physicalColumns, "extra_data")) {
                     String jsonKey = col.substring("extra_data.".length());
                     if (jsonKey.matches("^[a-zA-Z0-9_]+$")) {
                         whereClause.append(" AND \"extra_data\"->> ? LIKE ? ");
                         args.add(jsonKey);
                         args.add("%" + val + "%");
                     }
-                } else if (col.matches("^[a-zA-Z0-9_]+$")) {
-                    if ("creator".equalsIgnoreCase(col) || "load_user".equalsIgnoreCase(col)) {
+                } else if (col.matches("^[a-zA-Z0-9_]+$") && hasColumn(physicalColumns, col)) {
+                    if (("creator".equalsIgnoreCase(col) || "load_user".equalsIgnoreCase(col)) && hasColumn(physicalColumns, col)) {
                         whereClause.append(" AND \"").append(col).append("\" = ? ");
                         args.add(val);
                     } else {

@@ -1,6 +1,7 @@
 package com.example.datafill.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -15,6 +16,8 @@ public class DataFillForm {
     
     private String name;        // 表单中文名
     private String tableName;   // 要在数据库里创建的物理表名 (如 df_employee)
+    @TableField("folder_id")
+    private String folderId;    // 所属目录ID，null 表示未分类
     private String forms;       // 字段定义的 JSON 字符串
 
     /** 表单状态：ACTIVE(可填报)、EXPIRED(已过期)、DISABLED(停用) */

@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
+import { isKnownAdmin } from '../utils/admin.js'
 
 const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
@@ -13,7 +14,7 @@ const router = createRouter({
           user = isEncrypted(userParam) ? decryptUser(userParam) : userParam
         }
         
-        if (user === 'finereport_manage') {
+        if (isKnownAdmin(user)) {
           return { path: '/forms', query: to.query }
         }
         return { path: '/tasks', query: to.query }
@@ -62,7 +63,7 @@ router.beforeEach((to, from, next) => {
   if (userParam) {
     user = isEncrypted(userParam) ? decryptUser(userParam) : userParam
   }
-  const isAdmin = user === 'finereport_manage'
+  const isAdmin = isKnownAdmin(user)
 
   // 管理员强制进入模板管理，禁止进入填报工作台
   if (isAdmin && to.path === '/tasks') {

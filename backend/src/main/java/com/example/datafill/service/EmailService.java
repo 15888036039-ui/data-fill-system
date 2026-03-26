@@ -40,9 +40,11 @@ public class EmailService {
 
     private String fromEmail;
 
-    @Value("${data-fill.mail.subject-prefix:[数据填报系统] }")
-
+    @Value("${data-fill.mail.subject-prefix:[美鹰·智数平台] }")
     private String subjectPrefix;
+
+    @Value("${data-fill.mail.system-url:http://localhost:5173}")
+    private String systemUrl;
 
     /**
 
@@ -153,51 +155,33 @@ public class EmailService {
      */
 
     private String buildReminderContent(String formName, LocalDateTime deadline, int daysLeft) {
-
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
-
         String deadlineStr = deadline.format(formatter);
-
         return """
-
             <html>
-
             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-
-                <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-
-                    <h2 style="color: #2e86de;">数据填报提醒</h2>
-
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+                    <h2 style="color: #2563eb; margin-top: 0;">数据填报提醒</h2>
                     <p>您好！</p>
-
                     <p>您有以下数据填报任务需要完成：</p>
-
-                    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0;">
-
+                    <div style="background-color: #f8fafc; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #2563eb;">
                         <p><strong>表单名称：</strong>%s</p>
-
                         <p><strong>截止时间：</strong>%s</p>
-
-                        <p><strong>剩余天数：</strong><span style="color: #e74c3c; font-weight: bold;">%d 天</span></p>
-
+                        <p><strong>剩余天数：</strong><span style="color: #ef4444; font-weight: bold;">%d 天</span></p>
                     </div>
-
+                    <div style="margin: 20px 0; text-align: center;">
+                        <a href="%s" style="background-color: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">立即前往填报</a>
+                    </div>
                     <p>请及时登录系统完成数据填报，避免错过截止时间。</p>
-
-                    <p style="color: #7f8c8d; font-size: 12px;">
-
-                        此邮件由系统自动发送，请勿回复。
-
+                    <p style="word-break: break-all;">系统地址：<a href="%s" style="color: #2563eb;">%s</a></p>
+                    <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+                    <p style="color: #64748b; font-size: 12px; text-align: center;">
+                        此邮件为 [美鹰·智数平台] 自动发送，请勿直接回复。
                     </p>
-
                 </div>
-
             </body>
-
             </html>
-
-            """.formatted(formName, deadlineStr, daysLeft);
-
+            """.formatted(formName, deadlineStr, daysLeft, systemUrl, systemUrl, systemUrl);
     }
 
     /**
@@ -207,51 +191,33 @@ public class EmailService {
      */
 
     private String buildDeadlineWarningContent(String formName, LocalDateTime deadline) {
-
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
-
         String deadlineStr = deadline.format(formatter);
-
         return """
-
             <html>
-
             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-
-                <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
-
-                    <h2 style="color: #e74c3c;">⚠️ 数据填报截止警告</h2>
-
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #fee2e2; border-radius: 8px;">
+                    <h2 style="color: #ef4444; margin-top: 0;">⚠️ 数据填报截止警告</h2>
                     <p>您好！</p>
-
                     <p>您的以下数据填报任务即将到期：</p>
-
-                    <div style="background-color: #fff5f5; border: 1px solid #fed7d7; padding: 15px; border-radius: 5px; margin: 20px 0;">
-
+                    <div style="background-color: #fef2f2; border: 1px solid #fecaca; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ef4444;">
                         <p><strong>表单名称：</strong>%s</p>
-
                         <p><strong>截止时间：</strong>%s</p>
-
-                        <p style="color: #e74c3c; font-weight: bold;">该表单已停止接受新的填报数据！</p>
-
+                        <p style="color: #ef4444; font-weight: bold;">该表单已停止接受新的填报数据！</p>
                     </div>
-
+                    <div style="margin: 20px 0; text-align: center;">
+                        <a href="%s" style="background-color: #ef4444; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">立即前往系统</a>
+                    </div>
                     <p>如果您需要继续填报数据，请联系管理员申请特别批准。</p>
-
-                    <p style="color: #7f8c8d; font-size: 12px;">
-
-                        此邮件由系统自动发送，请勿回复。
-
+                    <p style="word-break: break-all;">链接地址：<a href="%s" style="color: #ef4444;">%s</a></p>
+                    <hr style="border: none; border-top: 1px solid #fee2e2; margin: 20px 0;">
+                    <p style="color: #64748b; font-size: 12px; text-align: center;">
+                        此邮件为 [美鹰·智数平台] 自动发送，请勿直接回复。
                     </p>
-
                 </div>
-
             </body>
-
             </html>
-
-            """.formatted(formName, deadlineStr);
-
+            """.formatted(formName, deadlineStr, systemUrl, systemUrl, systemUrl);
     }
 
     /**

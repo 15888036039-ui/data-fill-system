@@ -3,7 +3,7 @@
     <div class="page-header">
       <div class="header-actions">
         <el-button @click="$router.push('/forms')">取消返回</el-button>
-        <el-button v-if="!isEditMode" type="primary" size="large" icon="Platform" @click="submitFormAndCreateTable">创建并发布</el-button>
+        <el-button v-if="!isEditMode" type="primary" size="large" icon="Platform" @click="submitFormAndCreateTable">{{ bindExistingTableMode ? '绑定并发布' : '创建并发布' }}</el-button>
         <el-button v-else type="primary" size="large" icon="Check" @click="updateFormMeta">保存设置</el-button>
       </div>
     </div>
@@ -24,6 +24,24 @@
                 placeholder="例如: df_emp_reg (建议 df_ 前缀)"
                 :disabled="isEditMode"
               />
+            </el-form-item>
+            <el-form-item label="所属目录">
+              <el-select
+                v-model="formMeta.folderId"
+                clearable
+                filterable
+                placeholder="选择目录，不选则归入未分类"
+                style="width: 100%"
+                :loading="folderLoading"
+              >
+                <el-option label="未分类" value="" />
+                <el-option
+                  v-for="item in folderOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </el-select>
             </el-form-item>
             
             <div class="form-row">
@@ -112,10 +130,10 @@
                 :loading="userListLoading"
               >
                 <el-option
-                  v-for="u in allUserEmails"
-                  :key="u"
-                  :label="u"
-                  :value="u"
+                  v-for="u in recipientOptions"
+                  :key="u.value"
+                  :label="u.label"
+                  :value="u.value"
                 />
               </el-select>
             </el-form-item>
@@ -131,6 +149,7 @@
             </div>
             <div class="field-actions">
               <el-button icon="Upload" plain @click="importDialogVisible = true" v-if="!isEditMode">从 Excel 导入结构</el-button>
+              <el-button icon="Document" plain @click="existingTableDialogVisible = true" v-if="!isEditMode">从已有表识别</el-button>
               <el-button type="primary" plain icon="Plus" @click="addField">新增字段</el-button>
             </div>
           </div>
@@ -139,8 +158,16 @@
             定义用户需要填写的具体内容。完成后我们将为您在后端自动创建对应的物理表结构。
           </p>
           <el-alert
-            v-else
-            title="当前处于元数据编辑模式，物理表结构已锁定。您可以修改字段显示名称或在末尾新增字段，但不可更改已有字段的物理列名和数据类型。"
+            v-if="!isEditMode && bindExistingTableMode"
+            title="当前已切换为“绑定已有表”模式。发布时不会新建物理表，而是直接绑定您已存在的数据库表。"
+            type="warning"
+            show-icon
+            style="margin-bottom: 16px;"
+            :closable="false"
+          />
+          <el-alert
+            v-if="isEditMode"
+            title="当前处于元数据编辑模式。管理员可以修改已有业务字段的物理列名和数据类型；系统保留列（如 extra_data）仍保持锁定。"
             type="success"
             show-icon
             style="margin-bottom: 24px;"
@@ -165,7 +192,7 @@
                 </el-table-column>
                 <el-table-column label="物理列名 (英文)" min-width="180">
                   <template #default="scope">
-                    <el-input v-model="scope.row.columnName" placeholder="c_name" :disabled="isEditMode && !!scope.row.id_mark" />
+                    <el-input v-model="scope.row.columnName" placeholder="c_name" :disabled="scope.row.systemLocked" />
                   </template>
                 </el-table-column>
                 <el-table-column label="字段属性 (PG 类型)" min-width="200">
@@ -176,7 +203,7 @@
                       allow-create
                       default-first-option
                       placeholder="例如: VARCHAR(255)"
-                      :disabled="isEditMode && !!scope.row.id_mark"
+                      :disabled="scope.row.systemLocked"
                       style="width: 100%"
                       @change="(val) => handleDbTypeChange(val, scope.row)"
                     >
@@ -231,10 +258,10 @@
                 :loading="userListLoading"
               >
                 <el-option
-                  v-for="u in allUserEmails"
-                  :key="u"
-                  :label="u"
-                  :value="u"
+                  v-for="u in fillUserOptions"
+                  :key="u.value"
+                  :label="u.label"
+                  :value="u.value"
                 />
               </el-select>
               <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">不选择任何用户 = 所有人都可以查看和填报</div>
@@ -271,6 +298,34 @@
           </el-upload>
         </div>
       </div>
+    </el-dialog>
+
+    <el-dialog
+      v-model="existingTableDialogVisible"
+      title="从已有表识别结构"
+      width="520px"
+      destroy-on-close
+      class="custom-dialog"
+    >
+      <div class="import-config-body" v-loading="isInspectingExistingTable" element-loading-text="正在读取数据库表结构...">
+        <el-form label-position="top">
+          <el-form-item label="已有物理表名" required>
+            <el-input
+              v-model="existingTableForm.tableName"
+              placeholder="例如: ods_order_detail"
+              @keyup.enter="inspectExistingTable"
+            />
+          </el-form-item>
+          <div class="tip-box">
+            <el-icon><InfoFilled /></el-icon>
+            <span>该表需已存在于当前 PostgreSQL 库中。系统会按现有字段结构识别并绑定；仅在识别到键值对场景时，才会额外使用 JSON 字段。</span>
+          </div>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="existingTableDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="inspectExistingTable">识别并使用</el-button>
+      </template>
     </el-dialog>
 
     <el-dialog
@@ -313,7 +368,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, onMounted, watch, computed } from 'vue'
+import { reactive, ref, onMounted, inject, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Setting, Notification, Grid, User, Plus, Upload, Delete, Check, Platform, UploadFilled, InfoFilled, Connection } from '@element-plus/icons-vue'
@@ -321,13 +376,14 @@ import axios from 'axios'
 
 const router = useRouter()
 const route = useRoute()
-const currentUser = ref(localStorage.getItem('userEmail') || '管理员')
+const currentUser = inject('currentUser', ref('管理员'))
 
 const isEditMode = ref(!!route.params.id)
 
 const formMeta = reactive({
   name: '',
   tableName: '',
+  folderId: '',
   status: 'ACTIVE',
   deadline: '',
   reminderDays: 3,
@@ -342,10 +398,16 @@ const formMeta = reactive({
 })
 
 const fields = ref([
-  { name: '', columnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false }
+  { name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, systemLocked: false }
 ])
 
 const importDialogVisible = ref(false)
+const existingTableDialogVisible = ref(false)
+const isInspectingExistingTable = ref(false)
+const bindExistingTableMode = ref(false)
+const existingTableForm = reactive({
+  tableName: ''
+})
 const importConfig = reactive({
   smartType: true,
   kvPairEnabled: true // 恢复启用智能键值对匹配
@@ -372,7 +434,7 @@ const userListLoading = ref(false)
 const loadUserList = async () => {
   userListLoading.value = true
   try {
-    const res = await axios.get('/api/user/list')
+    const res = await axios.get('/api/user/options')
     allUsers.value = res.data || []
   } catch (e) {
     allUsers.value = []
@@ -381,12 +443,55 @@ const loadUserList = async () => {
   }
 }
 
-// 直接使用原始 ID 列表，不再追加邮箱后缀
-const allUserEmails = computed(() => allUsers.value)
+const recipientOptions = computed(() => {
+  return allUsers.value.map(user => ({
+    label: user.label || user.email || user.username,
+    value: user.email || user.username
+  }))
+})
+
+const fillUserOptions = computed(() => {
+  return allUsers.value.map(user => ({
+    label: user.label || user.email || user.username,
+    value: user.username
+  }))
+})
 const recipientList = ref([])
+const folderTree = ref([])
+const folderLoading = ref(false)
+const folderOptions = computed(() => {
+  const options = []
+  const walk = (nodes, parents = []) => {
+    ;(nodes || []).forEach(node => {
+      if (node.systemNode) return
+      const nextParents = [...parents, node.name]
+      options.push({
+        value: node.id,
+        label: nextParents.join(' / ')
+      })
+      walk(node.children, nextParents)
+    })
+  }
+  walk(folderTree.value)
+  return options
+})
+
+const loadFolderTree = async () => {
+  folderLoading.value = true
+  try {
+    const params = {}
+    if (currentUser.value) params.userEmail = currentUser.value
+    const res = await axios.get('/api/fill/folders/tree', { params })
+    folderTree.value = res.data || []
+  } catch (e) {
+    folderTree.value = []
+  } finally {
+    folderLoading.value = false
+  }
+}
 
 const addField = () => {
-  fields.value.push({ name: '', columnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false })
+  fields.value.push({ name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, systemLocked: false })
 }
 
 const handleDbTypeChange = (dbType, row) => {
@@ -424,6 +529,7 @@ const onFileChange = async (uploadFile) => {
     const res = await axios.post('/api/fill/forms/parseExcel', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
+    bindExistingTableMode.value = false
     
     lastParseResult.value = res.data
     if (res.data.potentialPairs && res.data.potentialPairs.length > 0) {
@@ -442,6 +548,32 @@ const onFileChange = async (uploadFile) => {
     ElMessage.error('解析失败: ' + (e.response?.data?.message || '网络异常'))
   } finally {
     isParsing.value = false
+  }
+}
+
+const inspectExistingTable = async () => {
+  if (!existingTableForm.tableName) {
+    ElMessage.error('请先输入已有物理表名')
+    return
+  }
+
+  isInspectingExistingTable.value = true
+  try {
+    const res = await axios.get('/api/fill/forms/inspectTable', {
+      params: { tableName: existingTableForm.tableName }
+    })
+    bindExistingTableMode.value = true
+    formMeta.tableName = existingTableForm.tableName
+    if (!formMeta.name) {
+      formMeta.name = existingTableForm.tableName
+    }
+    applyParsedResults(res.data)
+    existingTableDialogVisible.value = false
+    ElMessage.success('已识别已有表结构，发布时将直接绑定该表')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || '读取已有表结构失败')
+  } finally {
+    isInspectingExistingTable.value = false
   }
 }
 
@@ -489,31 +621,14 @@ const finalizeFields = () => {
     }
   })
 
-  // 3. 通用扩展字段 (仅当存在未识别列时自动追加，或保持为空以节省空间)
-  // 如果用户所有列都已通过标准字段或配对覆盖，则不再强制添加 extra_data
-  const mappedIndices = new Set()
-  activePairs.forEach(p => {
-    ;[...(p.keyIndices || []), ...(p.valueIndices || [])].forEach(idx => mappedIndices.add(idx))
-  })
-  // 标准字段对应的索引 (这里需要后端配合返回索引，或者前端根据 columnName 简单推测)
-  // 为稳健起见，如果 activePairs 为空且没有标准字段，或者用户手动删除了所有字段，我们保留它
-  const hasUnmapped = lastParseResult.value.totalColumns > mappedIndices.size + (lastParseResult.value.fields?.length || 0)
-  
-  if (hasUnmapped && !finalFields.some(f => f.columnName === 'extra_data')) {
-    finalFields.push({
-      name: '扩展数据 (通用)',
-      columnName: 'extra_data',
-      type: 'input',
-      dbType: 'JSONB',
-      required: false,
-      filterable: false,
-      id_mark: true
-    })
-  }
-
   formMeta.kvConfig = JSON.stringify(activePairs)
   applyParsedResults({ fields: finalFields })
   pairConfirmDialogVisible.value = false
+}
+
+const isSystemManagedField = (field) => {
+  const reserved = ['id', 'is_deleted', 'w_insert_dt', 'w_update_dt', 'load_user', 'job_instance', 'extra_data']
+  return reserved.includes((field?.columnName || '').toLowerCase())
 }
 
 const generateColumnName = (label) => {
@@ -553,10 +668,12 @@ const applyParsedResults = (data) => {
     const row = {
       ...f,
       columnName: f.columnName || '',
+      originalColumnName: f.originalColumnName || '',
       type: f.type || 'input',
       dbType: f.dbType || 'VARCHAR(255)',
       required: f.required || false,
-      filterable: f.filterable || false
+      filterable: f.filterable || false,
+      systemLocked: isSystemManagedField(f)
     }
     if (!row.columnName) {
         row.columnName = generateColumnName(f.name)
@@ -593,13 +710,15 @@ const submitFormAndCreateTable = async () => {
     fillUserEmails: fillUserList.value.length > 0 ? JSON.stringify(fillUserList.value) : null,
     forms: JSON.stringify(formattedFields),
     forms: JSON.stringify(formattedFields),
+    folderId: formMeta.folderId || null,
     kvConfig: formMeta.kvConfig,
     creator: currentUser.value
   }
 
   try {
-    await axios.post('/api/fill/forms/createTable', payload)
-    ElMessage.success('发布成功！')
+    const url = bindExistingTableMode.value ? '/api/fill/forms/bindExistingTable' : '/api/fill/forms/createTable'
+    await axios.post(url, payload)
+    ElMessage.success(bindExistingTableMode.value ? '绑定发布成功！' : '发布成功！')
     router.push('/forms')
   } catch (error) {
     ElMessage.error(error.response?.data?.message || '发布失败')
@@ -619,7 +738,11 @@ const loadFormForEdit = async () => {
     }
     if (res.data.forms) {
         const parsed = JSON.parse(res.data.forms)
-        fields.value = parsed.map(f => ({ ...f, id_mark: true }))
+        fields.value = parsed.map(f => ({
+          ...f,
+          originalColumnName: f.columnName || '',
+          systemLocked: isSystemManagedField(f)
+        }))
     }
   } catch (e) {
     ElMessage.error('加载任务配置失败')
@@ -632,8 +755,9 @@ const updateFormMeta = async () => {
     ...formMeta,
     recipientEmails: recipientList.value.length > 0 ? JSON.stringify(recipientList.value) : null,
     fillUserEmails: fillUserList.value.length > 0 ? JSON.stringify(fillUserList.value) : null,
+    folderId: formMeta.folderId || null,
     forms: JSON.stringify(fields.value.map(f => {
-      const { id_mark, ...rest } = f
+      const { id_mark, systemLocked, ...rest } = f
       return rest
     })),
     kvConfig: formMeta.kvConfig,
@@ -650,6 +774,7 @@ const updateFormMeta = async () => {
 
 onMounted(() => {
   loadUserList()
+  loadFolderTree()
   if (isEditMode.value) loadFormForEdit()
 })
 </script>

@@ -43,8 +43,11 @@ data-fill:
     enabled: true
     cron: 0 * * * * ?           # 每天 9 点执行
   mail:
-    subject-prefix: "[数据填报系统] "
+    subject-prefix: "[美鹰·智数平台] "
+    system-url: "http://8.136.2.153:8081/webroot/decision#directory?activeTab=85e34d29-1a05-4606-ac96-2e08fd8085e8"  # 填报系统前端访问地址
     admin-email: 15888036039@163.com   # TODO: 修改为实际管理员邮箱
+  user:
+    default-email-domain: furniwell.com
 
 mybatis-plus:
   configuration:

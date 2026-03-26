@@ -31,6 +31,11 @@ public class UserController {
         return userService.getAllUserEmails();
     }
 
+    @GetMapping("/options")
+    public java.util.List<com.example.datafill.dto.UserOption> listUserOptions() {
+        return userService.getAllUserOptions();
+    }
+
     /**
      * 帆软 SSO 入口（直接放帆软目录链接用）
      * 帆软目录链接设为: http://121.40.224.201:8080/api/user/fr-redirect?fine_auth_token=${fine_auth_token}

@@ -4,30 +4,70 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="be720114-e6ad-4c52-a814-cf7cccffc45e" name="Changes" comment="第一次提交全部代码">
+    <list default="true" id="be720114-e6ad-4c52-a814-cf7cccffc45e" name="Changes" comment="1.解决 填报漏斗">
+      <change afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/DataFillController$1.class" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Dockerfile" beforeDir="false" afterPath="$PROJECT_DIR$/Dockerfile" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/pom.xml" beforeDir="false" afterPath="$PROJECT_DIR$/backend/pom.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/controller/DataFillController.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/controller/DataFillController.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/mapper/DynamicSqlMapper.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/mapper/DynamicSqlMapper.java" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/ApprovalService.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/ApprovalService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/controller/UserController.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/controller/UserController.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/dto/FieldDef.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/dto/FieldDef.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/entity/DataFillForm.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/entity/DataFillForm.java" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/DynamicDataDmlService.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/DynamicDataDmlService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/DynamicTableDdlService.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/DynamicTableDdlService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/EmailService.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/EmailService.java" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/ExcelService.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/ExcelService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/UserService.java" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/java/com/example/datafill/service/UserService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/main/resources/application.yml" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/resources/application.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/src/main/resources/schema-data-fill.sql" beforeDir="false" afterPath="$PROJECT_DIR$/backend/src/main/resources/schema-data-fill.sql" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/application.yml" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/application.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/DataFillApplication.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/DataFillApplication.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/config/WebConfig.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/config/WebConfig.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/ApprovalController$ApprovalDecisionDto.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/ApprovalController$ApprovalDecisionDto.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/ApprovalController$ApprovalRequestDto.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/ApprovalController$ApprovalRequestDto.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/ApprovalController.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/ApprovalController.class" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/DataFillController.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/DataFillController.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/HealthController.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/HealthController.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/SystemConfigController.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/SystemConfigController.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/UserController.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/controller/UserController.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/dto/FieldDef.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/dto/FieldDef.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/entity/AdminApproval.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/entity/AdminApproval.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/entity/DataFillForm.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/entity/DataFillForm.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/entity/EmailNotification.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/entity/EmailNotification.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/entity/SystemConfig.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/entity/SystemConfig.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/entity/UserFillLog.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/entity/UserFillLog.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/mapper/AdminApprovalMapper.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/mapper/AdminApprovalMapper.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/mapper/DataFillFormMapper.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/mapper/DataFillFormMapper.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/mapper/DynamicSqlMapper.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/mapper/DynamicSqlMapper.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/mapper/EmailNotificationMapper.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/mapper/EmailNotificationMapper.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/mapper/SystemConfigMapper.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/mapper/SystemConfigMapper.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/mapper/UserFillLogMapper.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/mapper/UserFillLogMapper.class" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ApprovalService.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ApprovalService.class" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService$1.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService$1.class" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService$2.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService$2.class" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService$3.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService$3.class" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicDataDmlService.class" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService$1ColumnStat.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService$1ColumnStat.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicTableDdlService$1.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicTableDdlService$1.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicTableDdlService$2.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicTableDdlService$2.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicTableDdlService.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/DynamicTableDdlService.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/EmailService.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/EmailService.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService$1.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService$1.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService$1ColumnStat.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService$2.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService$2.class" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService$3.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService$3.class" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/ExcelService.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/NotificationService$1.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/NotificationService$1.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/NotificationService$2.class" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/NotificationService.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/NotificationService.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/SchedulerService.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/SchedulerService.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/SystemConfigService$1.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/SystemConfigService$1.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/SystemConfigService$2.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/SystemConfigService$2.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/SystemConfigService$3.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/SystemConfigService$3.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/SystemConfigService.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/SystemConfigService.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/UserService.class" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/com/example/datafill/service/UserService.class" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/target/classes/schema-data-fill.sql" beforeDir="false" afterPath="$PROJECT_DIR$/backend/target/classes/schema-data-fill.sql" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/App.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/App.vue" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/router/index.js" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/router/index.js" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/views/DataFill.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/views/DataFill.vue" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/views/FormDesigner.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/views/FormDesigner.vue" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/views/FormList.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/views/FormList.vue" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/views/SystemSettings.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/views/SystemSettings.vue" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/views/UserTasks.vue" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/views/UserTasks.vue" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -50,12 +90,12 @@
     &quot;assignee&quot;: &quot;15888036039-ui&quot;
   }
 }</component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "https://github.com/15888036039-ui/data-fill-system.git",
-    "accountId": "a6a64d70-8be9-41d3-b56b-64c20838fedc"
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/15888036039-ui/data-fill-system.git&quot;,
+    &quot;accountId&quot;: &quot;a6a64d70-8be9-41d3-b56b-64c20838fedc&quot;
   }
-}]]></component>
+}</component>
   <component name="ProjectColorInfo">{
   &quot;associatedIndex&quot;: 3
 }</component>
@@ -64,23 +104,23 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Application.DataFillApplication.executor": "Run",
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "git-widget-placeholder": "main",
-    "kotlin-language-version-configured": "true",
-    "last_opened_file_path": "D:/data-fill-system",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "project.structure.last.edited": "Modules",
-    "project.structure.proportion": "0.15",
-    "project.structure.side.proportion": "0.2",
-    "settings.editor.selected.configurable": "preferences.pluginManager"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Application.DataFillApplication.executor&quot;: &quot;Run&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;kotlin-language-version-configured&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;D:/data-fill-system&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;project.structure.last.edited&quot;: &quot;Modules&quot;,
+    &quot;project.structure.proportion&quot;: &quot;0.15&quot;,
+    &quot;project.structure.side.proportion&quot;: &quot;0.2&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.pluginManager&quot;
   }
-}]]></component>
+}</component>
   <component name="RunManager" selected="Application.DataFillApplication">
     <configuration name="DataFillApplication" type="Application" factoryName="Application" temporary="true" nameIsGenerated="true">
       <option name="MAIN_CLASS_NAME" value="com.example.datafill.DataFillApplication" />
@@ -145,7 +185,63 @@
       <option name="project" value="LOCAL" />
       <updated>1773712321615</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="现在的登录逻辑：&#10;&#10;有 ?user= 参数 → 直接用该用户身份登录（原有逻辑）&#10;没有参数 → 先尝试调帆软 API 自动检测用户&#10;检测失败 → 显示一个用户选择登录页面，用户从组织架构列表中搜索选择自己的名字即可登录">
+      <option name="closed" value="true" />
+      <created>1773883231900</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1773883231900</updated>
+    </task>
+    <task id="LOCAL-00004" summary="修改管理员跳转页面问题">
+      <option name="closed" value="true" />
+      <created>1773898636747</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1773898636747</updated>
+    </task>
+    <task id="LOCAL-00005" summary="修改管理员跳转页面问题">
+      <option name="closed" value="true" />
+      <created>1773903061845</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1773903061845</updated>
+    </task>
+    <task id="LOCAL-00006" summary="1.修复界面优化问题">
+      <option name="closed" value="true" />
+      <created>1773967533168</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1773967533168</updated>
+    </task>
+    <task id="LOCAL-00007" summary="1.优化大数据量插入速度">
+      <option name="closed" value="true" />
+      <created>1773989471472</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1773989471472</updated>
+    </task>
+    <task id="LOCAL-00008" summary="添加操作日志">
+      <option name="closed" value="true" />
+      <created>1773990970614</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1773990970614</updated>
+    </task>
+    <task id="LOCAL-00009" summary="1.解决 填报漏斗">
+      <option name="closed" value="true" />
+      <created>1774251406134</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1774251406136</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -164,7 +260,13 @@
       <path value="$PROJECT_DIR$/backend" />
     </ignored-roots>
     <MESSAGE value="第一次提交全部代码" />
-    <option name="LAST_COMMIT_MESSAGE" value="第一次提交全部代码" />
+    <MESSAGE value="现在的登录逻辑：&#10;&#10;有 ?user= 参数 → 直接用该用户身份登录（原有逻辑）&#10;没有参数 → 先尝试调帆软 API 自动检测用户&#10;检测失败 → 显示一个用户选择登录页面，用户从组织架构列表中搜索选择自己的名字即可登录" />
+    <MESSAGE value="修改管理员跳转页面问题" />
+    <MESSAGE value="1.修复界面优化问题" />
+    <MESSAGE value="1.优化大数据量插入速度" />
+    <MESSAGE value="添加操作日志" />
+    <MESSAGE value="1.解决 填报漏斗" />
+    <option name="LAST_COMMIT_MESSAGE" value="1.解决 填报漏斗" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>
