@@ -1,0 +1,32 @@
+# Build artifacts
+# Java 编译产物
+**/target/
+**/*.class
+**/*.jar
+**/*.war
+
+# IDE 文件
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# 日志文件
+*.log
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 前端依赖
+node_modules/
+dist/
+.env.local
+.env.*.local
+
+# 其他
+*.tmp
+*.swp
+*.lock
