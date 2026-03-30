@@ -1,7 +1,9 @@
 package com.example.datafill.controller;
 
 import com.example.datafill.entity.DataFillForm;
+import com.example.datafill.entity.DataFillFolder;
 import com.example.datafill.mapper.DataFillFormMapper;
+import com.example.datafill.service.DataFillFolderService;
 import com.example.datafill.service.DynamicTableDdlService;
 import com.example.datafill.service.DynamicDataDmlService;
 import com.example.datafill.service.ExcelService;
@@ -25,6 +27,7 @@ public class DataFillController {
     private final DynamicTableDdlService tableDdlService;
     private final DynamicDataDmlService dataDmlService;
     private final ExcelService excelService;
+    private final DataFillFolderService folderService;
     private final DataFillFormMapper formMapper;
     private final com.example.datafill.mapper.OperationLogMapper operationLogMapper;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
@@ -44,6 +47,32 @@ public class DataFillController {
         return false;
     }
 
+    private void assertAdmin(String userEmail) {
+        if (!isUserAdmin(userEmail)) {
+            throw new RuntimeException("仅管理员可执行该操作");
+        }
+    }
+
+    private boolean canUserAccessForm(DataFillForm form, String userEmail, boolean isAdmin) {
+        if (isAdmin || userEmail == null || userEmail.isBlank()) {
+            return true;
+        }
+        String fillEmails = form.getFillUserEmails();
+        if (fillEmails == null || fillEmails.isBlank()) {
+            return true;
+        }
+        try {
+            List<String> allowed = objectMapper
+                    .readValue(fillEmails, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+            if (allowed == null || allowed.isEmpty()) {
+                return true;
+            }
+            return allowed.stream().anyMatch(e -> e != null && e.equalsIgnoreCase(userEmail));
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
     private void recordLog(String formId, String userEmail, String type, String desc) {
         if (userEmail == null || userEmail.isBlank()) userEmail = "未知用户";
         com.example.datafill.entity.OperationLog log = new com.example.datafill.entity.OperationLog();
@@ -58,27 +87,102 @@ public class DataFillController {
     // 获取表单模板列表（支持按用户权限过滤）
     @GetMapping("/forms")
     public List<DataFillForm> getForms(
+            @RequestParam(required = false) String userEmail,
+            @RequestParam(required = false) String folderId) {
+        boolean isAdmin = isUserAdmin(userEmail);
+        List<DataFillForm> allForms = formMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DataFillForm>().orderByDesc("create_time"));
+        List<DataFillForm> visibleForms;
+        if (isAdmin || (userEmail == null || userEmail.isBlank())) {
+            visibleForms = allForms;
+        } else {
+            visibleForms = allForms.stream()
+                    .filter(form -> canUserAccessForm(form, userEmail, false))
+                    .toList();
+        }
+
+        if (folderId == null || folderId.isBlank()) {
+            return visibleForms;
+        }
+
+        if (DataFillFolderService.UNCATEGORIZED_FOLDER_ID.equals(folderId)) {
+            return visibleForms.stream()
+                    .filter(form -> form.getFolderId() == null || form.getFolderId().isBlank())
+                    .toList();
+        }
+
+        java.util.Set<String> selectedFolderIds = folderService.collectFolderAndDescendants(folderId);
+        if (selectedFolderIds.isEmpty()) {
+            return List.of();
+        }
+        return visibleForms.stream()
+                .filter(form -> form.getFolderId() != null && selectedFolderIds.contains(form.getFolderId()))
+                .toList();
+    }
+
+    @GetMapping("/folders/tree")
+    public List<com.example.datafill.dto.DataFillFolderNode> getFolderTree(
             @RequestParam(required = false) String userEmail) {
         boolean isAdmin = isUserAdmin(userEmail);
         List<DataFillForm> allForms = formMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DataFillForm>().orderByDesc("create_time"));
-        if (isAdmin || (userEmail == null || userEmail.isBlank())) {
-            return allForms;
-        }
-        // 非管理员：只返回 fillUserEmails 为空（对所有人开放）或包含当前用户的表单
-        return allForms.stream().filter(form -> {
-            String fillEmails = form.getFillUserEmails();
-            if (fillEmails == null || fillEmails.isBlank()) {
-                return true; // 未配置权限 = 对所有人开放
-            }
-            try {
-                List<String> allowed = objectMapper
-                        .readValue(fillEmails, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
-                if (allowed == null || allowed.isEmpty()) return true;
-                return allowed.stream().anyMatch(e -> e != null && e.equalsIgnoreCase(userEmail));
-            } catch (Exception e) {
-                return true; // 解析异常时放行
-            }
-        }).toList();
+        List<DataFillForm> visibleForms = allForms.stream()
+                .filter(form -> canUserAccessForm(form, userEmail, isAdmin))
+                .toList();
+        return folderService.buildFolderTree(visibleForms, isAdmin);
+    }
+
+    @PostMapping("/folders")
+    public DataFillFolder createFolder(
+            @RequestParam String userEmail,
+            @RequestBody DataFillFolder folder) {
+        assertAdmin(userEmail);
+        folder.setCreator(userEmail);
+        return folderService.createFolder(folder);
+    }
+
+    @PutMapping("/folders/{id}")
+    public DataFillFolder updateFolder(
+            @PathVariable String id,
+            @RequestParam String userEmail,
+            @RequestBody DataFillFolder folder) {
+        assertAdmin(userEmail);
+        return folderService.updateFolder(id, folder);
+    }
+
+    @DeleteMapping("/folders/{id}")
+    public String deleteFolder(
+            @PathVariable String id,
+            @RequestParam String userEmail) {
+        assertAdmin(userEmail);
+        folderService.deleteFolder(id);
+        return "success";
+    }
+
+    @PutMapping("/forms/{id}/folder")
+    public String moveFormFolder(
+            @PathVariable String id,
+            @RequestParam String userEmail,
+            @RequestBody com.example.datafill.dto.FormFolderMoveRequest request) {
+        assertAdmin(userEmail);
+        folderService.moveFormToFolder(id, request.getFolderId());
+        return "success";
+    }
+
+    @PutMapping("/forms/folder/batch")
+    public String moveFormsFolderBatch(
+            @RequestParam String userEmail,
+            @RequestBody com.example.datafill.dto.FormBatchFolderMoveRequest request) {
+        assertAdmin(userEmail);
+        folderService.moveFormsToFolder(request.getFormIds(), request.getFolderId());
+        return "success";
+    }
+
+    @PutMapping("/folders/reorder")
+    public String reorderFolders(
+            @RequestParam String userEmail,
+            @RequestBody List<com.example.datafill.dto.FolderReorderItem> items) {
+        assertAdmin(userEmail);
+        folderService.reorderFolders(items);
+        return "success";
     }
 
     // 根据ID获取某个表单的配置
@@ -98,6 +202,11 @@ public class DataFillController {
     @PostMapping("/forms/createTable")
     public String createTable(@RequestBody DataFillForm form) {
         return tableDdlService.createFormAndTable(form);
+    }
+
+    @PostMapping("/forms/bindExistingTable")
+    public String bindExistingTable(@RequestBody DataFillForm form) {
+        return tableDdlService.bindExistingTable(form);
     }
 
     /**
@@ -253,6 +362,17 @@ public class DataFillController {
             @RequestParam(value = "smartType", defaultValue = "true") boolean smartType,
             @RequestParam(value = "kvPairEnabled", defaultValue = "true") boolean kvPairEnabled) throws IOException {
         return excelService.parseExcelHeaders(file, mode, smartType, kvPairEnabled);
+    }
+
+    @PostMapping("/forms/parseReferenceTemplate")
+    public com.example.datafill.dto.ReferenceTemplateParseResult parseReferenceTemplate(
+            @RequestParam("file") MultipartFile file) throws IOException {
+        return excelService.parseReferenceTemplate(file);
+    }
+
+    @GetMapping("/forms/inspectTable")
+    public com.example.datafill.dto.ExcelParseResult inspectExistingTable(@RequestParam String tableName) {
+        return excelService.inspectExistingTable(tableName);
     }
 
     /**

@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS data_fill_form (
     id              VARCHAR(64) PRIMARY KEY,
     name            VARCHAR(255),
     table_name      VARCHAR(255) UNIQUE,
+    table_comment   TEXT,
+    folder_id       VARCHAR(64),
     forms           TEXT,
 
     -- 新增字段：状态 / 截止时间 / 提醒天数 / 提醒策略 / 每月日 / 每周几 / 提醒时间 / 收件人邮箱 / 填报周期（天）/ 允许填报用户
@@ -19,6 +21,7 @@ CREATE TABLE IF NOT EXISTS data_fill_form (
     recipient_emails  TEXT,
     cycle_days        INTEGER,
     fill_user_emails  TEXT,
+    reference_template_config TEXT,
     creator         VARCHAR(100),
 
     create_time     TIMESTAMP,
@@ -61,6 +64,31 @@ ALTER TABLE data_fill_form
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS kv_config TEXT;
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS table_comment TEXT;
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS reference_template_config TEXT;
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS folder_id VARCHAR(64);
+
+CREATE INDEX IF NOT EXISTS idx_data_fill_form_folder_id ON data_fill_form(folder_id);
+
+
+-- 1.5 模板目录表：data_fill_folder
+CREATE TABLE IF NOT EXISTS data_fill_folder (
+    id              VARCHAR(64) PRIMARY KEY,
+    name            VARCHAR(255) NOT NULL,
+    parent_id       VARCHAR(64),
+    sort_order      INTEGER DEFAULT 0,
+    creator         VARCHAR(100),
+    create_time     TIMESTAMP,
+    update_time     TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_data_fill_folder_parent_id ON data_fill_folder(parent_id);
 
 
 -- 2. 邮件通知表：email_notification（对应 EmailNotification 实体）

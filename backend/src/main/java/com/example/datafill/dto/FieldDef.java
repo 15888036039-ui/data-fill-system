@@ -6,6 +6,7 @@ import java.util.List;
 @Data
 public class FieldDef {
     private String columnName; // 数据库列名，例如: emp_name
+    private String originalColumnName; // 编辑时用于追踪原始列名，支持重命名已有物理列
     private String name;       // 显示名称，例如: 员工姓名
     private String type;       // 类型：varchar, int, decimal, datetime 等
     private Integer length;    // 长度：如 255

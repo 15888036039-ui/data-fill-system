@@ -3,7 +3,7 @@
     <div class="page-header">
       <div class="header-actions">
         <el-button @click="$router.push('/forms')">取消返回</el-button>
-        <el-button v-if="!isEditMode" type="primary" size="large" icon="Platform" @click="submitFormAndCreateTable">创建并发布</el-button>
+        <el-button v-if="!isEditMode" type="primary" size="large" icon="Platform" @click="submitFormAndCreateTable">{{ bindExistingTableMode ? '绑定并发布' : '创建并发布' }}</el-button>
         <el-button v-else type="primary" size="large" icon="Check" @click="updateFormMeta">保存设置</el-button>
       </div>
     </div>
@@ -24,6 +24,30 @@
                 placeholder="例如: df_emp_reg (建议 df_ 前缀)"
                 :disabled="isEditMode"
               />
+            </el-form-item>
+            <el-form-item label="数据库表注释">
+              <el-input
+                v-model="formMeta.tableComment"
+                placeholder="例如: 美国快递费账单"
+              />
+            </el-form-item>
+            <el-form-item label="所属目录">
+              <el-select
+                v-model="formMeta.folderId"
+                clearable
+                filterable
+                placeholder="选择目录，不选则归入未分类"
+                style="width: 100%"
+                :loading="folderLoading"
+              >
+                <el-option label="未分类" value="" />
+                <el-option
+                  v-for="item in folderOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </el-select>
             </el-form-item>
             
             <div class="form-row">
@@ -112,10 +136,10 @@
                 :loading="userListLoading"
               >
                 <el-option
-                  v-for="u in allUserEmails"
-                  :key="u"
-                  :label="u"
-                  :value="u"
+                  v-for="u in recipientOptions"
+                  :key="u.value"
+                  :label="u.label"
+                  :value="u.value"
                 />
               </el-select>
             </el-form-item>
@@ -131,6 +155,8 @@
             </div>
             <div class="field-actions">
               <el-button icon="Upload" plain @click="importDialogVisible = true" v-if="!isEditMode">从 Excel 导入结构</el-button>
+              <el-button icon="Tickets" plain @click="referenceTemplateDialogVisible = true" v-if="!isEditMode">导入参考模板</el-button>
+              <el-button icon="Document" plain @click="existingTableDialogVisible = true" v-if="!isEditMode">从已有表识别</el-button>
               <el-button type="primary" plain icon="Plus" @click="addField">新增字段</el-button>
             </div>
           </div>
@@ -139,8 +165,16 @@
             定义用户需要填写的具体内容。完成后我们将为您在后端自动创建对应的物理表结构。
           </p>
           <el-alert
-            v-else
-            title="当前处于元数据编辑模式，物理表结构已锁定。您可以修改字段显示名称或在末尾新增字段，但不可更改已有字段的物理列名和数据类型。"
+            v-if="!isEditMode && bindExistingTableMode"
+            title="当前已切换为“绑定已有表”模式。发布时不会新建物理表，而是直接绑定您已存在的数据库表。"
+            type="warning"
+            show-icon
+            style="margin-bottom: 16px;"
+            :closable="false"
+          />
+          <el-alert
+            v-if="isEditMode"
+            title="当前处于元数据编辑模式。管理员可以修改已有业务字段的物理列名和数据类型；系统保留列（如 extra_data）仍保持锁定。"
             type="success"
             show-icon
             style="margin-bottom: 24px;"
@@ -151,7 +185,7 @@
           <div v-if="parsedKvConfig.length > 0" class="kv-preview-banner">
             <el-icon style="margin-right: 8px"><Connection /></el-icon>
             <div class="kv-info-text">
-              当前已识别出 <b>{{ parsedKvConfig.length }}</b> 组配对 (共 {{ parsedKvConfig.reduce((acc, p) => acc + p.suffixes.length * 2, 0) }} 列原始字段) 将归集至 <b>extra_data (JSON)</b> 列。
+              当前已识别出 <b>{{ parsedKvConfig.length }}</b> 组配对 (共 {{ parsedKvConfig.reduce((acc, p) => acc + p.suffixes.length * 2, 0) }} 列原始字段) 将归集到 <b>{{ kvTargetColumnsText }}</b>。
             </div>
             <el-button type="primary" link @click="pairConfirmDialogVisible = true">查看记录</el-button>
           </div>
@@ -165,7 +199,7 @@
                 </el-table-column>
                 <el-table-column label="物理列名 (英文)" min-width="180">
                   <template #default="scope">
-                    <el-input v-model="scope.row.columnName" placeholder="c_name" :disabled="isEditMode && !!scope.row.id_mark" />
+                    <el-input v-model="scope.row.columnName" placeholder="c_name" :disabled="scope.row.systemLocked" />
                   </template>
                 </el-table-column>
                 <el-table-column label="字段属性 (PG 类型)" min-width="200">
@@ -176,7 +210,7 @@
                       allow-create
                       default-first-option
                       placeholder="例如: VARCHAR(255)"
-                      :disabled="isEditMode && !!scope.row.id_mark"
+                      :disabled="scope.row.systemLocked"
                       style="width: 100%"
                       @change="(val) => handleDbTypeChange(val, scope.row)"
                     >
@@ -213,6 +247,47 @@
             <el-icon><Plus /></el-icon> <span>点击添加更多业务字段...</span>
           </div>
 
+          <div v-if="headerMappings.length > 0" class="preview-section">
+            <div class="section-title preview-title">
+              <el-icon><Tickets /></el-icon> 表头映射预览
+            </div>
+            <div class="preview-meta" v-if="referenceParserProfile">
+              解析规则：{{ referenceParserProfile }}
+            </div>
+            <div class="fields-list">
+              <el-table :data="headerMappings" style="width: 100%" max-height="280">
+                <el-table-column label="上传文件表头" prop="excelHeader" min-width="260" />
+                <el-table-column label="对应数据库字段" prop="columnName" min-width="220">
+                  <template #default="scope">
+                    <span>{{ scope.row.columnName || '-' }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="JSON归并" width="100" align="center">
+                  <template #default="scope">
+                    <el-tag v-if="scope.row.jsonMapped" size="small" type="success">是</el-tag>
+                    <span v-else>-</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </div>
+
+          <div v-if="referenceRows.length > 0" class="preview-section">
+            <div class="section-title preview-title">
+              <el-icon><Document /></el-icon> 数据库表参考
+            </div>
+            <div class="fields-list">
+              <el-table :data="referenceRows" style="width: 100%" max-height="360">
+                <el-table-column label="字段名称" prop="columnName" min-width="180" />
+                <el-table-column label="字段类型" prop="fieldType" min-width="110" />
+                <el-table-column label="精度" prop="precision" min-width="90" />
+                <el-table-column label="非空" prop="notNull" width="80" align="center" />
+                <el-table-column label="取值范围" prop="valueRange" min-width="180" show-overflow-tooltip />
+                <el-table-column label="注释" prop="comment" min-width="180" show-overflow-tooltip />
+              </el-table>
+            </div>
+          </div>
+
           <el-divider />
           
           <div class="section-title">
@@ -231,10 +306,10 @@
                 :loading="userListLoading"
               >
                 <el-option
-                  v-for="u in allUserEmails"
-                  :key="u"
-                  :label="u"
-                  :value="u"
+                  v-for="u in fillUserOptions"
+                  :key="u.value"
+                  :label="u.label"
+                  :value="u.value"
                 />
               </el-select>
               <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">不选择任何用户 = 所有人都可以查看和填报</div>
@@ -274,6 +349,63 @@
     </el-dialog>
 
     <el-dialog
+      v-model="referenceTemplateDialogVisible"
+      title="导入参考模板"
+      width="560px"
+      destroy-on-close
+      class="custom-dialog"
+    >
+      <div class="import-config-body" v-loading="isParsingReferenceTemplate" element-loading-text="正在解析参考模板...">
+        <div class="upload-area">
+          <el-upload
+            drag
+            action=""
+            :auto-upload="false"
+            :show-file-list="false"
+            :on-change="onReferenceTemplateFileChange"
+            accept=".xlsx,.csv"
+          >
+            <el-icon class="el-icon--upload"><upload-filled /></el-icon>
+            <div class="el-upload__text">
+              将参考模板拖到此处，或 <em>点击上传</em>
+            </div>
+            <template #tip>
+              <div class="el-upload__tip">支持 .xlsx / .csv，需包含表名、表注释、筛选器、表头映射和数据库表参考区块</div>
+            </template>
+          </el-upload>
+        </div>
+      </div>
+    </el-dialog>
+
+    <el-dialog
+      v-model="existingTableDialogVisible"
+      title="从已有表识别结构"
+      width="520px"
+      destroy-on-close
+      class="custom-dialog"
+    >
+      <div class="import-config-body" v-loading="isInspectingExistingTable" element-loading-text="正在读取数据库表结构...">
+        <el-form label-position="top">
+          <el-form-item label="已有物理表名" required>
+            <el-input
+              v-model="existingTableForm.tableName"
+              placeholder="例如: ods_order_detail"
+              @keyup.enter="inspectExistingTable"
+            />
+          </el-form-item>
+          <div class="tip-box">
+            <el-icon><InfoFilled /></el-icon>
+            <span>该表需已存在于当前 PostgreSQL 库中。系统会按现有字段结构识别并绑定；仅在识别到键值对场景时，才会额外使用 JSON 字段。</span>
+          </div>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="existingTableDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="inspectExistingTable">识别并使用</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-model="pairConfirmDialogVisible"
       title="智能配对确认"
       width="600px"
@@ -283,13 +415,13 @@
         <el-alert v-if="lastParseResult?.truncated" 
           :title="'由于列数超过上限 (1000)，仅识别了前 1000 列（共 ' + lastParseResult.totalColumns + ' 列），超出部分请手动添加。'"
           type="warning" show-icon :closable="false" style="margin-bottom: 12px" />
-        <p class="desc-text">我们在 Excel 中检测到以下潜在的“键值对”组合。合并后这些数据在导入时将自动归集到 <code>extra_data</code> (JSON) 中。</p>
+        <p class="desc-text">我们在 Excel 中检测到以下潜在的“键值对”组合。合并后这些数据在导入时将自动归集到对应的 JSON 字段中：<code>{{ kvTargetColumnsText }}</code>。</p>
         
         <el-table :data="confirmingPairs" style="width: 100%">
           <el-table-column label="配对名称" prop="displayName" />
           <el-table-column label="包含后缀">
             <template #default="scope">
-              <el-tag v-for="s in scope.row.suffixes" :key="s" size="small" style="margin-right: 4px">{{ s }}</el-tag>
+              <span>{{ formatSuffixSummary(scope.row.suffixes) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="确认合并" width="100" align="center">
@@ -313,21 +445,23 @@
 </template>
 
 <script setup>
-import { reactive, ref, onMounted, watch, computed } from 'vue'
+import { reactive, ref, onMounted, inject, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Setting, Notification, Grid, User, Plus, Upload, Delete, Check, Platform, UploadFilled, InfoFilled, Connection } from '@element-plus/icons-vue'
+import { Setting, Notification, Grid, User, Plus, Upload, Delete, Check, Platform, UploadFilled, InfoFilled, Connection, Tickets, Document } from '@element-plus/icons-vue'
 import axios from 'axios'
 
 const router = useRouter()
 const route = useRoute()
-const currentUser = ref(localStorage.getItem('userEmail') || '管理员')
+const currentUser = inject('currentUser', ref('管理员'))
 
 const isEditMode = ref(!!route.params.id)
 
 const formMeta = reactive({
   name: '',
   tableName: '',
+  tableComment: '',
+  folderId: '',
   status: 'ACTIVE',
   deadline: '',
   reminderDays: 3,
@@ -338,14 +472,23 @@ const formMeta = reactive({
   weeklyDayOfWeek: 1,
   cycleDays: 0,
   fillUserEmails: '',
-  kvConfig: ''
+  kvConfig: '',
+  referenceTemplateConfig: ''
 })
 
 const fields = ref([
-  { name: '', columnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false }
+  { name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, systemLocked: false }
 ])
 
 const importDialogVisible = ref(false)
+const referenceTemplateDialogVisible = ref(false)
+const existingTableDialogVisible = ref(false)
+const isInspectingExistingTable = ref(false)
+const isParsingReferenceTemplate = ref(false)
+const bindExistingTableMode = ref(false)
+const existingTableForm = reactive({
+  tableName: ''
+})
 const importConfig = reactive({
   smartType: true,
   kvPairEnabled: true // 恢复启用智能键值对匹配
@@ -355,6 +498,9 @@ const pairConfirmDialogVisible = ref(false)
 const confirmingPairs = ref([])
 const lastParseResult = ref(null)
 const lastFileName = ref('')
+const headerMappings = ref([])
+const referenceRows = ref([])
+const referenceParserProfile = ref('')
 
 const parsedKvConfig = computed(() => {
   try {
@@ -362,6 +508,29 @@ const parsedKvConfig = computed(() => {
   } catch (e) {
     return []
   }
+})
+
+const kvTargetColumns = computed(() => {
+  const targets = (parsedKvConfig.value || [])
+    .map(p => (p?.suggestedColumnName ? String(p.suggestedColumnName) : 'extra_data'))
+    .filter(Boolean)
+  // 去重：不区分大小写
+  const seen = new Set()
+  const result = []
+  targets.forEach(t => {
+    const key = String(t).toLowerCase()
+    if (seen.has(key)) return
+    seen.add(key)
+    result.push(t)
+  })
+  return result
+})
+
+const kvTargetColumnsText = computed(() => {
+  const targets = kvTargetColumns.value
+  if (!targets || targets.length === 0) return 'extra_data'
+  if (targets.length === 1) return targets[0]
+  return targets.slice(0, 2).join(', ') + ` 等${targets.length}个`
 })
 
 // 用户列表（权限分配）
@@ -372,7 +541,7 @@ const userListLoading = ref(false)
 const loadUserList = async () => {
   userListLoading.value = true
   try {
-    const res = await axios.get('/api/user/list')
+    const res = await axios.get('/api/user/options')
     allUsers.value = res.data || []
   } catch (e) {
     allUsers.value = []
@@ -381,12 +550,92 @@ const loadUserList = async () => {
   }
 }
 
-// 直接使用原始 ID 列表，不再追加邮箱后缀
-const allUserEmails = computed(() => allUsers.value)
+const recipientOptions = computed(() => {
+  return allUsers.value.map(user => ({
+    label: user.label || user.email || user.username,
+    value: user.email || user.username
+  }))
+})
+
+const fillUserOptions = computed(() => {
+  return allUsers.value.map(user => ({
+    label: user.label || user.email || user.username,
+    value: user.username
+  }))
+})
 const recipientList = ref([])
+const folderTree = ref([])
+const folderLoading = ref(false)
+const folderOptions = computed(() => {
+  const options = []
+  const walk = (nodes, parents = []) => {
+    ;(nodes || []).forEach(node => {
+      if (node.systemNode) return
+      const nextParents = [...parents, node.name]
+      options.push({
+        value: node.id,
+        label: nextParents.join(' / ')
+      })
+      walk(node.children, nextParents)
+    })
+  }
+  walk(folderTree.value)
+  return options
+})
+
+const loadFolderTree = async () => {
+  folderLoading.value = true
+  try {
+    const params = {}
+    if (currentUser.value) params.userEmail = currentUser.value
+    const res = await axios.get('/api/fill/folders/tree', { params })
+    folderTree.value = res.data || []
+  } catch (e) {
+    folderTree.value = []
+  } finally {
+    folderLoading.value = false
+  }
+}
+
+const syncReferenceTemplateConfig = () => {
+  const payload = {
+    parserProfile: referenceParserProfile.value || '',
+    headerMappings: headerMappings.value || [],
+    referenceRows: referenceRows.value || [],
+    kvPairs: parsedKvConfig.value || []
+  }
+  formMeta.referenceTemplateConfig = JSON.stringify(payload)
+}
+
+const hydrateKvPairPreview = (kvPairs = [], originalHeaders = []) => {
+  confirmingPairs.value = (kvPairs || []).map(pair => ({
+    ...pair,
+    confirmed: true,
+    suffixes: (pair.suffixes || []).slice().sort((a, b) => parseInt(a || '0', 10) - parseInt(b || '0', 10))
+  }))
+  lastParseResult.value = {
+    fields: fields.value,
+    originalHeaders,
+    truncated: false,
+    totalColumns: originalHeaders.length
+  }
+}
+
+const formatSuffixSummary = (suffixes = []) => {
+  if (!suffixes || suffixes.length === 0) return '-'
+  const nums = suffixes
+    .map(s => Number.parseInt(s, 10))
+    .filter(n => Number.isFinite(n))
+    .sort((a, b) => a - b)
+  if (nums.length === 0) return suffixes.join(', ')
+  const uniqueNums = [...new Set(nums)]
+  const start = uniqueNums[0]
+  const end = uniqueNums[uniqueNums.length - 1]
+  return start === end ? `${start}` : `${start}-${end}（共${uniqueNums.length}组）`
+}
 
 const addField = () => {
-  fields.value.push({ name: '', columnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false })
+  fields.value.push({ name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, systemLocked: false })
 }
 
 const handleDbTypeChange = (dbType, row) => {
@@ -424,6 +673,7 @@ const onFileChange = async (uploadFile) => {
     const res = await axios.post('/api/fill/forms/parseExcel', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
+    bindExistingTableMode.value = false
     
     lastParseResult.value = res.data
     if (res.data.potentialPairs && res.data.potentialPairs.length > 0) {
@@ -442,6 +692,73 @@ const onFileChange = async (uploadFile) => {
     ElMessage.error('解析失败: ' + (e.response?.data?.message || '网络异常'))
   } finally {
     isParsing.value = false
+  }
+}
+
+const onReferenceTemplateFileChange = async (uploadFile) => {
+  if (!uploadFile.raw) return
+  const file = uploadFile.raw
+  lastFileName.value = file.name
+  const formData = new FormData()
+  formData.append('file', file)
+
+  isParsingReferenceTemplate.value = true
+  try {
+    const res = await axios.post('/api/fill/forms/parseReferenceTemplate', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+    bindExistingTableMode.value = false
+    formMeta.tableName = res.data.tableName || ''
+    formMeta.tableComment = res.data.tableComment || ''
+    formMeta.name = res.data.tableComment || res.data.tableName || lastFileName.value.replace(/\.[^/.]+$/, '')
+    formMeta.kvConfig = JSON.stringify(res.data.kvPairs || [])
+    headerMappings.value = res.data.headerMappings || []
+    referenceRows.value = res.data.referenceRows || []
+    referenceParserProfile.value = res.data.parserProfile || ''
+    applyParsedResults({ fields: res.data.fields || [] })
+    const kvPairs = res.data.kvPairs || []
+    const originalHeaders = headerMappings.value.map(item => {
+      const h = (item.excelHeader || '').trim()
+      if (!h || h === '...') return item.columnName || ''
+      return item.excelHeader
+    })
+    hydrateKvPairPreview(kvPairs, originalHeaders)
+    if (kvPairs.length > 0) {
+      pairConfirmDialogVisible.value = true
+    }
+    syncReferenceTemplateConfig()
+    referenceTemplateDialogVisible.value = false
+    ElMessage.success('参考模板已解析并回填，可直接发布建表')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || '参考模板解析失败')
+  } finally {
+    isParsingReferenceTemplate.value = false
+  }
+}
+
+const inspectExistingTable = async () => {
+  if (!existingTableForm.tableName) {
+    ElMessage.error('请先输入已有物理表名')
+    return
+  }
+
+  isInspectingExistingTable.value = true
+  try {
+    const res = await axios.get('/api/fill/forms/inspectTable', {
+      params: { tableName: existingTableForm.tableName }
+    })
+    bindExistingTableMode.value = true
+    formMeta.tableName = existingTableForm.tableName
+    if (!formMeta.name) {
+      formMeta.name = existingTableForm.tableName
+    }
+    applyParsedResults(res.data)
+    existingTableDialogVisible.value = false
+    ElMessage.success('已识别已有表结构，发布时将直接绑定该表')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || '读取已有表结构失败')
+  } finally {
+    isInspectingExistingTable.value = false
   }
 }
 
@@ -489,31 +806,15 @@ const finalizeFields = () => {
     }
   })
 
-  // 3. 通用扩展字段 (仅当存在未识别列时自动追加，或保持为空以节省空间)
-  // 如果用户所有列都已通过标准字段或配对覆盖，则不再强制添加 extra_data
-  const mappedIndices = new Set()
-  activePairs.forEach(p => {
-    ;[...(p.keyIndices || []), ...(p.valueIndices || [])].forEach(idx => mappedIndices.add(idx))
-  })
-  // 标准字段对应的索引 (这里需要后端配合返回索引，或者前端根据 columnName 简单推测)
-  // 为稳健起见，如果 activePairs 为空且没有标准字段，或者用户手动删除了所有字段，我们保留它
-  const hasUnmapped = lastParseResult.value.totalColumns > mappedIndices.size + (lastParseResult.value.fields?.length || 0)
-  
-  if (hasUnmapped && !finalFields.some(f => f.columnName === 'extra_data')) {
-    finalFields.push({
-      name: '扩展数据 (通用)',
-      columnName: 'extra_data',
-      type: 'input',
-      dbType: 'JSONB',
-      required: false,
-      filterable: false,
-      id_mark: true
-    })
-  }
-
   formMeta.kvConfig = JSON.stringify(activePairs)
   applyParsedResults({ fields: finalFields })
   pairConfirmDialogVisible.value = false
+  syncReferenceTemplateConfig()
+}
+
+const isSystemManagedField = (field) => {
+  const reserved = ['id', 'is_deleted', 'w_insert_dt', 'w_update_dt', 'load_user', 'job_instance', 'extra_data']
+  return reserved.includes((field?.columnName || '').toLowerCase())
 }
 
 const generateColumnName = (label) => {
@@ -553,10 +854,12 @@ const applyParsedResults = (data) => {
     const row = {
       ...f,
       columnName: f.columnName || '',
+      originalColumnName: f.originalColumnName || '',
       type: f.type || 'input',
       dbType: f.dbType || 'VARCHAR(255)',
       required: f.required || false,
-      filterable: f.filterable || false
+      filterable: f.filterable || false,
+      systemLocked: isSystemManagedField(f)
     }
     if (!row.columnName) {
         row.columnName = generateColumnName(f.name)
@@ -592,14 +895,16 @@ const submitFormAndCreateTable = async () => {
     recipientEmails: recipientList.value.length > 0 ? JSON.stringify(recipientList.value) : null,
     fillUserEmails: fillUserList.value.length > 0 ? JSON.stringify(fillUserList.value) : null,
     forms: JSON.stringify(formattedFields),
-    forms: JSON.stringify(formattedFields),
+    folderId: formMeta.folderId || null,
     kvConfig: formMeta.kvConfig,
+    referenceTemplateConfig: formMeta.referenceTemplateConfig || null,
     creator: currentUser.value
   }
 
   try {
-    await axios.post('/api/fill/forms/createTable', payload)
-    ElMessage.success('发布成功！')
+    const url = bindExistingTableMode.value ? '/api/fill/forms/bindExistingTable' : '/api/fill/forms/createTable'
+    await axios.post(url, payload)
+    ElMessage.success(bindExistingTableMode.value ? '绑定发布成功！' : '发布成功！')
     router.push('/forms')
   } catch (error) {
     ElMessage.error(error.response?.data?.message || '发布失败')
@@ -619,7 +924,38 @@ const loadFormForEdit = async () => {
     }
     if (res.data.forms) {
         const parsed = JSON.parse(res.data.forms)
-        fields.value = parsed.map(f => ({ ...f, id_mark: true }))
+        fields.value = parsed.map(f => ({
+          ...f,
+          originalColumnName: f.columnName || '',
+          systemLocked: isSystemManagedField(f)
+        }))
+    }
+    if (res.data.kvConfig) {
+      try {
+        hydrateKvPairPreview(JSON.parse(res.data.kvConfig), [])
+      } catch (e) {
+        confirmingPairs.value = []
+      }
+    }
+    if (res.data.referenceTemplateConfig) {
+      try {
+        const parsedConfig = JSON.parse(res.data.referenceTemplateConfig)
+        headerMappings.value = parsedConfig.headerMappings || []
+        referenceRows.value = parsedConfig.referenceRows || []
+        referenceParserProfile.value = parsedConfig.parserProfile || ''
+        if (parsedConfig.kvPairs) {
+          const originalHeaders = headerMappings.value.map(item => {
+            const h = (item.excelHeader || '').trim()
+            if (!h || h === '...') return item.columnName || ''
+            return item.excelHeader
+          })
+          hydrateKvPairPreview(parsedConfig.kvPairs, originalHeaders)
+        }
+      } catch (e) {
+        headerMappings.value = []
+        referenceRows.value = []
+        referenceParserProfile.value = ''
+      }
     }
   } catch (e) {
     ElMessage.error('加载任务配置失败')
@@ -632,11 +968,13 @@ const updateFormMeta = async () => {
     ...formMeta,
     recipientEmails: recipientList.value.length > 0 ? JSON.stringify(recipientList.value) : null,
     fillUserEmails: fillUserList.value.length > 0 ? JSON.stringify(fillUserList.value) : null,
+    folderId: formMeta.folderId || null,
     forms: JSON.stringify(fields.value.map(f => {
-      const { id_mark, ...rest } = f
+      const { id_mark, systemLocked, ...rest } = f
       return rest
     })),
     kvConfig: formMeta.kvConfig,
+    referenceTemplateConfig: formMeta.referenceTemplateConfig || null,
     creator: formMeta.creator || currentUser.value
   }
   try {
@@ -650,6 +988,7 @@ const updateFormMeta = async () => {
 
 onMounted(() => {
   loadUserList()
+  loadFolderTree()
   if (isEditMode.value) loadFormForEdit()
 })
 </script>
@@ -846,6 +1185,20 @@ onMounted(() => {
   align-items: center;
   font-size: 14px;
   color: #475569;
+}
+
+.preview-section {
+  margin-top: 24px;
+}
+
+.preview-title {
+  margin-bottom: 12px;
+}
+
+.preview-meta {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 10px;
 }
 
 .kv-info-text {

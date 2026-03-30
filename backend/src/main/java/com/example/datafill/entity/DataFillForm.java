@@ -1,6 +1,7 @@
 package com.example.datafill.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -14,7 +15,12 @@ public class DataFillForm {
     private String id;
     
     private String name;        // 表单中文名
+    @TableField("table_name")
     private String tableName;   // 要在数据库里创建的物理表名 (如 df_employee)
+    @TableField("table_comment")
+    private String tableComment; // 数据库表注释
+    @TableField("folder_id")
+    private String folderId;    // 所属目录ID，null 表示未分类
     private String forms;       // 字段定义的 JSON 字符串
 
     /** 表单状态：ACTIVE(可填报)、EXPIRED(已过期)、DISABLED(停用) */
@@ -56,6 +62,10 @@ public class DataFillForm {
 
     /** 键值对配对规则配置 (用于导入时识别 JSON 字段) */
     private String kvConfig;
+
+    /** 参考模板解析结果配置（用于回显表头映射、数据库字段参考等） */
+    @TableField("reference_template_config")
+    private String referenceTemplateConfig;
 
     /** 表单创建人 */
     private String creator;

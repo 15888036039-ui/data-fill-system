@@ -89,6 +89,7 @@ import { useRoute, useRouter } from 'vue-router'
 import zhCn from 'element-plus/dist/locale/zh-cn.mjs'
 import axios from 'axios'
 import { decryptUser, encryptUser, isEncrypted } from './utils/crypto.js'
+import { isKnownAdmin } from './utils/admin.js'
 
 // Detection from URL (query or hash)
 const getParam = (name) => {
@@ -193,8 +194,7 @@ const maskedUser = computed(() => {
 })
 
 const isAdmin = computed(() => {
-  const user = currentUser.value;
-  return user === 'finereport_manage' || user === '15888036039@163.com' || user === '15888036039';
+  return isKnownAdmin(currentUser.value)
 })
 provide('isAdmin', isAdmin)
 

@@ -107,10 +107,7 @@
           
           <div class="right-group">
              <div v-if="isAdmin" class="import-mode-select">
-               <el-radio-group v-model="importMode" size="small">
-                <el-radio-button label="append">追加</el-radio-button>
-                <el-radio-button label="overwrite">覆盖</el-radio-button>
-              </el-radio-group>
+               <el-tag type="info" effect="plain">导入模式：追加</el-tag>
             </div>
             <div class="divider"></div>
             <el-button 
@@ -140,9 +137,10 @@
                 clearable
                 filterable
                 class="filter-select"
+                @change="handleSearch"
               >
                 <el-option
-                  v-for="opt in (filterOptions[field.columnName] || [])"
+                  v-for="opt in getFilterValues(field)"
                   :key="opt"
                   :label="opt"
                   :value="opt"
@@ -420,13 +418,31 @@ const filterFields = computed(() => {
   return filterable.length > 0 ? filterable : schemaFields.value.slice(0, 3)
 })
 
+const getFilterValues = (field) => {
+  const key = field?.columnName
+  if (!key) return []
+  const options = filterOptions.value || {}
+  const variants = [
+    key,
+    key.trim(),
+    key.trim().toLowerCase()
+  ]
+  for (const variant of variants) {
+    const values = options[variant]
+    if (Array.isArray(values)) return values
+  }
+  return []
+}
+
 const loadFilterOptions = async () => {
   try {
     const res = await axios.get(`/api/fill/data/${formId}/filters`, {
       params: { userEmail: userEmail.value, isAdmin: isAdmin.value }
     })
     filterOptions.value = res.data || {}
-  } catch (e) {}
+  } catch (e) {
+    console.warn('加载筛选项失败', e)
+  }
 }
 
 const loadFormMeta = async () => {
@@ -578,7 +594,7 @@ const handleUpload = async (options) => {
 
   const formData = new FormData()
   formData.append('file', file)
-  formData.append('mode', importMode.value)
+  formData.append('mode', 'append')
   if (userEmail.value) formData.append('creator', userEmail.value)
   
   isUploading.value = true

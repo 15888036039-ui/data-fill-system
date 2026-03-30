@@ -17,6 +17,8 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -41,6 +43,7 @@ import java.util.StringJoiner;
 @RequiredArgsConstructor
 
 public class DynamicDataDmlService {
+    private static final Logger log = LoggerFactory.getLogger(DynamicDataDmlService.class);
 
     private final DataFillFormMapper formMapper;
 
@@ -61,6 +64,71 @@ public class DynamicDataDmlService {
         "applicantemail", "applicantname", "applicant_email", "applicant_name"
 
     );
+
+    private java.util.Set<String> loadPhysicalColumns(String tableName) {
+        List<String> columns = jdbcTemplate.queryForList("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = ?
+                """, String.class, tableName);
+        java.util.Set<String> result = new java.util.HashSet<>();
+        for (String column : columns) {
+            if (column != null) {
+                result.add(column.toLowerCase());
+            }
+        }
+        return result;
+    }
+
+    private boolean hasColumn(java.util.Set<String> physicalColumns, String columnName) {
+        return physicalColumns.contains(columnName.toLowerCase());
+    }
+
+    /**
+     * 尝试把表单里配置的列名映射到物理表真实列名：
+     * 1) 直接命中；2) 驼峰/空格等转 snake_case 后命中。
+     */
+    private String resolvePhysicalColumn(java.util.Set<String> physicalColumns, String configuredColumn) {
+        if (configuredColumn == null) {
+            return null;
+        }
+        String raw = configuredColumn.trim();
+        if (raw.isEmpty()) {
+            return null;
+        }
+        String lower = raw.toLowerCase();
+        if (physicalColumns.contains(lower)) {
+            return lower;
+        }
+
+        String normalized = raw
+                .replaceAll("([a-z0-9])([A-Z])", "$1_$2")
+                .replaceAll("[\\s\\-]+", "_")
+                .replaceAll("[^a-zA-Z0-9_]", "")
+                .toLowerCase();
+        if (!normalized.isBlank() && physicalColumns.contains(normalized)) {
+            return normalized;
+        }
+        return null;
+    }
+
+    /**
+     * 兼容前端不同写法（原值/trim/lower/物理列名）返回同一组选项，避免 key 细微差异导致下拉“无数据”。
+     */
+    private void putFilterOptions(Map<String, List<String>> result, String configuredCol, String physicalCol, List<String> values) {
+        List<String> safeValues = values == null ? new ArrayList<>() : values;
+        if (configuredCol != null) {
+            result.put(configuredCol, safeValues);
+            String trimmed = configuredCol.trim();
+            result.put(trimmed, safeValues);
+            result.put(trimmed.toLowerCase(), safeValues);
+        }
+        if (physicalCol != null && !physicalCol.isBlank()) {
+            result.put(physicalCol, safeValues);
+            result.put(physicalCol.toLowerCase(), safeValues);
+        }
+    }
 
     /**
 
@@ -112,6 +180,13 @@ public class DynamicDataDmlService {
 
         }
 
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(tableName);
+        if (hasColumn(physicalColumns, "ctime") && !rowData.containsKey("ctime")) {
+            rowData.put("ctime", now);
+        }
+        if (hasColumn(physicalColumns, "mtime") && !rowData.containsKey("mtime")) {
+            rowData.put("mtime", now);
+        }
         String rowId = java.util.UUID.randomUUID().toString().replace("-", ""); // 生成主键
 
         StringJoiner columns = new StringJoiner(", ");
@@ -120,17 +195,17 @@ public class DynamicDataDmlService {
 
         List<Object> args = new ArrayList<>();
 
-        columns.add("\"id\"");
-
-        placeholders.add("?");
-
-        args.add(rowId);
+        if (hasColumn(physicalColumns, "id")) {
+            columns.add("\"id\"");
+            placeholders.add("?");
+            args.add(rowId);
+        }
 
         // 如果前端传了 load_user (或者在 UserTasks 中保存的 email)，优先使用
 
         String loadUser = rowData.containsKey("load_user") ? rowData.get("load_user").toString() : (rowData.containsKey("creator") ? rowData.get("creator").toString() : null);
 
-        if (loadUser != null) {
+        if (loadUser != null && hasColumn(physicalColumns, "load_user")) {
 
             columns.add("\"load_user\"");
 
@@ -142,17 +217,16 @@ public class DynamicDataDmlService {
 
         // 自动填充入库和更新时间
 
-        columns.add("\"w_insert_dt\"");
-
-        placeholders.add("?");
-
-        args.add(now);
-
-        columns.add("\"w_update_dt\"");
-
-        placeholders.add("?");
-
-        args.add(now);
+        if (hasColumn(physicalColumns, "w_insert_dt")) {
+            columns.add("\"w_insert_dt\"");
+            placeholders.add("?");
+            args.add(now);
+        }
+        if (hasColumn(physicalColumns, "w_update_dt")) {
+            columns.add("\"w_update_dt\"");
+            placeholders.add("?");
+            args.add(now);
+        }
 
         Object applicantEmailObj = rowData.getOrDefault("applicantEmail", rowData.get("applicant_email"));
 
@@ -160,7 +234,9 @@ public class DynamicDataDmlService {
 
         // 解析表单定义以识别 JSONB 字段
         java.util.Set<String> jsonbCols = new java.util.HashSet<>();
-        jsonbCols.add("extra_data");
+        if (hasColumn(physicalColumns, "extra_data")) {
+            jsonbCols.add("extra_data");
+        }
         try {
             List<FieldDef> fields = objectMapper.readValue(form.getForms(), new com.fasterxml.jackson.core.type.TypeReference<List<FieldDef>>() {});
             for (FieldDef f : fields) {
@@ -199,7 +275,7 @@ public class DynamicDataDmlService {
 
         // 专家补丁：确保 extra_data 始终参与（如果没有在循环中添加）
 
-        if (!rowData.containsKey("extra_data")) {
+        if (hasColumn(physicalColumns, "extra_data") && !rowData.containsKey("extra_data")) {
 
             columns.add("\"extra_data\"");
 
@@ -268,9 +344,7 @@ public class DynamicDataDmlService {
         if (form == null) throw new RuntimeException("表单不存在");
 
         String tableName = form.getTableName();
-        if (!tableName.matches("^[a-zA-Z0-9_]+$")) {
-            throw new RuntimeException("非法的物理表名称: " + tableName);
-        }
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(tableName);
 
         LocalDateTime now = LocalDateTime.now();
 
@@ -294,11 +368,15 @@ public class DynamicDataDmlService {
 
         List<String> columns = new ArrayList<>();
 
-        columns.add("\"id\"");
+        boolean hasId = hasColumn(physicalColumns, "id");
+        boolean hasInsertDt = hasColumn(physicalColumns, "w_insert_dt");
+        boolean hasUpdateDt = hasColumn(physicalColumns, "w_update_dt");
+        boolean hasLoadUserColumn = hasColumn(physicalColumns, "load_user");
+        boolean hasExtraDataColumn = hasColumn(physicalColumns, "extra_data");
 
-        columns.add("\"w_insert_dt\"");
-
-        columns.add("\"w_update_dt\"");
+        if (hasId) columns.add("\"id\"");
+        if (hasInsertDt) columns.add("\"w_insert_dt\"");
+        if (hasUpdateDt) columns.add("\"w_update_dt\"");
 
         // 收集业务列：从表单定义中提取，而不是由首行 KeySet 决定（防止首行漏列）
 
@@ -316,18 +394,18 @@ public class DynamicDataDmlService {
 
         }
 
-        boolean hasLoadUser = rows.get(0).containsKey("load_user") || rows.get(0).containsKey("creator");
+        boolean hasLoadUser = hasLoadUserColumn && (rows.get(0).containsKey("load_user") || rows.get(0).containsKey("creator"));
 
         if (hasLoadUser) columns.add("\"load_user\"");
 
         for (String col : dataColumns) columns.add("\"" + col + "\"");
 
-        columns.add("\"extra_data\"");
+        if (hasExtraDataColumn) columns.add("\"extra_data\"");
 
         String colPart = String.join(", ", columns);
 
         java.util.Set<String> jsonbCols = new java.util.HashSet<>();
-        jsonbCols.add("extra_data");
+        if (hasExtraDataColumn) jsonbCols.add("extra_data");
         for (FieldDef f : fields) {
             if ("JSONB".equalsIgnoreCase(f.getDbType()) || (f.getColumnName() != null && f.getColumnName().endsWith("_json"))) {
                 jsonbCols.add(f.getColumnName().toLowerCase());
@@ -340,13 +418,19 @@ public class DynamicDataDmlService {
 
         for (int i = 0; i < rows.size(); i++) {
             Map<String, Object> row = rows.get(i);
+            if (hasColumn(physicalColumns, "ctime") && !row.containsKey("ctime")) {
+                row.put("ctime", now);
+            }
+            if (hasColumn(physicalColumns, "mtime") && !row.containsKey("mtime")) {
+                row.put("mtime", now);
+            }
 
             String rowId = java.util.UUID.randomUUID().toString().replace("-", "");
             
             // Build the TSV row
-            appendTsv(tsvBuilder, rowId);
-            appendTsv(tsvBuilder, now);
-            appendTsv(tsvBuilder, now);
+            if (hasId) appendTsv(tsvBuilder, rowId);
+            if (hasInsertDt) appendTsv(tsvBuilder, now);
+            if (hasUpdateDt) appendTsv(tsvBuilder, now);
 
             if (hasLoadUser) {
                 Object u = row.get("load_user");
@@ -364,12 +448,14 @@ public class DynamicDataDmlService {
                 appendTsv(tsvBuilder, val);
             }
 
-            Object extra = row.get("extra_data");
-            if (extra != null && !(extra instanceof String)) {
-                try { extra = objectMapper.writeValueAsString(extra); } catch (Exception e) { extra = "{}"; }
+            if (hasExtraDataColumn) {
+                Object extra = row.get("extra_data");
+                if (extra != null && !(extra instanceof String)) {
+                    try { extra = objectMapper.writeValueAsString(extra); } catch (Exception e) { extra = "{}"; }
+                }
+                if (extra == null) extra = "{}";
+                appendTsv(tsvBuilder, extra);
             }
-            if (extra == null) extra = "{}";
-            appendTsv(tsvBuilder, extra);
 
             // Replace last tab with newline
             tsvBuilder.setCharAt(tsvBuilder.length() - 1, '\n');
@@ -429,10 +515,14 @@ public class DynamicDataDmlService {
         if (form == null) throw new RuntimeException("表单不存在");
 
         String tableName = form.getTableName();
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(tableName);
+        if (hasColumn(physicalColumns, "mtime") && !rowData.containsKey("mtime")) {
+            rowData.put("mtime", LocalDateTime.now());
+        }
 
         // 归属权限校验 & 行级宽限期校验
-        if (!isAdmin && operatorEmail != null) {
-            String checkSql = String.format("SELECT \"load_user\", \"w_insert_dt\" FROM \"%s\" WHERE \"id\" = ?", tableName);
+        if (!isAdmin && operatorEmail != null && hasColumn(physicalColumns, "id") && hasColumn(physicalColumns, "load_user")) {
+            String checkSql = String.format("SELECT \"load_user\" FROM \"%s\" WHERE \"id\" = ?", tableName);
             try {
                 Map<String, Object> record = jdbcTemplate.queryForMap(checkSql, dataId);
                 String owner = (String) record.get("load_user");
@@ -451,14 +541,25 @@ public class DynamicDataDmlService {
 
         List<Object> args = new ArrayList<>();
 
-        // 解析表单定义以识别 JSONB 字段
+        // 解析表单定义以识别 JSONB 字段和物理类型 (用于显式 CAST)
         java.util.Set<String> jsonbCols = new java.util.HashSet<>();
-        jsonbCols.add("extra_data");
+        java.util.Map<String, String> colToDbType = new java.util.HashMap<>();
+        if (hasColumn(physicalColumns, "extra_data")) {
+            jsonbCols.add("extra_data");
+        }
         try {
             List<FieldDef> fields = objectMapper.readValue(form.getForms(), new com.fasterxml.jackson.core.type.TypeReference<List<FieldDef>>() {});
             for (FieldDef f : fields) {
-                if ("JSONB".equalsIgnoreCase(f.getDbType()) || (f.getColumnName() != null && f.getColumnName().endsWith("_json"))) {
-                    jsonbCols.add(f.getColumnName().toLowerCase());
+                String col = f.getColumnName() != null ? f.getColumnName().toLowerCase() : null;
+                if (col == null) continue;
+
+                if ("JSONB".equalsIgnoreCase(f.getDbType()) || col.endsWith("_json")) {
+                    jsonbCols.add(col);
+                }
+                if (f.getDbType() != null && !f.getDbType().isBlank()) {
+                    // 提取基础类型用于 CAST (例如 "VARCHAR(255)" -> "VARCHAR", "INT(10)" -> "INT")
+                    String baseType = f.getDbType().trim().split("\\(")[0].split(" ")[0].toLowerCase();
+                    colToDbType.put(col, baseType);
                 }
             }
         } catch (Exception ignored) {}
@@ -468,9 +569,22 @@ public class DynamicDataDmlService {
             if (SYSTEM_FIELDS.contains(key.toLowerCase())) continue;
             if (!key.matches("^[a-zA-Z0-9_]+$")) continue;
 
+            String lowerKey = key.toLowerCase();
             Object val = entry.getValue();
-            if (jsonbCols.contains(key.toLowerCase())) {
-                sets.add("\"" + key + "\" = ?");
+
+            // 构建带有显式类型转换的 SET 子句
+            String castSuffix = "";
+            String dbType = colToDbType.get(lowerKey);
+            if (dbType != null) {
+                // 针对 PG 容易报错的类型添加显式 CAST
+                if (dbType.contains("time") || dbType.contains("date") || dbType.contains("timestamp") 
+                    || dbType.contains("bool") || dbType.contains("numeric") || dbType.contains("int") || dbType.contains("integer")) {
+                    castSuffix = "::" + dbType;
+                }
+            }
+
+            if (jsonbCols.contains(lowerKey)) {
+                sets.add("\"" + key + "\" = ?" + castSuffix);
                 if (val != null && !(val instanceof String)) {
                     try { val = objectMapper.writeValueAsString(val); } catch (Exception e) { val = "{}"; }
                 }
@@ -483,12 +597,22 @@ public class DynamicDataDmlService {
                     } catch (Exception e) {}
                 }
             } else {
-                sets.add("\"" + key + "\" = ?");
+                sets.add("\"" + key + "\" = ?" + castSuffix);
             }
             args.add(val);
         }
 
-        sets.add("\"w_update_dt\" = CURRENT_TIMESTAMP");
+        if (hasColumn(physicalColumns, "w_update_dt")) {
+            sets.add("\"w_update_dt\" = CURRENT_TIMESTAMP");
+        }
+
+        if (sets.length() == 0) {
+            return;
+        }
+
+        if (!hasColumn(physicalColumns, "id")) {
+            throw new RuntimeException("当前绑定表缺少 id 字段，暂不支持按行修改");
+        }
 
         String updateSql = String.format("UPDATE \"%s\" SET %s WHERE \"id\" = ?", tableName, sets.toString());
 
@@ -509,10 +633,11 @@ public class DynamicDataDmlService {
         if (!tableName.matches("^[a-zA-Z0-9_]+$")) {
             throw new RuntimeException("非法的物理表名称: " + tableName);
         }
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(tableName);
 
         StringBuilder whereClause = new StringBuilder();
         List<Object> args = new ArrayList<>();
-        buildWhereClause(whereClause, args, filters, userEmail, isAdmin);
+        buildWhereClause(whereClause, args, filters, userEmail, isAdmin, physicalColumns);
 
 
         // 统计总数
@@ -527,7 +652,10 @@ public class DynamicDataDmlService {
 
         int offset = (page - 1) * size;
 
-        String listSql = "SELECT * FROM \"" + tableName + "\"" + whereClause.toString() + " ORDER BY w_insert_dt DESC LIMIT ? OFFSET ?";
+        String orderBy = hasColumn(physicalColumns, "w_insert_dt")
+                ? " ORDER BY \"w_insert_dt\" DESC"
+                : (hasColumn(physicalColumns, "id") ? " ORDER BY \"id\" DESC" : "");
+        String listSql = "SELECT * FROM \"" + tableName + "\"" + whereClause.toString() + orderBy + " LIMIT ? OFFSET ?";
 
         args.add(size);
 
@@ -541,7 +669,7 @@ public class DynamicDataDmlService {
 
             LinkedHashMap<String, Object> record = new LinkedHashMap<>(row);
 
-            Object extraDataObj = record.get("extra_data");
+            Object extraDataObj = hasColumn(physicalColumns, "extra_data") ? record.get("extra_data") : null;
 
             if (extraDataObj != null) {
 
@@ -567,7 +695,9 @@ public class DynamicDataDmlService {
 
             }
 
-            record.remove("extra_data");
+            if (hasColumn(physicalColumns, "extra_data")) {
+                record.remove("extra_data");
+            }
 
             records.add(record);
 
@@ -585,8 +715,13 @@ public class DynamicDataDmlService {
                 
                 // 兼容逻辑：如果没有 log，查物理表
                 if (firstSubmitTime == null) {
-                    String checkSql = String.format("SELECT MIN(w_insert_dt) FROM \"%s\" WHERE load_user = ? AND (is_deleted IS NULL OR is_deleted = 0)", tableName);
-                    firstSubmitTime = jdbcTemplate.queryForObject(checkSql, LocalDateTime.class, userEmail);
+                    if (hasColumn(physicalColumns, "w_insert_dt") && hasColumn(physicalColumns, "load_user")) {
+                        StringBuilder checkSql = new StringBuilder(String.format("SELECT MIN(\"w_insert_dt\") FROM \"%s\" WHERE \"load_user\" = ?", tableName));
+                        if (hasColumn(physicalColumns, "is_deleted")) {
+                            checkSql.append(" AND (\"is_deleted\" IS NULL OR \"is_deleted\" = 0)");
+                        }
+                        firstSubmitTime = jdbcTemplate.queryForObject(checkSql.toString(), LocalDateTime.class, userEmail);
+                    }
                 }
 
                 if (firstSubmitTime != null) {
@@ -658,27 +793,45 @@ public class DynamicDataDmlService {
 
         // 构建隔离过滤条件
 
-        String isolationWhere = " WHERE (is_deleted IS NULL OR is_deleted = 0) ";
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(tableName);
+
+        String isolationWhere = " WHERE 1 = 1 ";
 
         List<Object> baseArgs = new ArrayList<>();
 
-        if (!isAdmin && operatorEmail != null && !operatorEmail.isBlank()) {
+        if (hasColumn(physicalColumns, "is_deleted")) {
+            isolationWhere += " AND (\"is_deleted\" IS NULL OR \"is_deleted\" = 0) ";
+        }
+
+        if (!isAdmin && operatorEmail != null && !operatorEmail.isBlank() && hasColumn(physicalColumns, "load_user")) {
             isolationWhere += " AND (\"load_user\" = ? OR \"load_user\" IS NULL) ";
             baseArgs.add(operatorEmail);
         }
 
         for (FieldDef field : filterable) {
 
-            String col = field.getColumnName();
+            String configuredCol = field.getColumnName();
 
-            if (col == null || col.isBlank() || !col.matches("^[a-zA-Z0-9_]+$")) {
+            if (configuredCol == null || configuredCol.isBlank()) {
+
+                continue;
+
+            }
+
+            String physicalCol = resolvePhysicalColumn(physicalColumns, configuredCol);
+            if (physicalCol == null) {
+                // 前端仍使用 configuredCol 作为 key，这里返回空数组避免 undefined
+                putFilterOptions(result, configuredCol, null, new ArrayList<>());
                 continue;
             }
 
             try {
-                String sql = "SELECT DISTINCT \"" + col + "\" AS val FROM \"" + tableName + "\" " +
 
-                        isolationWhere + " AND \"" + col + "\" IS NOT NULL ORDER BY val LIMIT 100";
+                // 不再进行严格正则校验，因为下面使用了双引号引用标识符
+
+                String sql = "SELECT DISTINCT CAST(\"" + physicalCol + "\" AS TEXT) AS val FROM \"" + tableName + "\" " +
+
+                        isolationWhere + " AND \"" + physicalCol + "\" IS NOT NULL ORDER BY val LIMIT 100";
 
                 List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, baseArgs.toArray());
 
@@ -694,13 +847,15 @@ public class DynamicDataDmlService {
 
                         .toList();
 
-                result.put(col, values);
+                putFilterOptions(result, configuredCol, physicalCol, values);
 
             } catch (Exception e) {
 
                 // 记录错误但不中断其他列的筛选加载
+                log.warn("加载筛选项失败, formId={}, table={}, configuredCol={}, physicalCol={}",
+                        formId, tableName, configuredCol, physicalCol, e);
 
-                result.put(col, new ArrayList<>());
+                putFilterOptions(result, configuredCol, physicalCol, new ArrayList<>());
 
             }
 
@@ -730,9 +885,11 @@ public class DynamicDataDmlService {
         String tableName = form.getTableName();
 
         // 权限校验 & 行级宽限期校验：非管理员只能删除自己 24h 内的数据
-        if (!isAdmin && operatorEmail != null) {
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(tableName);
+
+        if (!isAdmin && operatorEmail != null && hasColumn(physicalColumns, "id") && hasColumn(physicalColumns, "load_user")) {
             for (String dataId : dataIds) {
-                String checkSql = String.format("SELECT \"load_user\", \"w_insert_dt\" FROM \"%s\" WHERE \"id\" = ?", tableName);
+                String checkSql = String.format("SELECT \"load_user\" FROM \"%s\" WHERE \"id\" = ?", tableName);
                 try {
                     Map<String, Object> record = jdbcTemplate.queryForMap(checkSql, dataId);
                     String owner = (String) record.get("load_user");
@@ -763,16 +920,16 @@ public class DynamicDataDmlService {
 
         }
 
-        String updateSql = String.format("UPDATE \"%s\" SET is_deleted = 1 WHERE \"id\" IN (%s)", tableName, placeholders.toString());
-
         List<Object> args = new ArrayList<>(dataIds);
-
-        try {
-            jdbcTemplate.update(updateSql, args.toArray());
-        } catch (Exception e) {
-            String deleteSql = String.format("DELETE FROM \"%s\" WHERE \"id\" IN (%s)", tableName, placeholders.toString());
-            jdbcTemplate.update(deleteSql, args.toArray());
+        if (hasColumn(physicalColumns, "is_deleted")) {
+            String updateSql = String.format("UPDATE \"%s\" SET is_deleted = 1 WHERE \"id\" IN (%s)", tableName, placeholders.toString());
+            try {
+                jdbcTemplate.update(updateSql, args.toArray());
+                return;
+            } catch (Exception ignored) {}
         }
+        String deleteSql = String.format("DELETE FROM \"%s\" WHERE \"id\" IN (%s)", tableName, placeholders.toString());
+        jdbcTemplate.update(deleteSql, args.toArray());
 
     }
 
@@ -784,20 +941,23 @@ public class DynamicDataDmlService {
         DataFillForm form = formMapper.selectById(formId);
         if (form == null) throw new RuntimeException("表单不存在");
         String tableName = form.getTableName();
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(tableName);
 
         StringBuilder whereClause = new StringBuilder();
         List<Object> args = new ArrayList<>();
-        buildWhereClause(whereClause, args, filters, operatorEmail, isAdmin);
+        buildWhereClause(whereClause, args, filters, operatorEmail, isAdmin, physicalColumns);
 
-        // 先尝试软删除
-        String updateSql = String.format("UPDATE \"%s\" SET is_deleted = 1 %s", tableName, whereClause.toString());
-        try {
-            jdbcTemplate.update(updateSql, args.toArray());
-        } catch (Exception e) {
-            // 降级为物理删除
-            String deleteSql = String.format("DELETE FROM \"%s\" %s", tableName, whereClause.toString());
-            jdbcTemplate.update(deleteSql, args.toArray());
+        if (hasColumn(physicalColumns, "is_deleted")) {
+            String updateSql = String.format("UPDATE \"%s\" SET is_deleted = 1 %s", tableName, whereClause.toString());
+            try {
+                jdbcTemplate.update(updateSql, args.toArray());
+                return;
+            } catch (Exception ignored) {
+                // ignore and fallback to hard delete
+            }
         }
+        String deleteSql = String.format("DELETE FROM \"%s\" %s", tableName, whereClause.toString());
+        jdbcTemplate.update(deleteSql, args.toArray());
     }
 
     /**
@@ -810,11 +970,15 @@ public class DynamicDataDmlService {
     /**
      * 构建通用的 WHERE 子句（支持数据隔离和条件筛选）
      */
-    private void buildWhereClause(StringBuilder whereClause, List<Object> args, Map<String, String> filters, String userEmail, boolean isAdmin) {
-        whereClause.append(" WHERE (is_deleted IS NULL OR is_deleted = 0) ");
+    private void buildWhereClause(StringBuilder whereClause, List<Object> args, Map<String, String> filters, String userEmail, boolean isAdmin, java.util.Set<String> physicalColumns) {
+        whereClause.append(" WHERE 1 = 1 ");
+
+        if (hasColumn(physicalColumns, "is_deleted")) {
+            whereClause.append(" AND (\"is_deleted\" IS NULL OR \"is_deleted\" = 0) ");
+        }
         
         // 核心隔离逻辑：非管理员只能看自己的数据 (兼容旧数据：允许 load_user 为空)
-        if (!isAdmin && userEmail != null && !userEmail.isBlank()) {
+        if (!isAdmin && userEmail != null && !userEmail.isBlank() && hasColumn(physicalColumns, "load_user")) {
             whereClause.append(" AND (\"load_user\" = ? OR \"load_user\" IS NULL) ");
             args.add(userEmail);
         }
@@ -825,15 +989,15 @@ public class DynamicDataDmlService {
                 if (val == null || val.trim().isEmpty()) continue;
 
                 String col = entry.getKey();
-                if (col.startsWith("extra_data.")) {
+                if (col.startsWith("extra_data.") && hasColumn(physicalColumns, "extra_data")) {
                     String jsonKey = col.substring("extra_data.".length());
                     if (jsonKey.matches("^[a-zA-Z0-9_]+$")) {
                         whereClause.append(" AND \"extra_data\"->> ? LIKE ? ");
                         args.add(jsonKey);
                         args.add("%" + val + "%");
                     }
-                } else if (col.matches("^[a-zA-Z0-9_]+$")) {
-                    if ("creator".equalsIgnoreCase(col) || "load_user".equalsIgnoreCase(col)) {
+                } else if (col.matches("^[a-zA-Z0-9_]+$") && hasColumn(physicalColumns, col)) {
+                    if (("creator".equalsIgnoreCase(col) || "load_user".equalsIgnoreCase(col)) && hasColumn(physicalColumns, col)) {
                         whereClause.append(" AND \"").append(col).append("\" = ? ");
                         args.add(val);
                     } else {
