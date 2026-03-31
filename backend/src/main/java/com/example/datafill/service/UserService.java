@@ -44,9 +44,17 @@ public class UserService {
             return true;
         }
 
+        // 先按 email 查
         String sql = "SELECT COUNT(1) FROM etl_manage.report_department_user_list WHERE email = ?";
         try {
             Integer count = jdbcTemplate.queryForObject(sql, Integer.class, email);
+            if (count != null && count > 0) return true;
+        } catch (Exception ignored) { }
+
+        // 再按 username 查（兜底：前端 ?user= 传的可能是用户名而非邮箱）
+        String sqlByName = "SELECT COUNT(1) FROM etl_manage.report_department_user_list WHERE username = ?";
+        try {
+            Integer count = jdbcTemplate.queryForObject(sqlByName, Integer.class, email);
             return count != null && count > 0;
         } catch (Exception e) {
             return false;

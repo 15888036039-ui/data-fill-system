@@ -189,12 +189,20 @@
               :label="field.name"
               show-overflow-tooltip
               min-width="150"
-            />
-              
-            <el-table-column prop="creator" label="填写人" width="150" sortable />
-            <el-table-column prop="update_time" label="最后修改" width="180">
+            >
               <template #default="scope">
-                {{ formatDateTime(scope.row.update_time || scope.row.create_time) }}
+                {{ formatCellValue(getRowValue(scope.row, field.columnName)) }}
+              </template>
+            </el-table-column>
+              
+            <el-table-column prop="load_user" label="填写人" width="150" sortable>
+               <template #default="scope">
+                {{ getRowValue(scope.row, 'load_user') || getRowValue(scope.row, 'creator') || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="最后修改" width="180">
+              <template #default="scope">
+                {{ formatDateTime(getRowValue(scope.row, 'w_update_dt') || getRowValue(scope.row, 'w_insert_dt') || getRowValue(scope.row, 'update_time') || getRowValue(scope.row, 'create_time')) }}
               </template>
             </el-table-column>
 
@@ -404,6 +412,28 @@ const formatDateTime = (val) => {
   return new Date(val).toLocaleString()
 }
 
+const formatCellValue = (val) => {
+  if (val === null || val === undefined) return ''
+  if (typeof val === 'object') {
+    if (val instanceof Date) return formatDateTime(val)
+    try {
+      return JSON.stringify(val)
+    } catch (e) {
+      return String(val)
+    }
+  }
+  return val
+}
+
+const getRowValue = (row, key) => {
+  if (!row || !key) return undefined
+  if (row[key] !== undefined) return row[key]
+  // Fallback for case sensitivity
+  const lowerKey = key.toLowerCase()
+  const foundKey = Object.keys(row).find(k => k.toLowerCase() === lowerKey)
+  return foundKey ? row[foundKey] : undefined
+}
+
 const schemaFields = computed(() => {
   if (!formMeta.value || !formMeta.value.forms) return []
   try {
@@ -502,7 +532,7 @@ const submitData = async (formDataVal) => {
     const payload = { ...formDataVal }
     // 统一注入用户与申请人信息（用于权限与审批流）
     if (userEmail.value) {
-      payload.creator = userEmail.value
+      payload.load_user = userEmail.value
       payload.applicantEmail = userEmail.value
     }
     
@@ -595,7 +625,7 @@ const handleUpload = async (options) => {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('mode', 'append')
-  if (userEmail.value) formData.append('creator', userEmail.value)
+  if (userEmail.value) formData.append('load_user', userEmail.value)
   
   isUploading.value = true
   try {

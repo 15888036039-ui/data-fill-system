@@ -336,8 +336,9 @@ public class DynamicDataDmlService {
         if (filters != null) {
             for (Map.Entry<String, String> f : filters.entrySet()) {
                 if (f.getValue() == null || f.getValue().trim().isEmpty()) continue;
-                if (hasColumn(physicalColumns, f.getKey())) {
-                    where.append(" AND CAST(\"").append(f.getKey()).append("\" AS TEXT) LIKE ?");
+                String physicalCol = resolvePhysicalColumn(physicalColumns, f.getKey());
+                if (physicalCol != null) {
+                    where.append(" AND CAST(\"").append(physicalCol).append("\" AS TEXT) LIKE ?");
                     args.add("%" + f.getValue() + "%");
                 }
             }

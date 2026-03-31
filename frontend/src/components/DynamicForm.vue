@@ -38,7 +38,7 @@
             v-model="formData[field.columnName]" 
             :placeholder="'请输入' + field.name" 
             style="width: 100%"
-            controls-position="right"
+            :controls="false"
           />
           
           <!-- 下拉选择框 -->

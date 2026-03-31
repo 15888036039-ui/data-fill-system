@@ -377,9 +377,11 @@ public class DataFillController {
             @PathVariable String formId, 
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "mode", defaultValue = "append") String mode,
-            @RequestParam(value = "creator", required = false) String creator) throws IOException {
-        int count = excelService.importData(formId, file, mode, creator);
-        recordLog(formId, creator, "UPLOAD", "通过 Excel 导入了 " + count + " 条数据");
+            @RequestParam(value = "creator", required = false) String creator,
+            @RequestParam(value = "load_user", required = false) String loadUser) throws IOException {
+        String finalCreator = (loadUser != null && !loadUser.trim().isEmpty()) ? loadUser : creator;
+        recordLog(formId, finalCreator, "UPLOAD", "通过 Excel 导入了 " + (finalCreator == null ? "未知用户" : finalCreator) + " 的数据");
+        int count = excelService.importData(formId, file, mode, finalCreator);
         return Map.of("success", true, "count", count);
     }
 
