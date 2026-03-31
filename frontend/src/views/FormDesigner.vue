@@ -18,6 +18,23 @@
             <el-form-item label="模板中文名" required>
               <el-input v-model="formMeta.name" placeholder="例如: 员工入职登记表" />
             </el-form-item>
+            <el-form-item label="数据库物理模式 (Schema)" required>
+              <el-select
+                v-model="formMeta.schemaName"
+                filterable
+                placeholder="选择数据库模式"
+                style="width: 100%"
+                :loading="schemaLoading"
+                :disabled="isEditMode"
+              >
+                <el-option
+                  v-for="item in availableSchemas"
+                  :key="item"
+                  :label="item"
+                  :value="item"
+                />
+              </el-select>
+            </el-form-item>
             <el-form-item label="数据库物理表名" required>
               <el-input
                 v-model="formMeta.tableName"
@@ -174,7 +191,7 @@
           />
           <el-alert
             v-if="isEditMode"
-            title="当前处于元数据编辑模式。管理员可以修改已有业务字段的物理列名和数据类型；系统保留列（如 extra_data）仍保持锁定。"
+            title="当前处于元数据编辑模式。管理员可以修改业务字段；系统内置保留列将保持锁定或由内核自动管理。"
             type="success"
             show-icon
             style="margin-bottom: 24px;"
@@ -386,6 +403,22 @@
     >
       <div class="import-config-body" v-loading="isInspectingExistingTable" element-loading-text="正在读取数据库表结构...">
         <el-form label-position="top">
+          <el-form-item label="已有物理模式 (Schema)" required>
+            <el-select
+              v-model="existingTableForm.schemaName"
+              filterable
+              placeholder="选择模式"
+              style="width: 100%"
+              :loading="schemaLoading"
+            >
+              <el-option
+                v-for="item in availableSchemas"
+                :key="item"
+                :label="item"
+                :value="item"
+              />
+            </el-select>
+          </el-form-item>
           <el-form-item label="已有物理表名" required>
             <el-input
               v-model="existingTableForm.tableName"
@@ -459,6 +492,7 @@ const isEditMode = ref(!!route.params.id)
 
 const formMeta = reactive({
   name: '',
+  schemaName: 'public',
   tableName: '',
   tableComment: '',
   folderId: '',
@@ -487,6 +521,7 @@ const isInspectingExistingTable = ref(false)
 const isParsingReferenceTemplate = ref(false)
 const bindExistingTableMode = ref(false)
 const existingTableForm = reactive({
+  schemaName: 'public',
   tableName: ''
 })
 const importConfig = reactive({
@@ -528,10 +563,29 @@ const kvTargetColumns = computed(() => {
 
 const kvTargetColumnsText = computed(() => {
   const targets = kvTargetColumns.value
-  if (!targets || targets.length === 0) return 'extra_data'
+  if (!targets || targets.length === 0) return '内置 JSON 扩展列'
   if (targets.length === 1) return targets[0]
   return targets.slice(0, 2).join(', ') + ` 等${targets.length}个`
 })
+
+// 数据库模式列表
+const availableSchemas = ref([])
+const schemaLoading = ref(false)
+
+const loadSchemas = async () => {
+  schemaLoading.value = true
+  try {
+    const res = await axios.get('/api/fill/schemas')
+    availableSchemas.value = res.data || ['public']
+    if (!availableSchemas.value.includes('public')) {
+      availableSchemas.value.unshift('public')
+    }
+  } catch (e) {
+    availableSchemas.value = ['public']
+  } finally {
+    schemaLoading.value = false
+  }
+}
 
 // 用户列表（权限分配）
 const allUsers = ref([])
@@ -738,23 +792,32 @@ const onReferenceTemplateFileChange = async (uploadFile) => {
 
 const inspectExistingTable = async () => {
   if (!existingTableForm.tableName) {
-    ElMessage.error('请先输入已有物理表名')
+    ElMessage.warning('请输入物理表名')
     return
   }
-
   isInspectingExistingTable.value = true
   try {
-    const res = await axios.get('/api/fill/forms/inspectTable', {
-      params: { tableName: existingTableForm.tableName }
+    const res = await axios.get('/api/fill/inspectTable', {
+      params: { 
+        tableName: existingTableForm.tableName,
+        schemaName: existingTableForm.schemaName
+      }
     })
-    bindExistingTableMode.value = true
-    formMeta.tableName = existingTableForm.tableName
-    if (!formMeta.name) {
-      formMeta.name = existingTableForm.tableName
+    
+    if (res.data && res.data.length > 0) {
+      fields.value = res.data.map(f => ({
+        ...f,
+        required: false,
+        filterable: false,
+        systemLocked: isSystemManagedField(f)
+      }))
+      
+      formMeta.tableName = existingTableForm.tableName
+      formMeta.schemaName = existingTableForm.schemaName
+      bindExistingTableMode.value = true
+      existingTableDialogVisible.value = false
+      ElMessage.success('已识别已有表结构，发布时将直接绑定该表')
     }
-    applyParsedResults(res.data)
-    existingTableDialogVisible.value = false
-    ElMessage.success('已识别已有表结构，发布时将直接绑定该表')
   } catch (e) {
     ElMessage.error(e.response?.data?.message || '读取已有表结构失败')
   } finally {
@@ -903,7 +966,7 @@ const submitFormAndCreateTable = async () => {
 
   try {
     const url = bindExistingTableMode.value ? '/api/fill/forms/bindExistingTable' : '/api/fill/forms/createTable'
-    await axios.post(url, payload)
+    await axios.post(url, payload, { params: { userEmail: currentUser.value } })
     ElMessage.success(bindExistingTableMode.value ? '绑定发布成功！' : '发布成功！')
     router.push('/forms')
   } catch (error) {
@@ -916,6 +979,9 @@ const loadFormForEdit = async () => {
   try {
     const res = await axios.get(`/api/fill/forms/${id}`)
     Object.assign(formMeta, res.data)
+    if (!formMeta.schemaName) {
+        formMeta.schemaName = 'public'
+    }
     if (res.data.recipientEmails) {
         try { recipientList.value = JSON.parse(res.data.recipientEmails) } catch (e) { recipientList.value = [] }
     }
@@ -978,7 +1044,7 @@ const updateFormMeta = async () => {
     creator: formMeta.creator || currentUser.value
   }
   try {
-    await axios.put(`/api/fill/forms/${id}`, payload)
+    await axios.put(`/api/fill/forms/${id}`, payload, { params: { userEmail: formMeta.creator || currentUser.value } })
     ElMessage.success('修改成功')
     router.push('/forms')
   } catch (e) {
@@ -987,6 +1053,7 @@ const updateFormMeta = async () => {
 }
 
 onMounted(() => {
+  loadSchemas()
   loadUserList()
   loadFolderTree()
   if (isEditMode.value) loadFormForEdit()

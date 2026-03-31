@@ -8,7 +8,6 @@ import com.example.datafill.service.DynamicTableDdlService;
 import com.example.datafill.service.DynamicDataDmlService;
 import com.example.datafill.service.ExcelService;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -20,7 +19,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/fill")
-@RequiredArgsConstructor
 @CrossOrigin(origins = "*") // 允许前端本地测试跨域
 public class DataFillController {
 
@@ -34,6 +32,23 @@ public class DataFillController {
 
     @org.springframework.beans.factory.annotation.Value("${data-fill.mail.admin-email:}")
     private String adminEmail;
+
+    public DataFillController(
+            DynamicTableDdlService tableDdlService,
+            DynamicDataDmlService dataDmlService,
+            ExcelService excelService,
+            DataFillFolderService folderService,
+            DataFillFormMapper formMapper,
+            com.example.datafill.mapper.OperationLogMapper operationLogMapper,
+            com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+        this.tableDdlService = tableDdlService;
+        this.dataDmlService = dataDmlService;
+        this.excelService = excelService;
+        this.folderService = folderService;
+        this.formMapper = formMapper;
+        this.operationLogMapper = operationLogMapper;
+        this.objectMapper = objectMapper;
+    }
 
     private boolean isUserAdmin(String email) {
         if (email == null || email.isBlank()) return false;
@@ -193,28 +208,44 @@ public class DataFillController {
 
     // [管理端核心]: 软删除表单及其物理表
     @DeleteMapping("/forms/{id}")
-    public String deleteFormAndTable(@PathVariable String id) {
+    public String deleteFormAndTable(@PathVariable String id, @RequestParam String userEmail) {
+        assertAdmin(userEmail);
         tableDdlService.deleteFormAndTable(id);
+        recordLog(id, userEmail, "DELETE_FORM", "删除了表单及其物理表");
         return "success";
+    }
+
+    // 获取物理数据库中的所有应用层模式(Schema)，排除系统级 Schema
+    @GetMapping("/schemas")
+    public List<String> getAvailableSchemas() {
+        return tableDdlService.getAvailableSchemas();
     }
 
     // [管理端核心]: 提交表单配置，并在数据库真实建表 (CREATE TABLE)
     @PostMapping("/forms/createTable")
-    public String createTable(@RequestBody DataFillForm form) {
-        return tableDdlService.createFormAndTable(form);
+    public String createTable(@RequestBody DataFillForm form, @RequestParam String userEmail) {
+        assertAdmin(userEmail);
+        String formId = tableDdlService.createFormAndTable(form);
+        recordLog(formId, userEmail, "CREATE_FORM", "创建了表单及物理表");
+        return formId;
     }
 
     @PostMapping("/forms/bindExistingTable")
-    public String bindExistingTable(@RequestBody DataFillForm form) {
-        return tableDdlService.bindExistingTable(form);
+    public String bindExistingTable(@RequestBody DataFillForm form, @RequestParam String userEmail) {
+        assertAdmin(userEmail);
+        String formId = tableDdlService.bindExistingTable(form);
+        recordLog(formId, userEmail, "BIND_FORM", "绑定了已物理存在的表");
+        return formId;
     }
 
     /**
      * [管理端]: 更新表单元数据（不修改物理表结构）
      */
     @PutMapping("/forms/{id}")
-    public String updateForm(@PathVariable String id, @RequestBody DataFillForm form) {
+    public String updateForm(@PathVariable String id, @RequestBody DataFillForm form, @RequestParam String userEmail) {
+        assertAdmin(userEmail);
         tableDdlService.updateFormMeta(id, form);
+        recordLog(id, userEmail, "UPDATE_FORM", "更新了表单元数据或表结构");
         return "success";
     }
 

@@ -11,8 +11,6 @@ import com.example.datafill.entity.UserFillLog;
 
 import com.example.datafill.mapper.DataFillFormMapper;
 
-import com.example.datafill.mapper.DynamicSqlMapper;
-
 import com.example.datafill.mapper.UserFillLogMapper;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -24,6 +22,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import org.springframework.stereotype.Service;
@@ -31,6 +30,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+
+import javax.sql.DataSource;
+import com.example.datafill.util.SqlUtil;
 
 import java.util.ArrayList;
 
@@ -47,15 +49,15 @@ public class DynamicTableDdlService {
 
     private final DataFillFormMapper formMapper;
 
-    private final DynamicSqlMapper dynamicSqlMapper;
-
     private final UserFillLogMapper userFillLogMapper;
 
     private final ObjectMapper objectMapper;
 
     private final SchedulerService schedulerService;
 
-    private final JdbcTemplate jdbcTemplate;
+    @org.springframework.beans.factory.annotation.Autowired
+    @Qualifier("dynamicJdbcTemplate")
+    private JdbcTemplate jdbcTemplate;
 
     private final DataFillFolderService folderService;
 
@@ -116,16 +118,23 @@ public class DynamicTableDdlService {
     }
 
     private String resolveTableComment(DataFillForm form) {
-        if (form.getTableComment() != null && !form.getTableComment().isBlank()) {
+        if (form.getTableComment() != null && !form.getTableComment().trim().isEmpty()) {
             return form.getTableComment().trim();
         }
         return form.getName();
     }
 
     private void validateTableName(String tableName) {
-        if (tableName == null || !tableName.matches("^[a-zA-Z0-9_]+$")) {
-            throw new RuntimeException("物理表名只能包含字母、数字和下划线");
+        if (tableName == null || tableName.trim().isEmpty() || !tableName.matches("^[a-zA-Z0-9_\\.]+$")) {
+            throw new RuntimeException("物理表名只能包含字母、数字、下划线和点号");
         }
+    }
+
+    public List<String> getAvailableSchemas() {
+        String sql = "SELECT nspname FROM pg_catalog.pg_namespace " +
+                     "WHERE nspname NOT LIKE 'pg_%' AND nspname != 'information_schema' " +
+                     "ORDER BY nspname";
+        return jdbcTemplate.queryForList(sql, String.class);
     }
 
     private List<FieldDef> parseFields(String formsJson) {
@@ -136,25 +145,31 @@ public class DynamicTableDdlService {
         }
     }
 
-    private boolean physicalTableExists(String tableName) {
-        String sql = """
-                SELECT COUNT(1)
-                FROM information_schema.tables
-                WHERE table_schema = current_schema()
-                  AND table_name = ?
-                """;
-        Integer count = jdbcTemplate.queryForObject(sql, Integer.class, tableName);
+    private boolean physicalTableExists(String schema, String table) {
+        if (schema == null || schema.trim().isEmpty()) {
+            schema = SqlUtil.extractSchema(table);
+            if (schema == null) {
+                schema = "public"; // 默认 public
+            }
+            table = SqlUtil.extractTable(table);
+        }
+        
+        String sql = "SELECT COUNT(1) FROM information_schema.tables WHERE table_schema = ? AND table_name = ?";
+        Integer count = jdbcTemplate.queryForObject(sql, Integer.class, schema, table);
         return count != null && count > 0;
     }
 
-    private java.util.Set<String> loadPhysicalColumns(String tableName) {
-        String sql = """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema = current_schema()
-                  AND table_name = ?
-                """;
-        List<String> columns = jdbcTemplate.queryForList(sql, String.class, tableName);
+    private java.util.Set<String> loadPhysicalColumns(String schema, String table) {
+        if (schema == null || schema.trim().isEmpty()) {
+            schema = SqlUtil.extractSchema(table);
+            if (schema == null) {
+                schema = "public";
+            }
+            table = SqlUtil.extractTable(table);
+        }
+        
+        String sql = "SELECT column_name FROM information_schema.columns WHERE table_schema = ? AND table_name = ?";
+        List<String> columns = jdbcTemplate.queryForList(sql, String.class, schema, table);
         java.util.Set<String> result = new java.util.HashSet<>();
         for (String column : columns) {
             if (column != null) {
@@ -171,10 +186,10 @@ public class DynamicTableDdlService {
         if (form.getReminderDays() == null) {
             form.setReminderDays(3);
         }
-        if (form.getReminderMode() == null || form.getReminderMode().isBlank()) {
+        if (form.getReminderMode() == null || form.getReminderMode().trim().isEmpty()) {
             form.setReminderMode("DEADLINE");
         }
-        if (form.getReminderTime() == null || form.getReminderTime().isBlank()) {
+        if (form.getReminderTime() == null || form.getReminderTime().trim().isEmpty()) {
             form.setReminderTime("09:00");
         }
         form.setCreateTime(LocalDateTime.now());
@@ -194,7 +209,7 @@ public class DynamicTableDdlService {
             List<String> segments = new ArrayList<>();
             DataFillFolder current = folder;
             while (current != null) {
-                if (current.getName() != null && !current.getName().isBlank()) {
+                if (current.getName() != null && !current.getName().trim().isEmpty()) {
                     segments.add(0, current.getName());
                 }
                 String parentId = current.getParentId();
@@ -211,7 +226,7 @@ public class DynamicTableDdlService {
 
      */
 
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
 
     public String createFormAndTable(DataFillForm form) {
 
@@ -232,10 +247,11 @@ public class DynamicTableDdlService {
         validateTableName(form.getTableName());
 
         // 3. 拼接 PostgreSQL 建表 DDL 语句
+        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
+        String fullTableName = schema + "." + form.getTableName();
 
         StringBuilder ddl = new StringBuilder();
-
-        ddl.append("CREATE TABLE \"").append(form.getTableName()).append("\" ( ");
+        ddl.append("CREATE TABLE ").append(SqlUtil.quoteTable(fullTableName)).append(" ( ");
 
         // 强制带上主键ID字段
 
@@ -320,13 +336,33 @@ public class DynamicTableDdlService {
         ddl.append(" );");
 
         // 4. 执行建表原生 SQL
-
         try {
-            dynamicSqlMapper.executeDdl(ddl.toString());
+            // 调试日志：确认当前使用的数据库到底是什么
+            try (java.sql.Connection conn = jdbcTemplate.getDataSource().getConnection()) {
+                String dbUrl = conn.getMetaData().getURL();
+                log.info("======== [DEBUG] 正在执行建表，目标物理数据库连为: {} ========", dbUrl);
+                
+                // 探测冲突的关系到底是什么（表、视图、还是索引？）
+                try (java.sql.PreparedStatement ps = conn.prepareStatement("SELECT relkind, nspname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE relname = ? AND nspname = ?")) {
+                    ps.setString(1, form.getTableName());
+                    ps.setString(2, schema);
+                    try (java.sql.ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            log.warn("!!!! 发现重名关系存在 !!!! 名称: {}, 类型(relkind): {}, 所在模式(schema): {}", 
+                                     form.getTableName(), rs.getString("relkind"), rs.getString("relnamespace"));
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                log.error("尝试获取数据库元数据失败", ex);
+            }
+        
+            jdbcTemplate.execute(ddl.toString());
         } catch (Exception e) {
             // 把关键的 SQL 错误信息透传到前端，便于管理员直接定位（例如 [42704] 类型不存在）
-            if (e instanceof org.postgresql.util.PSQLException) {
-                org.postgresql.util.PSQLException pe = (org.postgresql.util.PSQLException) e;
+            Throwable cause = e.getCause();
+            if (cause instanceof org.postgresql.util.PSQLException) {
+                org.postgresql.util.PSQLException pe = (org.postgresql.util.PSQLException) cause;
                 String posText = buildPgErrorPositionText(pe);
                 throw new RuntimeException("建表失败: [" + pe.getSQLState() + "] " + pe.getMessage() + posText);
             }
@@ -334,24 +370,23 @@ public class DynamicTableDdlService {
         }
 
         // 添加表注释和字段注释
-
         // 注释里的单引号要转义防注入
-
-            try {
-                dynamicSqlMapper.executeDdl("COMMENT ON TABLE \"" + form.getTableName() + "\" IS '" + escapeSqlLiteral(resolveTableComment(form)) + "';");
-            } catch (Exception e) {
-                if (e instanceof org.postgresql.util.PSQLException) {
-                    org.postgresql.util.PSQLException pe = (org.postgresql.util.PSQLException) e;
-                    String posText = buildPgErrorPositionText(pe);
-                    throw new RuntimeException("建表注释失败: [" + pe.getSQLState() + "] " + pe.getMessage() + posText);
-                }
-                throw new RuntimeException("建表注释失败: " + e.getMessage());
+        try {
+            jdbcTemplate.execute("COMMENT ON TABLE " + SqlUtil.quoteTable(fullTableName) + " IS '" + escapeSqlLiteral(resolveTableComment(form)) + "';");
+        } catch (Exception e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof org.postgresql.util.PSQLException) {
+                org.postgresql.util.PSQLException pe = (org.postgresql.util.PSQLException) cause;
+                String posText = buildPgErrorPositionText(pe);
+                throw new RuntimeException("建表注释失败: [" + pe.getSQLState() + "] " + pe.getMessage() + posText);
             }
+            throw new RuntimeException("建表注释失败: " + e.getMessage());
+        }
 
         for (FieldDef field : fields) {
 
             try {
-                dynamicSqlMapper.executeDdl("COMMENT ON COLUMN \"" + form.getTableName() + "\".\"" + field.getColumnName() + "\" IS '" + escapeSqlLiteral(field.getName()) + "';");
+                jdbcTemplate.execute("COMMENT ON COLUMN " + SqlUtil.quoteTable(fullTableName) + ".\"" + field.getColumnName() + "\" IS '" + escapeSqlLiteral(field.getName()) + "';");
             } catch (Exception e) {
                 if (e instanceof org.postgresql.util.PSQLException) {
                     org.postgresql.util.PSQLException pe = (org.postgresql.util.PSQLException) e;
@@ -373,15 +408,16 @@ public class DynamicTableDdlService {
 
     }
 
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
     public String bindExistingTable(DataFillForm form) {
         if (formMapper.selectCount(new QueryWrapper<DataFillForm>().eq("table_name", form.getTableName())) > 0) {
             throw new RuntimeException("物理表名已存在！");
         }
 
         validateTableName(form.getTableName());
-        if (!physicalTableExists(form.getTableName())) {
-            throw new RuntimeException("指定的物理表不存在: " + form.getTableName());
+        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
+        if (!physicalTableExists(schema, form.getTableName())) {
+            throw new RuntimeException("指定的物理表不存在: " + schema + "." + form.getTableName());
         }
 
         List<FieldDef> fields = parseFields(form.getForms());
@@ -389,7 +425,7 @@ public class DynamicTableDdlService {
             throw new RuntimeException("请先从已有表识别字段结构");
         }
 
-        java.util.Set<String> physicalColumns = loadPhysicalColumns(form.getTableName());
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());
 
         java.util.Set<String> seenColumns = new java.util.HashSet<>();
         for (FieldDef field : fields) {
@@ -426,7 +462,7 @@ public class DynamicTableDdlService {
 
      */
 
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
 
     public void deleteFormAndTable(String formId) {
 
@@ -436,10 +472,11 @@ public class DynamicTableDdlService {
 
         // 删除物理表变更为重命名
         try {
-            if (physicalTableExists(form.getTableName())) {
+            String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
+            if (physicalTableExists(schema, form.getTableName())) {
                 long timestamp = System.currentTimeMillis();
-                String newTableName = form.getTableName() + "_del_" + timestamp;
-                dynamicSqlMapper.executeDdl("ALTER TABLE \"" + form.getTableName() + "\" RENAME TO \"" + newTableName + "\"");
+                String newTableName = SqlUtil.extractTable(form.getTableName()) + "_del_" + timestamp;
+                jdbcTemplate.execute("ALTER TABLE " + SqlUtil.quoteTable(schema + "." + form.getTableName()) + " RENAME TO \"" + newTableName + "\"");
             } else {
                 log.warn("物理表 {} 不存在，跳过重命名步骤", form.getTableName());
             }
@@ -459,7 +496,7 @@ public class DynamicTableDdlService {
 
      */
 
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
 
     public void updateFormMeta(String formId, DataFillForm incoming) {
 
@@ -563,13 +600,19 @@ public class DynamicTableDdlService {
 
         exist.setUpdateTime(now);
 
+        if (incoming.getSchemaName() != null) {
+            exist.setSchemaName(incoming.getSchemaName());
+        }
+
         // 1.7 [新增/修改逻辑]: 处理字段变更（支持新增列、修改中文名、重命名列、修改物理类型）
         if (incoming.getForms() != null) {
             try {
                 List<FieldDef> newFields = objectMapper.readValue(incoming.getForms(), new TypeReference<List<FieldDef>>() {});
                 List<FieldDef> oldFields = objectMapper.readValue(exist.getForms(), new TypeReference<List<FieldDef>>() {});
                 
-                String tableName = exist.getTableName();
+                String schema = (exist.getSchemaName() != null && !exist.getSchemaName().trim().isEmpty()) ? exist.getSchemaName() : "public";
+                String fullTableName = schema + "." + exist.getTableName();
+
                 Map<String, FieldDef> oldFieldMap = new LinkedHashMap<>();
                 for (FieldDef f : oldFields) {
                     String oldColName = normalizeColumnName(f.getColumnName());
@@ -584,7 +627,7 @@ public class DynamicTableDdlService {
                     String colName = normalizeColumnName(nf.getColumnName());
                     nf.setColumnName(colName);
                     String originalColName = normalizeColumnName(
-                            (nf.getOriginalColumnName() == null || nf.getOriginalColumnName().isBlank())
+                            (nf.getOriginalColumnName() == null || nf.getOriginalColumnName().trim().isEmpty())
                                     ? colName
                                     : nf.getOriginalColumnName()
                     );
@@ -611,10 +654,11 @@ public class DynamicTableDdlService {
                         // A: 发现新字段 -> 执行 ALTER TABLE ADD COLUMN
                         log.info("表单 {} 检测到新字段 {}, 准备执行物理加列", exist.getName(), colName);
                         StringBuilder addColSql = new StringBuilder();
-                        addColSql.append("ALTER TABLE \"").append(tableName).append("\" ADD COLUMN \"").append(colName).append("\" ");
+                        addColSql.append("ALTER TABLE ").append(SqlUtil.quoteTable(fullTableName)).append(" ADD COLUMN \"").append(colName).append("\" ");
                         
-                        if (nf.getDbType() != null && !nf.getDbType().isBlank()) {
-                            addColSql.append(normalizeDbTypeForPostgres(nf.getDbType()));
+                        String dbTypeArg = nf.getDbType();
+                        if (dbTypeArg != null && !dbTypeArg.trim().isEmpty()) {
+                            addColSql.append(normalizeDbTypeForPostgres(dbTypeArg));
                         } else {
                             addColSql.append("VARCHAR(255)");
                         }
@@ -623,9 +667,9 @@ public class DynamicTableDdlService {
                             addColSql.append(" DEFAULT ''"); // 生产环境 ADD COLUMN NOT NULL 建议带 DEFAULT
                         }
                         
-                        dynamicSqlMapper.executeDdl(addColSql.toString());
+                        jdbcTemplate.execute(addColSql.toString());
                         // 同步添加注释
-                        dynamicSqlMapper.executeDdl("COMMENT ON COLUMN \"" + tableName + "\".\"" + colName + "\" IS '" + escapeSqlLiteral(nf.getName()) + "';");
+                        jdbcTemplate.execute("COMMENT ON COLUMN " + SqlUtil.quoteTable(fullTableName) + ".\"" + colName + "\" IS '" + escapeSqlLiteral(nf.getName()) + "';");
                     } else {
                         String physicalColName = of.getColumnName();
 
@@ -639,16 +683,16 @@ public class DynamicTableDdlService {
                             }
                         } else if (!colName.equalsIgnoreCase(physicalColName)) {
                             log.info("表单 {} 字段 {} 重命名为 {}", exist.getName(), physicalColName, colName);
-                            dynamicSqlMapper.executeDdl("ALTER TABLE \"" + tableName + "\" RENAME COLUMN \"" + physicalColName + "\" TO \"" + colName + "\"");
+                            jdbcTemplate.execute("ALTER TABLE " + SqlUtil.quoteTable(fullTableName) + " RENAME COLUMN \"" + physicalColName + "\" TO \"" + colName + "\"");
                             physicalColName = colName;
                         }
 
                         String oldDbType = of.getDbType() == null ? "" : normalizeDbTypeForPostgres(of.getDbType());
                         String newDbType = nf.getDbType() == null ? "" : normalizeDbTypeForPostgres(nf.getDbType());
-                        if (!newDbType.isBlank() && !newDbType.equalsIgnoreCase(oldDbType)) {
+                        if (!newDbType.trim().isEmpty() && !newDbType.equalsIgnoreCase(oldDbType)) {
                             log.info("表单 {} 字段 {} 类型由 {} 改为 {}", exist.getName(), physicalColName, oldDbType, newDbType);
-                            dynamicSqlMapper.executeDdl(
-                                    "ALTER TABLE \"" + tableName + "\" ALTER COLUMN \"" + physicalColName + "\" TYPE " + newDbType
+                            jdbcTemplate.execute(
+                                    "ALTER TABLE " + SqlUtil.quoteTable(fullTableName) + " ALTER COLUMN \"" + physicalColName + "\" TYPE " + newDbType
                                             + " USING \"" + physicalColName + "\"::" + newDbType
                             );
                         }
@@ -658,7 +702,7 @@ public class DynamicTableDdlService {
                             log.info("表单 {} 字段 {} 名称由 {} 改为 {}, 更新备注", exist.getName(), colName, of.getName(), nf.getName());
                         }
                         if (!java.util.Objects.equals(nf.getName(), of.getName()) || !colName.equalsIgnoreCase(of.getColumnName())) {
-                            dynamicSqlMapper.executeDdl("COMMENT ON COLUMN \"" + tableName + "\".\"" + physicalColName + "\" IS '" + escapeSqlLiteral(nf.getName()) + "';");
+                            jdbcTemplate.execute("COMMENT ON COLUMN " + SqlUtil.quoteTable(fullTableName) + ".\"" + physicalColName + "\" IS '" + escapeSqlLiteral(nf.getName()) + "';");
                         }
                     }
                 }
@@ -679,14 +723,16 @@ public class DynamicTableDdlService {
         }
 
         if ((incoming.getName() != null || incoming.getTableComment() != null || incoming.getTableComment() == null)
-                && exist.getTableName() != null
-                && physicalTableExists(exist.getTableName())) {
-            try {
-                dynamicSqlMapper.executeDdl(
-                        "COMMENT ON TABLE \"" + exist.getTableName() + "\" IS '" + escapeSqlLiteral(resolveTableComment(exist)) + "';"
-                );
-            } catch (Exception e) {
-                log.warn("更新表注释失败: {}", exist.getTableName(), e);
+                && exist.getTableName() != null) {
+            String schema = (exist.getSchemaName() != null && !exist.getSchemaName().trim().isEmpty()) ? exist.getSchemaName() : "public";
+            if (physicalTableExists(schema, exist.getTableName())) {
+                try {
+                    jdbcTemplate.execute(
+                            "COMMENT ON TABLE " + SqlUtil.quoteTable(schema + "." + exist.getTableName()) + " IS '" + escapeSqlLiteral(resolveTableComment(exist)) + "';"
+                    );
+                } catch (Exception e) {
+                    log.warn("更新表注释失败: {}", exist.getTableName(), e);
+                }
             }
         }
 
@@ -732,7 +778,7 @@ public class DynamicTableDdlService {
 
             // 如果表单配置了允许填报用户列表，则根据 userEmail 过滤
 
-            if (userEmail != null && form.getFillUserEmails() != null && !form.getFillUserEmails().isBlank()) {
+            if (userEmail != null && form.getFillUserEmails() != null && !form.getFillUserEmails().trim().isEmpty()) {
 
                 try {
 
@@ -764,7 +810,7 @@ public class DynamicTableDdlService {
 
             // 查询该用户最近一次填报时间
 
-            UserFillLog lastLog = (userEmail != null && !userEmail.isBlank())
+            UserFillLog lastLog = (userEmail != null && !userEmail.trim().isEmpty())
                      ? userFillLogMapper.selectLastByFormAndUser(form.getId(), userEmail)
                     : null;
 
@@ -772,7 +818,7 @@ public class DynamicTableDdlService {
 
             // 增强逻辑：如果日志不存在，尝试从物理表直接探测数据（解决存量导入数据不同步问题）
 
-            if (lastSubmitTime == null && userEmail != null && !userEmail.isBlank() && form.getTableName() != null) {
+            if (lastSubmitTime == null && userEmail != null && !userEmail.trim().isEmpty() && form.getTableName() != null) {
 
                 try {
 
@@ -795,7 +841,7 @@ public class DynamicTableDdlService {
             // 解析提醒时间 (HH:mm)
             java.time.LocalTime rt = java.time.LocalTime.of(9, 0);
             try {
-                if (form.getReminderTime() != null && !form.getReminderTime().isBlank()) {
+                if (form.getReminderTime() != null && !form.getReminderTime().trim().isEmpty()) {
                     String[] parts = form.getReminderTime().split(":");
                     int h = Integer.parseInt(parts[0]);
                     int m = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;

@@ -9,11 +9,18 @@ spring:
       max-file-size: 50MB
       max-request-size: 50MB
   datasource:
-    driver-class-name: org.postgresql.Driver
-    # 请根据您的本地 PostgreSQL 配置修改
-    url: jdbc:postgresql://localhost:5432/postgres?reWriteBatchedInserts=true
-    username: postgres
-    password: admin123456
+    # 1. 元数据库：表单定义、文件夹、填报日志、邮件通知等（MyBatis 默认连此库）
+    primary:
+      driver-class-name: org.postgresql.Driver
+      url: jdbc:postgresql://localhost:5432/df_database?reWriteBatchedInserts=true
+      username: postgres
+      password: admin123456
+    # 2. 数据存储库：用户导入/填报的物理表；etl_manage.report_department_user_list 等视图也在此库
+    dynamic:
+      driver-class-name: org.postgresql.Driver
+      url: jdbc:postgresql://localhost:5432/my_data_analysis?reWriteBatchedInserts=true
+      username: postgres
+      password: admin123456
   jackson:
     time-zone: GMT+8
     date-format: yyyy-MM-dd HH:mm:ss

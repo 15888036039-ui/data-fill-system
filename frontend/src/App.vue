@@ -165,7 +165,13 @@ watch(() => route.query.user, (newVal) => {
 
 const verifyUser = async (email) => {
   if (!email) return
-  
+
+  // 内置管理员（与后端 DataFillController / admin.js 一致）不依赖组织架构表
+  if (isKnownAdmin(email)) {
+    isRegistered.value = true
+    return
+  }
+
   loading.value = true
   try {
     const res = await axios.get(`/api/user/verify?userEmail=${encodeURIComponent(email)}`)

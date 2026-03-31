@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS data_fill_form (
     reference_template_config TEXT,
     creator         VARCHAR(100),
 
+    schema_name     VARCHAR(100) DEFAULT 'public',
     create_time     TIMESTAMP,
     update_time     TIMESTAMP
 );
@@ -73,6 +74,9 @@ ALTER TABLE data_fill_form
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS folder_id VARCHAR(64);
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS schema_name VARCHAR(100) DEFAULT 'public';
 
 CREATE INDEX IF NOT EXISTS idx_data_fill_form_folder_id ON data_fill_form(folder_id);
 

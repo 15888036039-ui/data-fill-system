@@ -658,7 +658,7 @@ const handleFolderDrop = async (draggingNode, dropNode, dropType) => {
 
 const handleDeleteForm = async (id) => {
   try {
-    await axios.delete(`/api/fill/forms/${id}`)
+    await axios.delete(`/api/fill/forms/${id}`, { params: { userEmail: currentUser.value } })
     ElMessage.success('模板及物理表已永久删除')
     await Promise.all([loadFolders(), loadForms()])
   } catch (e) {

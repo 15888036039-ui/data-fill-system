@@ -20,9 +20,11 @@ import lombok.RequiredArgsConstructor;
 
 import lombok.extern.slf4j.Slf4j;
 
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
-
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import com.example.datafill.util.SqlUtil;
 
 import org.springframework.transaction.annotation.Transactional;
 
@@ -56,7 +58,9 @@ public class NotificationService {
 
     private final ObjectMapper objectMapper;
 
-    private final JdbcTemplate jdbcTemplate;
+    @org.springframework.beans.factory.annotation.Autowired
+    @Qualifier("dynamicJdbcTemplate")
+    private JdbcTemplate jdbcTemplate;
 
     /**
 
@@ -582,7 +586,7 @@ public class NotificationService {
 
                 try {
 
-                    String checkSql = String.format("SELECT MAX(w_insert_dt) FROM \"%s\" WHERE load_user = ?", form.getTableName());
+                    String checkSql = String.format("SELECT MAX(w_insert_dt) FROM %s WHERE load_user = ?", SqlUtil.quoteTable(form.getTableName()));
 
                     LocalDateTime tableSubmitTime = jdbcTemplate.queryForObject(checkSql, LocalDateTime.class, userEmail);
 

@@ -69,4 +69,8 @@ public class DataFillForm {
 
     /** 表单创建人 */
     private String creator;
+
+    /** 数据库模式 (Schema) */
+    @TableField("schema_name")
+    private String schemaName;
 }

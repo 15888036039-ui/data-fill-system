@@ -13,6 +13,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,9 +66,8 @@ public class ExcelService {
     private static final Logger log = LoggerFactory.getLogger(ExcelService.class);
     private static final String EXCEL_ROW_META_KEY = "__excel_row_num__";
 
-    private static final java.util.Set<String> EXISTING_TABLE_SYSTEM_COLUMNS = java.util.Set.of(
-            "id", "load_user", "w_insert_dt", "w_update_dt", "is_deleted", "extra_data", "job_instance"
-    );
+    private static final java.util.Set<String> EXISTING_TABLE_SYSTEM_COLUMNS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "id", "load_user", "w_insert_dt", "w_update_dt", "is_deleted", "extra_data", "job_instance"));
 
     private final DataFillFormMapper formMapper;
 
@@ -75,7 +75,9 @@ public class ExcelService {
 
     private final ObjectMapper objectMapper;
 
-    private final JdbcTemplate jdbcTemplate;
+    @org.springframework.beans.factory.annotation.Autowired
+    @Qualifier("dynamicJdbcTemplate")
+    private JdbcTemplate jdbcTemplate;
 
     private final SystemConfigService configService;
 
@@ -132,13 +134,13 @@ public class ExcelService {
         }
         for (int i = startIndex; i < row.size(); i++) {
             String raw = readCell(row, i);
-            if (raw.isBlank()) {
+            if (raw == null || raw.trim().isEmpty()) {
                 continue;
             }
             String[] parts = raw.split("[,，；;\\n]+");
             for (String part : parts) {
                 String normalized = part == null ? "" : part.trim();
-                if (!normalized.isBlank()) {
+                if (normalized != null && !normalized.trim().isEmpty()) {
                     result.add(normalized);
                 }
             }
@@ -156,7 +158,7 @@ public class ExcelService {
     private String buildReferenceDbType(String fieldType, String precision) {
         String normalizedType = lower(fieldType);
         String normalizedPrecision = normalizeReferencePrecision(precision);
-        if (normalizedType == null || normalizedType.isBlank()) {
+        if (normalizedType == null || normalizedType.trim().isEmpty()) {
             return "VARCHAR(255)";
         }
         if (normalizedType.contains("json")) {
@@ -172,7 +174,7 @@ public class ExcelService {
             return "TIME";
         }
         if (normalizedType.contains("decimal") || normalizedType.contains("numeric")) {
-            if (!normalizedPrecision.isBlank()) {
+            if (normalizedPrecision != null && !normalizedPrecision.trim().isEmpty()) {
                 String body = normalizedPrecision.replace("(", "").replace(")", "");
                 return "NUMERIC(" + body + ")";
             }
@@ -185,7 +187,7 @@ public class ExcelService {
         // 参考模板里经常出现：字段类型=int，精度=10（例如 int10）。
         // 页面上保留精度信息，方便用户看到“int10”语义；真正建表时再由 DDL 层归一化成 PG 可执行类型。
         if (normalizedType.equals("int")) {
-            if (!normalizedPrecision.isBlank()) {
+            if (normalizedPrecision != null && !normalizedPrecision.trim().isEmpty()) {
                 String digits = normalizedPrecision.replace("(", "").replace(")", "");
                 if (digits.matches("\\d+")) {
                     return "INT(" + digits + ")";
@@ -200,12 +202,12 @@ public class ExcelService {
             return "BOOLEAN";
         }
         if (normalizedType.contains("char") || normalizedType.contains("text") || normalizedType.contains("string")) {
-            if (!normalizedPrecision.isBlank() && normalizedPrecision.matches("\\d+")) {
+            if (normalizedPrecision != null && !normalizedPrecision.trim().isEmpty() && normalizedPrecision.matches("\\d+")) {
                 return "VARCHAR(" + normalizedPrecision + ")";
             }
             return normalizedType.contains("text") ? "TEXT" : "VARCHAR(255)";
         }
-        if (!normalizedPrecision.isBlank() && normalizedPrecision.matches("\\d+")) {
+        if (normalizedPrecision != null && !normalizedPrecision.trim().isEmpty() && normalizedPrecision.matches("\\d+")) {
             return normalizedType.toUpperCase() + "(" + normalizedPrecision + ")";
         }
         return normalizedType.toUpperCase();
@@ -305,12 +307,8 @@ public class ExcelService {
     }
 
     private Set<String> loadPhysicalColumns(String tableName) {
-        List<String> columns = jdbcTemplate.queryForList("""
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema = current_schema()
-                  AND table_name = ?
-                """, String.class, tableName);
+        List<String> columns = jdbcTemplate.queryForList("SELECT column_name FROM information_schema.columns " +
+                "WHERE table_schema = current_schema() AND table_name = ?", String.class, tableName);
         Set<String> result = new HashSet<>();
         for (String column : columns) {
             if (column != null) {
@@ -329,13 +327,17 @@ public class ExcelService {
         boolean hasDecimal = false;
         Set<String> uniqueValues = new HashSet<>();
         List<String> rawValues = new ArrayList<>();
-        ColumnStat(int idx, String name) { this.colIndex = idx; this.headerName = name; }
+
+        ColumnStat(int idx, String name) {
+            this.colIndex = idx;
+            this.headerName = name;
+        }
     }
 
     /**
-
+     * 
      * 5. 生成当前表单对应Excel 填报模板
-
+     * 
      */
 
     public void exportTemplate(String formId, OutputStream outputStream) throws IOException {
@@ -352,7 +354,8 @@ public class ExcelService {
 
         try {
 
-            fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
+            fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {
+            });
 
         } catch (JsonProcessingException e) {
 
@@ -364,12 +367,12 @@ public class ExcelService {
         Map<String, String> displayNameByHeader = new LinkedHashMap<>();
 
         // 对“参考模板创建”的表单，下载模板优先使用原始 excel 表头，避免用户无法按模板回传。
-        if (form.getReferenceTemplateConfig() != null && !form.getReferenceTemplateConfig().isBlank()) {
+        if (form.getReferenceTemplateConfig() != null && !form.getReferenceTemplateConfig().trim().isEmpty()) {
             try {
                 Map<String, Object> referenceConfig = objectMapper.readValue(
                         form.getReferenceTemplateConfig(),
-                        new TypeReference<Map<String, Object>>() {}
-                );
+                        new TypeReference<Map<String, Object>>() {
+                        });
                 Object mappingsObj = referenceConfig.get("headerMappings");
                 if (mappingsObj instanceof List<?>) {
                     List<Map<String, Object>> mappingRows = new ArrayList<>();
@@ -381,7 +384,8 @@ public class ExcelService {
                         String excelHeader = asText(raw.get("excelHeader"));
                         String columnName = asText(raw.get("columnName"));
                         Integer columnIndex = asInteger(raw.get("columnIndex"));
-                        if (excelHeader == null || excelHeader.isBlank() || columnName == null || columnName.isBlank()) {
+                        if (excelHeader == null || excelHeader.trim().isEmpty() || columnName == null
+                                || columnName.trim().isEmpty()) {
                             continue;
                         }
                         Map<String, Object> row = new HashMap<>();
@@ -393,9 +397,12 @@ public class ExcelService {
                     mappingRows.sort((a, b) -> {
                         Integer ai = (Integer) a.get("columnIndex");
                         Integer bi = (Integer) b.get("columnIndex");
-                        if (ai == null && bi == null) return 0;
-                        if (ai == null) return 1;
-                        if (bi == null) return -1;
+                        if (ai == null && bi == null)
+                            return 0;
+                        if (ai == null)
+                            return 1;
+                        if (bi == null)
+                            return -1;
                         return Integer.compare(ai, bi);
                     });
 
@@ -404,7 +411,8 @@ public class ExcelService {
                         String columnName = String.valueOf(row.get("columnName"));
                         templateHeaders.add(excelHeader);
                         String displayName = fields.stream()
-                                .filter(f -> f.getColumnName() != null && f.getColumnName().equalsIgnoreCase(columnName))
+                                .filter(f -> f.getColumnName() != null
+                                        && f.getColumnName().equalsIgnoreCase(columnName))
                                 .map(FieldDef::getName)
                                 .findFirst()
                                 .orElse(excelHeader);
@@ -419,12 +427,13 @@ public class ExcelService {
         // 非参考模板（或解析失败）走原逻辑：第一行使用数据库列名
         if (templateHeaders.isEmpty()) {
             for (FieldDef field : fields) {
-                if (field.getColumnName() == null || field.getColumnName().isBlank()) {
+                if (field.getColumnName() == null || field.getColumnName().trim().isEmpty()) {
                     continue;
                 }
                 String header = field.getColumnName();
                 templateHeaders.add(header);
-                displayNameByHeader.put(header, field.getName() == null || field.getName().isBlank() ? header : field.getName());
+                displayNameByHeader.put(header,
+                        field.getName() == null || field.getName().trim().isEmpty() ? header : field.getName());
             }
         }
 
@@ -468,25 +477,27 @@ public class ExcelService {
     }
 
     /**
-
+     * 
      * 6. 解析上传Excel，将每一行作为一条填报记录写入动态物理表
-
+     * 
      */
 
     /**
      * 6. 将 Excel 数据批量导入物理表
      * 优化：元数据计算外提，分片分批入库
      */
-    @Transactional
+    @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
     public int importData(String formId, MultipartFile file, String mode, String creator) throws IOException {
         DataFillForm form = formMapper.selectById(formId);
-        if (form == null) throw new RuntimeException("表单不存在");
+        if (form == null)
+            throw new RuntimeException("表单不存在");
 
         String tableName = form.getTableName();
 
         List<FieldDef> fields;
         try {
-            fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
+            fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {
+            });
         } catch (JsonProcessingException e) {
             throw new RuntimeException("表单解析错误", e);
         }
@@ -512,12 +523,12 @@ public class ExcelService {
 
         // 参考模板创建的表单需要额外支持“上传文件原始表头 -> 数据库字段”的映射，
         // 否则像 "Billing Source" 这类英文头会落不到 billing_source，最终掉进 extra_data。
-        if (form.getReferenceTemplateConfig() != null && !form.getReferenceTemplateConfig().isBlank()) {
+        if (form.getReferenceTemplateConfig() != null && !form.getReferenceTemplateConfig().trim().isEmpty()) {
             try {
                 Map<String, Object> referenceConfig = objectMapper.readValue(
                         form.getReferenceTemplateConfig(),
-                        new TypeReference<Map<String, Object>>() {}
-                );
+                        new TypeReference<Map<String, Object>>() {
+                        });
                 Object mappingsObj = referenceConfig.get("headerMappings");
                 if (mappingsObj instanceof List<?>) {
                     List<?> mappings = (List<?>) mappingsObj;
@@ -537,13 +548,14 @@ public class ExcelService {
                         boolean jsonMapped = jsonMappedObj instanceof Boolean
                                 ? (Boolean) jsonMappedObj
                                 : Boolean.parseBoolean(String.valueOf(jsonMappedObj));
-                        if (excelHeader.isBlank() || columnName.isBlank()) {
+                        if (excelHeader.trim().isEmpty() || columnName.trim().isEmpty()) {
                             continue;
                         }
                         headerMap.put(excelHeader, columnName);
                         headerMap.put(excelHeader.replaceAll("[\\r\\n]+", "").trim(), columnName);
                         normalizedHeaderMap.putIfAbsent(normalizeHeaderKey(excelHeader), columnName);
-                        referenceHeaderMappings.add(new com.example.datafill.dto.ReferenceFieldMapping(null, excelHeader, columnName, jsonMapped));
+                        referenceHeaderMappings.add(new com.example.datafill.dto.ReferenceFieldMapping(null,
+                                excelHeader, columnName, jsonMapped));
                     }
                 }
             } catch (Exception e) {
@@ -558,13 +570,16 @@ public class ExcelService {
                 .bufferSize(131072)
                 .open(file.getInputStream())) {
             Sheet sheet = workbook.getSheetAt(0);
-            if (sheet == null) return 0;
+            if (sheet == null)
+                return 0;
 
             java.util.Iterator<Row> rowIterator = sheet.iterator();
-            if (!rowIterator.hasNext()) return 0;
+            if (!rowIterator.hasNext())
+                return 0;
 
             Row headerRow = rowIterator.next();
-            if (headerRow == null) return 0;
+            if (headerRow == null)
+                return 0;
 
             int lastCol = headerRow.getLastCellNum();
             String[] headers = new String[lastCol];
@@ -575,29 +590,34 @@ public class ExcelService {
                 if (c != null) {
                     headers[i] = dataFormatter.formatCellValue(c).trim();
                     final String hn = headers[i];
-                    if (fields.stream().anyMatch(f -> hn.equals(f.getColumnName()))) isTemplate = true;
+                    if (fields.stream().anyMatch(f -> hn.equals(f.getColumnName())))
+                        isTemplate = true;
                 }
             }
 
             Map<String, List<Integer>> groups = new HashMap<>();
             java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("(.*?)(\\d*)$");
             for (int c = 0; c < lastCol; c++) {
-                if (headers[c] == null) continue;
+                if (headers[c] == null)
+                    continue;
                 java.util.regex.Matcher m = pattern.matcher(headers[c].trim());
                 if (m.matches()) {
-                    String s = m.group(2); if (s.isEmpty()) s = "0";
+                    String s = m.group(2);
+                    if (s.isEmpty())
+                        s = "0";
                     groups.computeIfAbsent(s, k -> new ArrayList<>()).add(c);
                 }
             }
 
             List<com.example.datafill.dto.ExcelParseResult.DetectedPair> savedPairs = new ArrayList<>();
-            if (form.getKvConfig() != null && !form.getKvConfig().isBlank()) {
+            if (form.getKvConfig() != null && !form.getKvConfig().trim().isEmpty()) {
                 try {
-                    savedPairs = objectMapper.readValue(form.getKvConfig(), new TypeReference<List<com.example.datafill.dto.ExcelParseResult.DetectedPair>>() {});
-                } catch (Exception e) {}
+                    savedPairs = objectMapper.readValue(form.getKvConfig(),
+                            new TypeReference<List<com.example.datafill.dto.ExcelParseResult.DetectedPair>>() {
+                            });
+                } catch (Exception e) {
+                }
             }
-
-
 
             int startRow = 1;
             boolean checkedTemplate = false;
@@ -624,13 +644,15 @@ public class ExcelService {
             java.util.Map<String, String> requiredFieldDisplayByColumn = new java.util.LinkedHashMap<>();
             boolean explicitExtraDataField = false;
             for (FieldDef f : fields) {
-                if (f.getColumnName() == null || f.getColumnName().isBlank()) continue;
+                if (f.getColumnName() == null || f.getColumnName().trim().isEmpty())
+                    continue;
                 String col = f.getColumnName().trim().toLowerCase();
                 if ("extra_data".equals(col)) {
                     explicitExtraDataField = true;
                     continue;
                 }
-                if (importSystemColumns.contains(col)) continue;
+                if (importSystemColumns.contains(col))
+                    continue;
                 businessFieldColumns.add(col);
                 if (Boolean.TRUE.equals(f.getRequired())) {
                     String display = (f.getName() == null || f.getName().isBlank()) ? f.getColumnName() : f.getName();
@@ -647,8 +669,10 @@ public class ExcelService {
                 if (headers[c] != null) {
                     cachedPinyinHeaders[c] = generateDwColumnName(headers[c], c);
                     String dbCol = headerMap.get(headers[c]);
-                    if (dbCol == null) dbCol = headerMap.get(headers[c].replaceAll("[\\r\\n]+", ""));
-                    if (dbCol == null) dbCol = normalizedHeaderMap.get(normalizeHeaderKey(headers[c]));
+                    if (dbCol == null)
+                        dbCol = headerMap.get(headers[c].replaceAll("[\\r\\n]+", ""));
+                    if (dbCol == null)
+                        dbCol = normalizedHeaderMap.get(normalizeHeaderKey(headers[c]));
                     cachedDbCols[c] = dbCol;
                     actualHeaderIndexMap.putIfAbsent(headers[c].trim(), c);
                     actualHeaderIndexMap.putIfAbsent(headers[c].replaceAll("[\\r\\n]+", "").trim(), c);
@@ -659,24 +683,29 @@ public class ExcelService {
                 }
             }
             if (hasReferenceMappings && !unresolvedHeaders.isEmpty()) {
-                java.util.List<String> unresolvedSamples = unresolvedHeaders.stream().limit(12).toList();
+                java.util.List<String> unresolvedSamples = unresolvedHeaders.stream().limit(12).collect(java.util.stream.Collectors.toList());
                 log.warn("参考模板导入存在未映射表头, formId={}, unresolvedCount={}, samples={}",
                         formId, unresolvedHeaders.size(), unresolvedSamples);
             }
 
-            record KVPairConfig(int fk, int fv, String targetJsonCol) {}
+            record KVPairConfig(int fk, int fv, String targetJsonCol) {
+            }
             List<KVPairConfig> activeKVPairs = new ArrayList<>();
             Set<String> jsonColumnNames = new HashSet<>();
             for (FieldDef f : fields) {
-                if (f.getColumnName() == null) continue;
+                if (f.getColumnName() == null)
+                    continue;
                 String col = f.getColumnName().trim().toLowerCase();
-                if (col.endsWith("_json") || "JSONB".equalsIgnoreCase(f.getDbType()) || "JSON".equalsIgnoreCase(f.getDbType())) {
+                if (col.endsWith("_json") || "JSONB".equalsIgnoreCase(f.getDbType())
+                        || "JSON".equalsIgnoreCase(f.getDbType())) {
                     jsonColumnNames.add(col);
                 }
             }
 
             for (Map.Entry<String, List<Integer>> entry : groups.entrySet()) {
-                List<Integer> idxs = entry.getValue(); if (idxs.size() < 2) continue;
+                List<Integer> idxs = entry.getValue();
+                if (idxs.size() < 2)
+                    continue;
                 String suffix = entry.getKey();
                 Integer foundK = null, foundV = null;
                 String targetJsonCol = "extra_data";
@@ -690,22 +719,31 @@ public class ExcelService {
                                 String mappedCol = null;
                                 if (h != null) {
                                     mappedCol = headerMap.get(h.trim());
-                                    if (mappedCol == null) mappedCol = headerMap.get(h.replaceAll("[\\r\\n]+", "").trim());
-                                    if (mappedCol == null) mappedCol = normalizedHeaderMap.get(normalizeHeaderKey(h));
+                                    if (mappedCol == null)
+                                        mappedCol = headerMap.get(h.replaceAll("[\\r\\n]+", "").trim());
+                                    if (mappedCol == null)
+                                        mappedCol = normalizedHeaderMap.get(normalizeHeaderKey(h));
                                 }
                                 // 仅跳过“已映射到普通业务字段”的列；映射到 JSON 列的仍允许参与键值对识别
-                                if (mappedCol != null && !jsonColumnNames.contains(mappedCol.toLowerCase())) continue;
+                                if (mappedCol != null && !jsonColumnNames.contains(mappedCol.toLowerCase()))
+                                    continue;
 
                                 String source = (h == null || h.isBlank() || "...".equals(h.trim())) ? mappedCol : h;
-                                if (source == null || source.isBlank()) continue;
-                                String name = source.toLowerCase().trim().replaceAll("\\d+$", "").replaceAll("[_\\s]+$", "");
-                                if (name.equals(sp.getKeyBase().toLowerCase())) fk = idx;
-                                else if (name.equals(sp.getValueBase().toLowerCase())) fv = idx;
+                                if (source == null || source.isBlank())
+                                    continue;
+                                String name = source.toLowerCase().trim().replaceAll("\\d+$", "").replaceAll("[_\\s]+$",
+                                        "");
+                                if (name.equals(sp.getKeyBase().toLowerCase()))
+                                    fk = idx;
+                                else if (name.equals(sp.getValueBase().toLowerCase()))
+                                    fv = idx;
                             }
-                            if (fk != null && fv != null) { 
-                                foundK = fk; foundV = fv; 
-                                targetJsonCol = sp.getSuggestedColumnName() != null ? sp.getSuggestedColumnName() : "extra_data";
-                                break; 
+                            if (fk != null && fv != null) {
+                                foundK = fk;
+                                foundV = fv;
+                                targetJsonCol = sp.getSuggestedColumnName() != null ? sp.getSuggestedColumnName()
+                                        : "extra_data";
+                                break;
                             }
                         }
                     }
@@ -720,30 +758,37 @@ public class ExcelService {
             if (!savedPairs.isEmpty() && !referenceHeaderMappings.isEmpty()) {
                 Map<String, KVPairConfig> precisePairMap = new LinkedHashMap<>();
                 for (com.example.datafill.dto.ExcelParseResult.DetectedPair sp : savedPairs) {
-                    String targetJsonCol = sp.getSuggestedColumnName() != null ? sp.getSuggestedColumnName() : "extra_data";
-                    for (String suffix : sp.getSuffixes()) {
-                        String suffixText = suffix == null ? "" : suffix.trim();
+                    String targetJsonCol = sp.getSuggestedColumnName() != null ? sp.getSuggestedColumnName()
+                            : "extra_data";
+                    for (String sTemp : sp.getSuffixes()) {
+                        final String suffixText = sTemp == null ? "" : sTemp.trim();
                         Integer fk = null;
                         Integer fv = null;
                         for (com.example.datafill.dto.ReferenceFieldMapping mapping : referenceHeaderMappings) {
-                            if (!targetJsonCol.equalsIgnoreCase(mapping.getColumnName())) continue;
+                            if (!targetJsonCol.equalsIgnoreCase(mapping.getColumnName()))
+                                continue;
                             String header = mapping.getExcelHeader();
-                            if (header == null || header.isBlank()) continue;
+                            if (header == null || header.trim().isEmpty())
+                                continue;
                             String normalizedHeader = header.trim();
                             String headerSuffix = "";
-                            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(.*?)(\\d*)$").matcher(normalizedHeader);
+                            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(.*?)(\\d*)$")
+                                    .matcher(normalizedHeader);
                             if (matcher.matches()) {
                                 headerSuffix = matcher.group(2) == null ? "" : matcher.group(2);
                             }
-                            if (!suffixText.equals(headerSuffix)) continue;
+                            if (!suffixText.equals(headerSuffix))
+                                continue;
                             Integer actualIdx = actualHeaderIndexMap.get(normalizedHeader);
                             if (actualIdx == null) {
-                                actualIdx = actualHeaderIndexMap.get(normalizedHeader.replaceAll("[\\r\\n]+", "").trim());
+                                actualIdx = actualHeaderIndexMap
+                                        .get(normalizedHeader.replaceAll("[\\r\\n]+", "").trim());
                             }
                             if (actualIdx == null) {
                                 actualIdx = actualHeaderIndexMap.get(normalizeHeaderKey(normalizedHeader));
                             }
-                            if (actualIdx == null) continue;
+                            if (actualIdx == null)
+                                continue;
 
                             String base = normalizePairBase(normalizedHeader);
                             if (base.equals(sp.getKeyBase().toLowerCase())) {
@@ -753,7 +798,8 @@ public class ExcelService {
                             }
                         }
                         if (fk != null && fv != null) {
-                            precisePairMap.put(targetJsonCol + "|" + suffixText, new KVPairConfig(fk, fv, targetJsonCol));
+                            precisePairMap.put(targetJsonCol + "|" + suffixText,
+                                    new KVPairConfig(fk, fv, targetJsonCol));
                         }
                     }
                 }
@@ -764,8 +810,9 @@ public class ExcelService {
 
             while (rowIterator.hasNext()) {
                 Row row = rowIterator.next();
-                if (row == null) continue;
-                
+                if (row == null)
+                    continue;
+
                 if (!checkedTemplate && row.getRowNum() == 1) {
                     checkedTemplate = true;
                     boolean isSecondHeader = false;
@@ -784,8 +831,9 @@ public class ExcelService {
                         continue;
                     }
                 }
-                
-                if (row.getRowNum() < startRow) continue;
+
+                if (row.getRowNum() < startRow)
+                    continue;
                 Map<String, Object> rowData = new LinkedHashMap<>();
                 Map<String, Map<String, Object>> dynamicExtras = new LinkedHashMap<>();
                 Map<String, Object> defaultExtra = new LinkedHashMap<>();
@@ -810,13 +858,17 @@ public class ExcelService {
                     }
                     if (kvStr != null && !kvStr.isEmpty() && vvObj != null && !"".equals(vvObj)) {
                         dynamicExtras.computeIfAbsent(pc.targetJsonCol(), k -> new LinkedHashMap<>()).put(kvStr, vvObj);
-                        consumed.add(pc.fk()); consumed.add(pc.fv());
+                        consumed.add(pc.fk());
+                        consumed.add(pc.fv());
                     }
                 }
 
                 for (int c = 0; c < lastCol; c++) {
-                    if (consumed.contains(c) || headers[c] == null) continue;
-                    Cell cell = row.getCell(c); if (cell == null || cell.getCellType() == org.apache.poi.ss.usermodel.CellType.BLANK) continue;
+                    if (consumed.contains(c) || headers[c] == null)
+                        continue;
+                    Cell cell = row.getCell(c);
+                    if (cell == null || cell.getCellType() == org.apache.poi.ss.usermodel.CellType.BLANK)
+                        continue;
                     Object val;
                     if (cell.getCellType() == org.apache.poi.ss.usermodel.CellType.STRING) {
                         val = cell.getStringCellValue();
@@ -845,19 +897,21 @@ public class ExcelService {
                             } else {
                                 rowData.put(dbCol, val);
                             }
-                        } else defaultExtra.put(cachedPinyinHeaders[c], val);
+                        } else
+                            defaultExtra.put(cachedPinyinHeaders[c], val);
                     }
                 }
-                
-                if (empty && dynamicExtras.isEmpty() && defaultExtra.isEmpty()) continue;
-                
+
+                if (empty && dynamicExtras.isEmpty() && defaultExtra.isEmpty())
+                    continue;
+
                 // 合并所有其它的到 extra_data
                 // 若模板已定义了业务 JSON 字段（如 xxx_json），默认不再把剩余列强行并入 extra_data。
                 // 只有当表单字段中显式存在 extra_data 时，才把 defaultExtra 合并进去。
                 if (!defaultExtra.isEmpty() && fieldColumnNames.contains("extra_data")) {
                     dynamicExtras.computeIfAbsent("extra_data", k -> new LinkedHashMap<>()).putAll(defaultExtra);
                 }
-                
+
                 // 将所有 JSON 列转换为字符串并加入 rowData
                 for (Map.Entry<String, Map<String, Object>> exEntry : dynamicExtras.entrySet()) {
                     try {
@@ -887,7 +941,8 @@ public class ExcelService {
                         }
                     }
                     if (!missingRequired.isEmpty()) {
-                        throw new RuntimeException("导入失败：第 " + (row.getRowNum() + 1) + " 行缺少必填字段: " + String.join(", ", missingRequired));
+                        throw new RuntimeException(
+                                "导入失败：第 " + (row.getRowNum() + 1) + " 行缺少必填字段: " + String.join(", ", missingRequired));
                     }
                 }
 
@@ -897,31 +952,34 @@ public class ExcelService {
                 if (fieldColumnNames.contains("mtime") && !rowData.containsKey("mtime")) {
                     rowData.put("mtime", LocalDateTime.now());
                 }
-                
+
                 rowData.put(EXCEL_ROW_META_KEY, row.getRowNum() + 1);
-                if (creator != null && !creator.isBlank()) rowData.put("creator", creator);
+                if (creator != null && !creator.isBlank())
+                    rowData.put("creator", creator);
                 buffer.add(rowData);
 
                 if (buffer.size() >= BATCH_SIZE) {
                     flushImportBuffer(formId, buffer);
-                    totalCount += buffer.size(); buffer.clear();
+                    totalCount += buffer.size();
+                    buffer.clear();
                 }
             }
-            
+
             if (!buffer.isEmpty()) {
                 flushImportBuffer(formId, buffer);
-                totalCount += buffer.size(); buffer.clear();
+                totalCount += buffer.size();
+                buffer.clear();
             }
 
             if (totalCount == 0 && skippedUnmappedRowCount > 0) {
                 String unresolvedHint = unresolvedHeaders.isEmpty()
                         ? ""
-                        : ("；未匹配表头示例: " + String.join(", ", unresolvedHeaders.stream().limit(8).toList()));
+                        : ("；未匹配表头示例: " + String.join(", ", unresolvedHeaders.stream().limit(8).collect(java.util.stream.Collectors.toList())));
                 throw new RuntimeException("导入失败：检测到 " + skippedUnmappedRowCount
                         + " 行数据未映射到业务字段（首行: 第 " + firstSkippedUnmappedRowNum + " 行）"
                         + "，请确认上传文件表头与模板一致" + unresolvedHint);
             }
-            
+
         }
         return totalCount;
     }
@@ -931,7 +989,8 @@ public class ExcelService {
             dataDmlService.batchInsertRowData(formId, rows);
         } catch (RuntimeException e) {
             String msg = e.getMessage() == null ? "" : e.getMessage();
-            java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("line\\s+(\\d+):", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(msg);
+            java.util.regex.Matcher matcher = java.util.regex.Pattern
+                    .compile("line\\s+(\\d+):", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(msg);
             if (matcher.find()) {
                 try {
                     int copyLine = Integer.parseInt(matcher.group(1));
@@ -952,12 +1011,13 @@ public class ExcelService {
     }
 
     /**
-
+     * 
      * 7. 解析上传Excel 表头，生成字段定义列(增强
-
+     * 
      */
 
-    public com.example.datafill.dto.ReferenceTemplateParseResult parseReferenceTemplate(MultipartFile file) throws IOException {
+    public com.example.datafill.dto.ReferenceTemplateParseResult parseReferenceTemplate(MultipartFile file)
+            throws IOException {
         List<List<String>> rows = readReferenceTemplateRows(file);
         if (rows.isEmpty()) {
             throw new RuntimeException("参考模板内容为空");
@@ -976,7 +1036,8 @@ public class ExcelService {
 
         List<String> dbColumnsRow = rows.get(dbFieldRowIndex);
         List<String> excelHeadersRow = rows.get(excelHeaderRowIndex);
-        List<String> filterColumns = filterRowIndex >= 0 ? splitMultiValueCells(rows.get(filterRowIndex), 1) : new ArrayList<>();
+        List<String> filterColumns = filterRowIndex >= 0 ? splitMultiValueCells(rows.get(filterRowIndex), 1)
+                : new ArrayList<>();
         Set<String> filterColumnSet = new LinkedHashSet<>();
         for (String filterColumn : filterColumns) {
             filterColumnSet.add(filterColumn.toLowerCase());
@@ -1013,10 +1074,11 @@ public class ExcelService {
                 jsonMapped = true;
             }
 
-            // 这里的 columnIndex 必须是“headerMappings 数组内的顺序索引”，否则前端根据 originalHeaders 下标回填字段时会错位
+            // 这里的 columnIndex 必须是“headerMappings 数组内的顺序索引”，否则前端根据 originalHeaders
+            // 下标回填字段时会错位
             int sequentialIndex = headerMappings.size();
-            com.example.datafill.dto.ReferenceFieldMapping mapping =
-                    new com.example.datafill.dto.ReferenceFieldMapping(sequentialIndex, excelHeader, mappedColumn, jsonMapped);
+            com.example.datafill.dto.ReferenceFieldMapping mapping = new com.example.datafill.dto.ReferenceFieldMapping(
+                    sequentialIndex, excelHeader, mappedColumn, jsonMapped);
             headerMappings.add(mapping);
             if (!mappedColumn.isBlank() && mappedColumn.toLowerCase().endsWith("_json")) {
                 jsonColumnMappings.computeIfAbsent(mappedColumn, key -> new ArrayList<>()).add(mapping);
@@ -1041,7 +1103,7 @@ public class ExcelService {
                 }
                 continue;
             }
-            if (columnName.isBlank()) {
+            if (columnName == null || columnName.trim().isEmpty()) {
                 continue;
             }
 
@@ -1051,8 +1113,7 @@ public class ExcelService {
                     readCell(row, 3),
                     readCell(row, 4),
                     readCell(row, 5),
-                    readCell(row, 6)
-            );
+                    readCell(row, 6));
             referenceRows.add(referenceRow);
 
             String normalizedColumnName = columnName.trim();
@@ -1064,7 +1125,7 @@ public class ExcelService {
             FieldDef field = new FieldDef();
             field.setColumnName(normalizedColumnName);
             field.setOriginalColumnName(normalizedColumnName);
-            field.setName(referenceRow.getComment() == null || referenceRow.getComment().isBlank()
+            field.setName(referenceRow.getComment() == null || referenceRow.getComment().trim().isEmpty()
                     ? normalizedColumnName
                     : referenceRow.getComment().trim());
             String dbType = buildReferenceDbType(referenceRow.getFieldType(), referenceRow.getPrecision());
@@ -1077,7 +1138,7 @@ public class ExcelService {
 
         if (fieldMap.isEmpty()) {
             for (com.example.datafill.dto.ReferenceFieldMapping mapping : headerMappings) {
-                if (mapping.getColumnName() == null || mapping.getColumnName().isBlank()) {
+                if (mapping.getColumnName() == null || mapping.getColumnName().trim().isEmpty()) {
                     continue;
                 }
                 if (EXISTING_TABLE_SYSTEM_COLUMNS.contains(mapping.getColumnName().toLowerCase())
@@ -1099,14 +1160,16 @@ public class ExcelService {
         }
 
         List<com.example.datafill.dto.ExcelParseResult.DetectedPair> kvPairs = new ArrayList<>();
-        for (Map.Entry<String, List<com.example.datafill.dto.ReferenceFieldMapping>> entry : jsonColumnMappings.entrySet()) {
+        for (Map.Entry<String, List<com.example.datafill.dto.ReferenceFieldMapping>> entry : jsonColumnMappings
+                .entrySet()) {
             kvPairs.addAll(detectReferenceJsonPairs(entry.getKey(), entry.getValue()));
         }
 
         headerMappings = expandReferenceHeaderMappings(headerMappings, kvPairs);
         jsonColumnMappings = groupReferenceMappingsByJsonColumn(headerMappings);
         kvPairs = new ArrayList<>();
-        for (Map.Entry<String, List<com.example.datafill.dto.ReferenceFieldMapping>> entry : jsonColumnMappings.entrySet()) {
+        for (Map.Entry<String, List<com.example.datafill.dto.ReferenceFieldMapping>> entry : jsonColumnMappings
+                .entrySet()) {
             kvPairs.addAll(detectReferenceJsonPairs(entry.getKey(), entry.getValue()));
         }
 
@@ -1153,8 +1216,10 @@ public class ExcelService {
         for (int i = 0; i < headerMappings.size(); i++) {
             com.example.datafill.dto.ReferenceFieldMapping mapping = headerMappings.get(i);
             String columnName = mapping.getColumnName();
-            if (columnName == null || !columnName.toLowerCase().endsWith("_json") || expandedJsonColumns.contains(columnName)) {
-                result.add(new com.example.datafill.dto.ReferenceFieldMapping(null, mapping.getExcelHeader(), mapping.getColumnName(), mapping.isJsonMapped()));
+            if (columnName == null || !columnName.toLowerCase().endsWith("_json")
+                    || expandedJsonColumns.contains(columnName)) {
+                result.add(new com.example.datafill.dto.ReferenceFieldMapping(null, mapping.getExcelHeader(),
+                        mapping.getColumnName(), mapping.isJsonMapped()));
                 continue;
             }
 
@@ -1171,10 +1236,11 @@ public class ExcelService {
 
             List<com.example.datafill.dto.ExcelParseResult.DetectedPair> columnPairs = kvPairs.stream()
                     .filter(pair -> columnName.equalsIgnoreCase(pair.getSuggestedColumnName()))
-                    .toList();
+                    .collect(java.util.stream.Collectors.toList());
             if (columnPairs.isEmpty()) {
                 for (com.example.datafill.dto.ReferenceFieldMapping item : jsonMappings) {
-                    result.add(new com.example.datafill.dto.ReferenceFieldMapping(null, item.getExcelHeader(), item.getColumnName(), item.isJsonMapped()));
+                    result.add(new com.example.datafill.dto.ReferenceFieldMapping(null, item.getExcelHeader(),
+                            item.getColumnName(), item.isJsonMapped()));
                 }
                 expandedJsonColumns.add(columnName);
                 i = j - 1;
@@ -1183,11 +1249,12 @@ public class ExcelService {
 
             boolean containsEllipsis = jsonMappings.stream().anyMatch(item -> {
                 String header = item.getExcelHeader();
-                return header == null || header.isBlank() || "...".equals(header.trim());
+                return header == null || header.trim().isEmpty() || "...".equals(header.trim());
             });
             if (!containsEllipsis) {
                 for (com.example.datafill.dto.ReferenceFieldMapping item : jsonMappings) {
-                    result.add(new com.example.datafill.dto.ReferenceFieldMapping(null, item.getExcelHeader(), item.getColumnName(), item.isJsonMapped()));
+                    result.add(new com.example.datafill.dto.ReferenceFieldMapping(null, item.getExcelHeader(),
+                            item.getColumnName(), item.isJsonMapped()));
                 }
                 expandedJsonColumns.add(columnName);
                 i = j - 1;
@@ -1197,14 +1264,19 @@ public class ExcelService {
             com.example.datafill.dto.ExcelParseResult.DetectedPair pair = columnPairs.get(0);
             List<Integer> suffixNums = new ArrayList<>();
             for (String suffix : pair.getSuffixes()) {
-                if (suffix == null || suffix.isBlank()) continue;
+                if (suffix == null || suffix.trim().isEmpty()) {
+                    suffixNums.add(1);
+                    continue;
+                }
                 try {
                     suffixNums.add(Integer.parseInt(suffix));
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                }
             }
             if (suffixNums.isEmpty()) {
                 for (com.example.datafill.dto.ReferenceFieldMapping item : jsonMappings) {
-                    result.add(new com.example.datafill.dto.ReferenceFieldMapping(null, item.getExcelHeader(), item.getColumnName(), item.isJsonMapped()));
+                    result.add(new com.example.datafill.dto.ReferenceFieldMapping(null, item.getExcelHeader(),
+                            item.getColumnName(), item.isJsonMapped()));
                 }
                 expandedJsonColumns.add(columnName);
                 i = j - 1;
@@ -1218,7 +1290,8 @@ public class ExcelService {
             String valueTemplate = inferHeaderTemplate(jsonMappings, pair.getValueBase());
             if (keyTemplate == null || valueTemplate == null) {
                 for (com.example.datafill.dto.ReferenceFieldMapping item : jsonMappings) {
-                    result.add(new com.example.datafill.dto.ReferenceFieldMapping(null, item.getExcelHeader(), item.getColumnName(), item.isJsonMapped()));
+                    result.add(new com.example.datafill.dto.ReferenceFieldMapping(null, item.getExcelHeader(),
+                            item.getColumnName(), item.isJsonMapped()));
                 }
                 expandedJsonColumns.add(columnName);
                 i = j - 1;
@@ -1253,7 +1326,7 @@ public class ExcelService {
             return "";
         }
         String header = mapping.getExcelHeader();
-        if (header != null && !header.isBlank() && !"...".equals(header.trim())) {
+        if (header != null && !header.trim().isEmpty() && !"...".equals(header.trim())) {
             return header.trim();
         }
         return mapping.getColumnName() == null ? "" : mapping.getColumnName().trim();
@@ -1274,9 +1347,11 @@ public class ExcelService {
         }
         for (com.example.datafill.dto.ReferenceFieldMapping mapping : mappings) {
             String source = resolveReferenceHeaderSource(mapping);
-            if (source.isBlank()) continue;
+            if (source == null || source.trim().isEmpty())
+                continue;
             String normalizedBase = normalizeReferenceBase(source);
-            if (!targetBase.equalsIgnoreCase(normalizedBase)) continue;
+            if (!targetBase.equalsIgnoreCase(normalizedBase))
+                continue;
             java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("^(.*?)(\\d+)([^\\d]*)$").matcher(source);
             if (matcher.matches()) {
                 return matcher.group(1) + "{n}" + matcher.group(3);
@@ -1330,10 +1405,10 @@ public class ExcelService {
             // 参考模板里可能用 "..." 省略中间列，但“对应数据库字段”依然是完整列名
             // 所以优先用 excelHeader；如果是省略号/空，再退回到 columnName 做识别。
             String source = mapping.getExcelHeader();
-            if (source == null || source.isBlank() || "...".equals(source.trim())) {
+            if (source == null || source.trim().isEmpty() || "...".equals(source.trim())) {
                 source = mapping.getColumnName();
             }
-            if (source == null || source.isBlank() || "...".equals(source.trim())) {
+            if (source == null || source.trim().isEmpty() || "...".equals(source.trim())) {
                 continue;
             }
             java.util.regex.Matcher matcher = numPattern.matcher(source.trim());
@@ -1343,7 +1418,8 @@ public class ExcelService {
             }
         }
 
-        for (Map.Entry<String, List<com.example.datafill.dto.ReferenceFieldMapping>> entry : groupedBySuffix.entrySet()) {
+        for (Map.Entry<String, List<com.example.datafill.dto.ReferenceFieldMapping>> entry : groupedBySuffix
+                .entrySet()) {
             String suffix = entry.getKey();
             List<com.example.datafill.dto.ReferenceFieldMapping> sameSuffixMappings = entry.getValue();
             if (sameSuffixMappings.size() < 2) {
@@ -1352,49 +1428,62 @@ public class ExcelService {
             for (int i = 0; i < sameSuffixMappings.size(); i++) {
                 com.example.datafill.dto.ReferenceFieldMapping left = sameSuffixMappings.get(i);
                 String leftSource = left.getExcelHeader();
-                if (leftSource == null || leftSource.isBlank() || "...".equals(leftSource.trim())) {
+                if (leftSource == null || (leftSource != null && leftSource.trim().isEmpty()) || "...".equals(leftSource.trim())) {
                     leftSource = left.getColumnName();
                 }
                 leftSource = leftSource == null ? "" : leftSource.trim();
-                if (suffix == null) suffix = "";
-                String leftBase = leftSource.length() >= suffix.length()
+                if (suffix == null)
+                    suffix = "";
+                String rawLeftBase = leftSource.length() >= suffix.length()
                         ? leftSource.substring(0, leftSource.length() - suffix.length())
                         : leftSource;
-                leftBase = leftBase.toLowerCase().trim().replaceAll("[_\\-：:\\s]+$", "");
+                final String leftBase = rawLeftBase.toLowerCase().trim().replaceAll("[_\\-：:\\s]+$", "");
                 for (int j = 0; j < sameSuffixMappings.size(); j++) {
                     if (i == j) {
                         continue;
                     }
                     com.example.datafill.dto.ReferenceFieldMapping right = sameSuffixMappings.get(j);
                     String rightSource = right.getExcelHeader();
-                    if (rightSource == null || rightSource.isBlank() || "...".equals(rightSource.trim())) {
+                    if (rightSource == null || (rightSource != null && rightSource.trim().isEmpty()) || "...".equals(rightSource.trim())) {
                         rightSource = right.getColumnName();
                     }
                     rightSource = rightSource == null ? "" : rightSource.trim();
-                    String rightBase = rightSource.length() >= suffix.length()
+                    String rawRightBase = rightSource.length() >= suffix.length()
                             ? rightSource.substring(0, rightSource.length() - suffix.length())
                             : rightSource;
-                    rightBase = rightBase.toLowerCase().trim().replaceAll("[_\\-：:\\s]+$", "");
+                    final String rightBase = rawRightBase.toLowerCase().trim().replaceAll("[_\\-：:\\s]+$", "");
                     for (Map.Entry<String, String> pairRule : kwPairs.entrySet()) {
                         String keyBase = pairRule.getKey().toLowerCase().trim();
                         String valueBase = pairRule.getValue().toLowerCase().trim();
-                        if (!leftBase.equals(keyBase) || !rightBase.equals(valueBase)) {
+                        
+                        boolean isMatch = false;
+                        if (leftBase.equals(keyBase) && rightBase.equals(valueBase)) {
+                            isMatch = true;
+                        } else if (leftBase.endsWith(keyBase) && rightBase.endsWith(valueBase)) {
+                            String preA = leftBase.substring(0, leftBase.length() - keyBase.length()).trim();
+                            String preB = rightBase.substring(0, rightBase.length() - valueBase.length()).trim();
+                            if (preA.equals(preB)) {
+                                isMatch = true;
+                            }
+                        }
+                        
+                        if (!isMatch) {
                             continue;
                         }
                         com.example.datafill.dto.ExcelParseResult.DetectedPair existing = pairs.stream()
-                                .filter(p -> keyBase.equals(p.getKeyBase())
-                                        && valueBase.equals(p.getValueBase())
+                                .filter(p -> leftBase.equals(p.getKeyBase())
+                                        && rightBase.equals(p.getValueBase())
                                         && jsonColumnName.equalsIgnoreCase(p.getSuggestedColumnName()))
                                 .findFirst()
                                 .orElse(null);
                         if (existing == null) {
                             existing = new com.example.datafill.dto.ExcelParseResult.DetectedPair();
-                            existing.setKeyBase(keyBase);
-                            existing.setValueBase(valueBase);
+                            existing.setKeyBase(leftBase);
+                            existing.setValueBase(rightBase);
                             existing.setKeyIndices(new ArrayList<>());
                             existing.setValueIndices(new ArrayList<>());
                             existing.setSuffixes(new ArrayList<>());
-                            existing.setDisplayName(keyBase + "/" + valueBase);
+                            existing.setDisplayName(leftBase + "/" + rightBase);
                             existing.setSuggestedColumnName(jsonColumnName);
                             pairs.add(existing);
                         }
@@ -1418,39 +1507,49 @@ public class ExcelService {
         boolean hasEllipsisPlaceholder = mappings != null && mappings.stream()
                 .anyMatch(m -> {
                     String h = m.getExcelHeader();
-                    return h == null || h.isBlank() || "...".equals(h.trim());
+                    return h == null || h.trim().isEmpty() || "...".equals(h.trim());
                 });
 
         if (hasEllipsisPlaceholder) {
             for (com.example.datafill.dto.ExcelParseResult.DetectedPair pair : pairs) {
-                if (pair.getSuffixes() == null || pair.getSuffixes().isEmpty()) continue;
-                if (pair.getKeyIndices() == null || pair.getKeyIndices().size() < 2) continue;
-                if (pair.getValueIndices() == null || pair.getValueIndices().size() < 2) continue;
+                if (pair.getSuffixes() == null || pair.getSuffixes().isEmpty())
+                    continue;
+                if (pair.getKeyIndices() == null || pair.getKeyIndices().size() < 2)
+                    continue;
+                if (pair.getValueIndices() == null || pair.getValueIndices().size() < 2)
+                    continue;
 
                 List<Integer> suffixNums = new ArrayList<>();
                 for (String s : pair.getSuffixes()) {
-                    if (s == null || s.isBlank()) continue;
+                    if (s == null || s.isBlank())
+                        continue;
                     try {
                         suffixNums.add(Integer.parseInt(s));
-                    } catch (Exception ignored) {}
+                    } catch (Exception ignored) {
+                    }
                 }
-                if (suffixNums.isEmpty()) continue;
+                if (suffixNums.isEmpty())
+                    continue;
 
                 int minSuffix = suffixNums.stream().min(Integer::compareTo).orElse(0);
                 int maxSuffix = suffixNums.stream().max(Integer::compareTo).orElse(0);
                 int expectedCount = (maxSuffix - minSuffix + 1);
-                if (expectedCount <= 1) continue;
-                if (pair.getSuffixes().size() >= expectedCount) continue; // 已经完整
+                if (expectedCount <= 1)
+                    continue;
+                if (pair.getSuffixes().size() >= expectedCount)
+                    continue; // 已经完整
 
                 // 推断 key 的步长：通常 key_i 与 key_{i+1} 间隔固定（例如相邻 key/value 成对时 step=2）
                 List<Integer> keyIdxSorted = pair.getKeyIndices().stream()
-                        .filter(java.util.Objects::nonNull).distinct().sorted().toList();
+                        .filter(java.util.Objects::nonNull).distinct().sorted().collect(java.util.stream.Collectors.toList());
                 List<Integer> valIdxSorted = pair.getValueIndices().stream()
-                        .filter(java.util.Objects::nonNull).distinct().sorted().toList();
-                if (keyIdxSorted.size() < 2 || valIdxSorted.size() < 2) continue;
+                        .filter(java.util.Objects::nonNull).distinct().sorted().collect(java.util.stream.Collectors.toList());
+                if (keyIdxSorted.size() < 2 || valIdxSorted.size() < 2)
+                    continue;
 
                 int keyStep = keyIdxSorted.get(1) - keyIdxSorted.get(0);
-                if (keyStep <= 0) continue;
+                if (keyStep <= 0)
+                    continue;
 
                 int keyStartIdx = keyIdxSorted.get(0);
                 int valStartIdx = valIdxSorted.get(0);
@@ -1501,7 +1600,8 @@ public class ExcelService {
         return pairs;
     }
 
-    public com.example.datafill.dto.ExcelParseResult parseExcelHeaders(MultipartFile file, String mode, boolean smartType, boolean kvPairEnabled) throws IOException {
+    public com.example.datafill.dto.ExcelParseResult parseExcelHeaders(MultipartFile file, String mode,
+            boolean smartType, boolean kvPairEnabled) throws IOException {
         com.example.datafill.dto.ExcelParseResult result = new com.example.datafill.dto.ExcelParseResult();
         List<FieldDef> fields = new ArrayList<>();
         List<com.example.datafill.dto.ExcelParseResult.DetectedPair> potentialPairs = new ArrayList<>();
@@ -1517,16 +1617,20 @@ public class ExcelService {
                 .bufferSize(131072)
                 .open(file.getInputStream())) {
             Sheet sheet = workbook.getSheetAt(0);
-            if (sheet == null) return result;
+            if (sheet == null)
+                return result;
 
             java.util.Iterator<Row> rowIterator = sheet.iterator();
-            if (!rowIterator.hasNext()) return result;
+            if (!rowIterator.hasNext())
+                return result;
 
             Row headerRow = rowIterator.next();
-            if (headerRow == null) return result;
+            if (headerRow == null)
+                return result;
 
             int lastColumn = headerRow.getLastCellNum();
-            if (lastColumn <= 0) return result;
+            if (lastColumn <= 0)
+                return result;
 
             int scanLimit = 100;
 
@@ -1537,7 +1641,8 @@ public class ExcelService {
                 Cell cell = headerRow.getCell(c);
                 String name = (cell == null) ? "" : dataFormatter.formatCellValue(cell).trim();
                 originalHeaders.add(name);
-                if (name.isEmpty()) name = "未命名字段" + (c + 1);
+                if (name.isEmpty())
+                    name = "未命名字段" + (c + 1);
                 stats.add(new ColumnStat(c, name));
             }
             result.setOriginalHeaders(originalHeaders);
@@ -1546,27 +1651,32 @@ public class ExcelService {
             while (rowIterator.hasNext()) {
                 Row row = rowIterator.next();
                 rowCount++;
-                if (row == null) continue;
+                if (row == null)
+                    continue;
                 for (int c = 0; c < lastColumn; c++) {
                     Cell cell = row.getCell(c);
                     ColumnStat s = stats.get(c);
-                    if (cell == null || cell.getCellType() == org.apache.poi.ss.usermodel.CellType.BLANK) continue;
+                    if (cell == null || cell.getCellType() == org.apache.poi.ss.usermodel.CellType.BLANK)
+                        continue;
                     s.nonBlankCount++;
                     String val = dataFormatter.formatCellValue(cell).trim();
                     s.uniqueValues.add(val);
-                    if (s.rawValues.size() < 100) s.rawValues.add(val);
+                    if (s.rawValues.size() < 100)
+                        s.rawValues.add(val);
                     if (cell.getCellType() == org.apache.poi.ss.usermodel.CellType.NUMERIC) {
                         if (!org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) {
                             s.couldBeDate = false;
                             double d = cell.getNumericCellValue();
-                            if (d != Math.floor(d)) s.hasDecimal = true;
+                            if (d != Math.floor(d))
+                                s.hasDecimal = true;
                         }
                     } else if (cell.getCellType() == org.apache.poi.ss.usermodel.CellType.STRING) {
                         s.couldBeDate = false;
                         String text = cell.getStringCellValue().trim().replace(",", "");
                         try {
                             double d = Double.parseDouble(text);
-                            if (d != Math.floor(d)) s.hasDecimal = true;
+                            if (d != Math.floor(d))
+                                s.hasDecimal = true;
                         } catch (NumberFormatException e) {
                             s.couldBeNumber = false;
                         }
@@ -1575,7 +1685,8 @@ public class ExcelService {
                         s.couldBeDate = false;
                     }
                 }
-                if (rowCount >= scanLimit) break;
+                if (rowCount >= scanLimit)
+                    break;
             }
 
             result.setTotalColumns(stats.size());
@@ -1585,7 +1696,8 @@ public class ExcelService {
                 result.setTruncated(true);
             }
 
-            Set<String> usedColNames = new HashSet<>(java.util.Arrays.asList("id", "create_time", "is_deleted", "extra_data", "w_insert_dt", "w_update_dt", "load_user", "job_instance"));
+            Set<String> usedColNames = new HashSet<>(java.util.Arrays.asList("id", "create_time", "is_deleted",
+                    "extra_data", "w_insert_dt", "w_update_dt", "load_user", "job_instance"));
 
             Map<String, String> kwPairs = new HashMap<>();
             Map<String, List<Integer>> groupedBySuffix = new HashMap<>();
@@ -1616,55 +1728,76 @@ public class ExcelService {
                 for (Map.Entry<String, List<Integer>> entry : groupedBySuffix.entrySet()) {
                     String suffix = entry.getKey();
                     List<Integer> indices = entry.getValue();
-                    if (indices.size() < 2) continue; // 至少需要两个字段才能组成配对
+                    if (indices.size() < 2)
+                        continue; // 至少需要两个字段才能组成配对
 
                     // 在同一组（相同数字编号）内寻找满足“基因库”定义的配对
                     for (int i = 0; i < indices.size(); i++) {
                         int idxA = indices.get(i);
                         String headerA = stats.get(idxA).headerName.trim();
                         // 移除数字后缀得到 BaseName
-                        String baseA = headerA.substring(0, headerA.length() - suffix.length()).toLowerCase().trim().replaceAll("[_\\-：:\\s]+$", "");
+                        String baseA = headerA.substring(0, headerA.length() - suffix.length()).toLowerCase().trim()
+                                .replaceAll("[_\\-：:\\s]+$", "");
 
                         for (int j = 0; j < indices.size(); j++) {
-                            if (i == j) continue;
+                            if (i == j)
+                                continue;
                             int idxB = indices.get(j);
                             String headerB = stats.get(idxB).headerName.trim();
-                            String baseB = headerB.substring(0, headerB.length() - suffix.length()).toLowerCase().trim().replaceAll("[_\\-：:\\s]+$", "");
+                            String baseB = headerB.substring(0, headerB.length() - suffix.length()).toLowerCase().trim()
+                                    .replaceAll("[_\\-：:\\s]+$", "");
 
                             // 检查 (baseA, baseB) 是否命中基因库中的一对
                             for (Map.Entry<String, String> pair : kwPairs.entrySet()) {
                                 String k = pair.getKey().toLowerCase().trim();
                                 String v = pair.getValue().toLowerCase().trim();
 
+                                boolean isMatch = false;
                                 if (baseA.equals(k) && baseB.equals(v)) {
+                                    isMatch = true;
+                                } else if (baseA.endsWith(k) && baseB.endsWith(v)) {
+                                    String prefixA = baseA.substring(0, baseA.length() - k.length()).trim();
+                                    String prefixB = baseB.substring(0, baseB.length() - v.length()).trim();
+                                    if (prefixA.equals(prefixB)) {
+                                        isMatch = true;
+                                    }
+                                }
+
+                                if (isMatch) {
                                     // 命中配对！记录结果并打标
                                     final String kFull = headerA;
                                     final String vFull = headerB;
                                     final String suff = suffix;
 
-                                    com.example.datafill.dto.ExcelParseResult.DetectedPair existing = potentialPairs.stream()
-                                        .filter(p -> p.getKeyBase().equals(k) && p.getValueBase().equals(v))
-                                        .findFirst().orElse(null);
+                                    com.example.datafill.dto.ExcelParseResult.DetectedPair existing = potentialPairs
+                                            .stream()
+                                            .filter(p -> p.getKeyBase().equals(baseA) && p.getValueBase().equals(baseB))
+                                            .findFirst().orElse(null);
 
                                     if (existing == null) {
                                         existing = new com.example.datafill.dto.ExcelParseResult.DetectedPair();
-                                        existing.setKeyBase(k); existing.setValueBase(v);
-                                        existing.setKeyIndices(new ArrayList<>()); existing.setValueIndices(new ArrayList<>());
+                                        existing.setKeyBase(baseA);
+                                        existing.setValueBase(baseB);
+                                        existing.setKeyIndices(new ArrayList<>());
+                                        existing.setValueIndices(new ArrayList<>());
                                         existing.setSuffixes(new ArrayList<>());
-                                        existing.setDisplayName(k + "/" + v);
-                                        existing.setSuggestedColumnName(deriveJsonColumnName(k, v));
+                                        existing.setDisplayName(baseA + "/" + baseB);
+                                        existing.setSuggestedColumnName(deriveJsonColumnName(baseA, baseB));
                                         potentialPairs.add(existing);
                                     }
-                                    
-                                    if (!existing.getSuffixes().contains(suff)) existing.getSuffixes().add(suff);
-                                    if (!existing.getKeyIndices().contains(idxA)) existing.getKeyIndices().add(idxA);
-                                    if (!existing.getValueIndices().contains(idxB)) existing.getValueIndices().add(idxB);
+
+                                    if (!existing.getSuffixes().contains(suff))
+                                        existing.getSuffixes().add(suff);
+                                    if (!existing.getKeyIndices().contains(idxA))
+                                        existing.getKeyIndices().add(idxA);
+                                    if (!existing.getValueIndices().contains(idxB))
+                                        existing.getValueIndices().add(idxB);
                                 }
                             }
                         }
                     }
                 }
-                
+
                 // 标记已识别为配对的列索引，避免下文重复添加成普通字段
                 java.util.Set<Integer> pairedIndices = new java.util.HashSet<>();
                 for (com.example.datafill.dto.ExcelParseResult.DetectedPair p : potentialPairs) {
@@ -1674,8 +1807,9 @@ public class ExcelService {
 
                 // 准备进入下文普通字段处理逻辑
                 for (int i = 0; i < targetColumns.size(); i++) {
-                    if (pairedIndices.contains(i)) continue;
-                    
+                    if (pairedIndices.contains(i))
+                        continue;
+
                     ColumnStat s = targetColumns.get(i);
                     FieldDef def = createFieldDef(s, i, usedColNames, smartType);
                     fields.add(def);
@@ -1689,7 +1823,7 @@ public class ExcelService {
                 }
             }
         }
-        
+
         // 5. 最终名称完善 (增加范围提示)
         for (com.example.datafill.dto.ExcelParseResult.DetectedPair p : potentialPairs) {
             String range = formatSuffixRange(p.getSuffixes());
@@ -1701,48 +1835,29 @@ public class ExcelService {
     }
 
     public com.example.datafill.dto.ExcelParseResult inspectExistingTable(String tableName) {
-        if (tableName == null || tableName.isBlank()) {
+        if (tableName == null || tableName.trim().isEmpty()) {
             throw new RuntimeException("物理表名不能为空");
         }
         if (!tableName.matches("^[a-zA-Z0-9_]+$")) {
             throw new RuntimeException("物理表名只能包含字母、数字和下划线");
         }
 
-        String existenceSql = """
-                SELECT COUNT(1)
-                FROM information_schema.tables
-                WHERE table_schema = current_schema()
-                  AND table_name = ?
-                """;
+        String existenceSql = "SELECT COUNT(1) FROM information_schema.tables " +
+                "WHERE table_schema = current_schema() AND table_name = ?";
         Integer tableCount = jdbcTemplate.queryForObject(existenceSql, Integer.class, tableName);
         if (tableCount == null || tableCount <= 0) {
             throw new RuntimeException("指定的物理表不存在: " + tableName);
         }
 
-        String sql = """
-                SELECT
-                    c.ordinal_position,
-                    c.column_name,
-                    c.data_type,
-                    c.udt_name,
-                    c.character_maximum_length,
-                    c.numeric_precision,
-                    c.numeric_scale,
-                    c.is_nullable,
-                    COALESCE(pgd.description, '') AS column_comment
-                FROM information_schema.columns c
-                LEFT JOIN pg_catalog.pg_class cls
-                    ON cls.relname = c.table_name
-                LEFT JOIN pg_catalog.pg_namespace ns
-                    ON ns.oid = cls.relnamespace
-                   AND ns.nspname = c.table_schema
-                LEFT JOIN pg_catalog.pg_description pgd
-                    ON pgd.objoid = cls.oid
-                   AND pgd.objsubid = c.ordinal_position
-                WHERE c.table_schema = current_schema()
-                  AND c.table_name = ?
-                ORDER BY c.ordinal_position
-                """;
+        String sql = "SELECT c.ordinal_position, c.column_name, c.data_type, c.udt_name, " +
+                "c.character_maximum_length, c.numeric_precision, c.numeric_scale, c.is_nullable, " +
+                "COALESCE(pgd.description, '') AS column_comment " +
+                "FROM information_schema.columns c " +
+                "LEFT JOIN pg_catalog.pg_class cls ON cls.relname = c.table_name " +
+                "LEFT JOIN pg_catalog.pg_namespace ns ON ns.oid = cls.relnamespace AND ns.nspname = c.table_schema " +
+                "LEFT JOIN pg_catalog.pg_description pgd ON pgd.objoid = cls.oid AND pgd.objsubid = c.ordinal_position " +
+                "WHERE c.table_schema = current_schema() AND c.table_name = ? " +
+                "ORDER BY c.ordinal_position";
 
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, tableName);
         if (rows.isEmpty()) {
@@ -1803,14 +1918,19 @@ public class ExcelService {
         }
         usedColNames.add(finalColName);
         def.setColumnName(finalColName);
-        def.setType("input"); def.setDbType("VARCHAR(255)");
+        def.setType("input");
+        def.setDbType("VARCHAR(255)");
         if (smartType && s.nonBlankCount > 0) {
-            if (s.couldBeDate) { def.setType("datetime"); def.setDbType("TIMESTAMP"); }
-            else if (s.couldBeNumber) { 
-                def.setType("number"); 
-                def.setDbType(s.hasDecimal ? "NUMERIC" : "INTEGER"); 
+            if (s.couldBeDate) {
+                def.setType("datetime");
+                def.setDbType("TIMESTAMP");
+            } else if (s.couldBeNumber) {
+                def.setType("number");
+                def.setDbType(s.hasDecimal ? "NUMERIC" : "INTEGER");
+            } else if (s.rawValues.stream().anyMatch(val -> val.length() > 50)) {
+                def.setType("textarea");
+                def.setDbType("TEXT");
             }
-            else if (s.rawValues.stream().anyMatch(val -> val.length() > 50)) { def.setType("textarea"); def.setDbType("TEXT"); }
         }
         def.setRequired(false);
         def.setFilterable(colIndex < 5 && s.nonBlankCount > 0);
@@ -1898,7 +2018,8 @@ public class ExcelService {
     }
 
     private Integer asInteger(Object value) {
-        if (value == null) return null;
+        if (value == null)
+            return null;
         if (value instanceof Number) {
             return ((Number) value).intValue();
         }
@@ -1914,7 +2035,8 @@ public class ExcelService {
             return "";
         }
         // 统一兼容：
-        // Billing Source / billing_source / billingSource / BILLING-SOURCE -> billingsource
+        // Billing Source / billing_source / billingSource / BILLING-SOURCE ->
+        // billingsource
         String normalized = value
                 .replaceAll("([a-z0-9])([A-Z])", "$1_$2")
                 .replaceAll("[\\r\\n]+", " ")
@@ -1934,22 +2056,32 @@ public class ExcelService {
     }
 
     private String formatSuffixRange(List<String> suffixes) {
-        if (suffixes == null || suffixes.isEmpty()) return "";
-        if (suffixes.size() == 1 && suffixes.get(0).isEmpty()) return "";
-        
+        if (suffixes == null || suffixes.isEmpty())
+            return "";
+        if (suffixes.size() == 1 && suffixes.get(0).isEmpty())
+            return "";
+
         List<Integer> nums = new ArrayList<>();
         boolean hasEmpty = false;
         for (String s : suffixes) {
-            if (s.isEmpty()) { hasEmpty = true; continue; }
-            try { nums.add(Integer.parseInt(s)); } catch (Exception e) {}
+            if (s.isEmpty()) {
+                hasEmpty = true;
+                continue;
+            }
+            try {
+                nums.add(Integer.parseInt(s));
+            } catch (Exception e) {
+            }
         }
-        if (nums.isEmpty()) return hasEmpty ? "无编号" : "";
-        
+        if (nums.isEmpty())
+            return hasEmpty ? "无编号" : "";
+
         java.util.Collections.sort(nums);
         int start = nums.get(0);
         int end = nums.get(nums.size() - 1);
         String range = (start == end) ? String.valueOf(start) : start + "-" + end;
-        if (hasEmpty) range = "无编号, " + range;
+        if (hasEmpty)
+            range = "无编号, " + range;
         return range;
     }
 
@@ -1967,7 +2099,9 @@ public class ExcelService {
 
         String prefix = (String) namingConf.getOrDefault("column_prefix", "field_");
 
-        int threshold = namingConf.containsKey("initials_threshold") ? ((Number) namingConf.get("initials_threshold")).intValue() : 4;
+        int threshold = namingConf.containsKey("initials_threshold")
+                ? ((Number) namingConf.get("initials_threshold")).intValue()
+                : 4;
 
         int maxLen = namingConf.containsKey("max_length") ? ((Number) namingConf.get("max_length")).intValue() : 50;
 
@@ -1977,13 +2111,16 @@ public class ExcelService {
 
         String pinyinSeparator = (String) namingConf.getOrDefault("pinyin_separator", "_");
 
-        int bracketEngMinLen = namingConf.containsKey("bracket_eng_min_len") ? ((Number) namingConf.get("bracket_eng_min_len")).intValue() : 2;
+        int bracketEngMinLen = namingConf.containsKey("bracket_eng_min_len")
+                ? ((Number) namingConf.get("bracket_eng_min_len")).intValue()
+                : 2;
 
         String dictMatchMode = (String) namingConf.getOrDefault("dict_match_mode", "contains");
 
         // 1. 尝试提取括号/方括号中的纯英文字段(例如 "[Create Time]")
 
-        java.util.regex.Matcher m1 = java.util.regex.Pattern.compile("[\\[\\(（【]([a-zA-Z\\s_]+)[\\]\\)）】]").matcher(originalName);
+        java.util.regex.Matcher m1 = java.util.regex.Pattern.compile("[\\[\\(（【]([a-zA-Z\\s_]+)[\\]\\)）】]")
+                .matcher(originalName);
 
         if (m1.find()) {
 
@@ -1997,9 +2134,11 @@ public class ExcelService {
 
         }
 
-        // 2. 如果字符串里本来就包含一段连续英连续两个字母以上)，优先使用这段英文提        // 例如 "创建时间 Create Time" -> "create_time"
+        // 2. 如果字符串里本来就包含一段连续英连续两个字母以上)，优先使用这段英文提 // 例如 "创建时间 Create Time" ->
+        // "create_time"
 
-        java.util.regex.Matcher m2 = java.util.regex.Pattern.compile("([a-zA-Z][a-zA-Z\\s_]{1,}[a-zA-Z])").matcher(originalName);
+        java.util.regex.Matcher m2 = java.util.regex.Pattern.compile("([a-zA-Z][a-zA-Z\\s_]{1,}[a-zA-Z])")
+                .matcher(originalName);
 
         if (m2.find()) {
 
@@ -2162,7 +2301,7 @@ public class ExcelService {
         for (Map.Entry<String, String> entry : dict.entrySet()) {
 
             boolean matched = "exact".equalsIgnoreCase(dictMatchMode)
-                     ? cleanName.equals(entry.getKey())
+                    ? cleanName.equals(entry.getKey())
                     : cleanName.contains(entry.getKey());
 
             if (matched) {
@@ -2197,7 +2336,7 @@ public class ExcelService {
 
         // 如果汉字大于等于阈值个，使用拼音首字母缩写
 
-        boolean useInitials = chineseCharCount >= threshold; 
+        boolean useInitials = chineseCharCount >= threshold;
 
         for (char c : originalName.toCharArray()) {
 
@@ -2287,13 +2426,15 @@ public class ExcelService {
 
     private String toSnakeCase(String str) {
 
-        if (str == null || str.isEmpty()) return "";
+        if (str == null || str.isEmpty())
+            return "";
 
         String s = str.trim().replaceAll("([a-z])([A-Z]+)", "$1_$2").toLowerCase();
 
         s = s.replaceAll("[\\s\\-]+", "_").replaceAll("_+", "_");
 
-        if (s.isEmpty()) return "";
+        if (s.isEmpty())
+            return "";
 
         if (Character.isDigit(s.charAt(0))) {
 
@@ -2306,14 +2447,18 @@ public class ExcelService {
     }
 
     private String deriveJsonColumnName(String k, String v) {
-        String sk = k.toLowerCase().replace("/territory", "").replace("#", "").replaceAll("[^a-z0-9]", "_").replaceAll("_+", "_");
-        String sv = v.toLowerCase().replace("/territory", "").replace("#", "").replaceAll("[^a-z0-9]", "_").replaceAll("_+", "_");
+        String sk = k.toLowerCase().replace("/territory", "").replace("#", "").replaceAll("[^a-z0-9]", "_")
+                .replaceAll("_+", "_");
+        String sv = v.toLowerCase().replace("/territory", "").replace("#", "").replaceAll("[^a-z0-9]", "_")
+                .replaceAll("_+", "_");
 
         int minLen = Math.min(sk.length(), sv.length());
         int prefixLen = 0;
         for (int i = 0; i < minLen; i++) {
-            if (sk.charAt(i) == sv.charAt(i)) prefixLen++;
-            else break;
+            if (sk.charAt(i) == sv.charAt(i))
+                prefixLen++;
+            else
+                break;
         }
         String prefix = sk.substring(0, prefixLen);
         if (prefix.contains("_")) {
@@ -2330,4 +2475,3 @@ public class ExcelService {
         return result.replaceAll("_+", "_").replaceAll("^_+|_+$", "") + "_json";
     }
 }
-
