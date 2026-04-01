@@ -128,79 +128,62 @@
               </template>
             </el-table-column>
             
-            <el-table-column prop="folderId" label="所属目录" min-width="150" show-overflow-tooltip>
+            <el-table-column prop="folderId" label="所属目录" width="120" show-overflow-tooltip>
               <template #default="scope">
                 <span class="folder-path-text">{{ resolveFolderPath(scope.row.folderId) }}</span>
               </template>
             </el-table-column>
             
-            <el-table-column prop="tableName" label="物理表名" min-width="180" show-overflow-tooltip>
+            <el-table-column prop="tableName" label="物理表名" width="160" show-overflow-tooltip>
               <template #default="scope">
                 <code class="table-code">{{ scope.row.tableName }}</code>
               </template>
             </el-table-column>
  
-            <el-table-column prop="status" label="状态" width="100" align="center">
+            <el-table-column prop="status" label="状态" width="85" align="center">
               <template #default="scope">
                 <el-tag
                   :type="scope.row.status === 'ACTIVE' ? 'success' : (scope.row.status === 'EXPIRED' ? 'danger' : 'info')"
                   effect="light"
                   round
+                  size="small"
                 >
                   {{ scope.row.status === 'ACTIVE' ? '运行中' : (scope.row.status === 'EXPIRED' ? '已过期' : '待发布') }}
                 </el-tag>
               </template>
             </el-table-column>
  
-            <el-table-column prop="deadline" label="截止时间" width="160">
+            <el-table-column prop="deadline" label="截止时间" width="140">
               <template #default="scope">
                 <div class="time-cell">
-                  <el-icon v-if="scope.row.deadline"><Timer /></el-icon>
-                  <span>{{ scope.row.deadline ? new Date(scope.row.deadline).toLocaleString() : '长期有效' }}</span>
+                  <span>{{ scope.row.deadline ? new Date(scope.row.deadline).toLocaleDateString() : '长期有效' }}</span>
                 </div>
               </template>
             </el-table-column>
  
-            <el-table-column prop="creator" label="创建人" width="120" show-overflow-tooltip>
+            <el-table-column prop="creator" label="创建人" width="100" show-overflow-tooltip>
               <template #default="scope">
-                <div class="creator-cell">
-                  <el-icon><User /></el-icon>
-                  <span>{{ scope.row.creator || '管理员' }}</span>
-                </div>
+                <span class="time-muted">{{ scope.row.creator || 'admin' }}</span>
               </template>
             </el-table-column>
  
-            <el-table-column prop="createTime" label="创建时间" width="160">
+            <el-table-column label="操作" width="180" align="right" fixed="right">
               <template #default="scope">
-                <span class="time-muted">{{ scope.row.createTime ? scope.row.createTime.replace('T', ' ') : '-' }}</span>
-              </template>
-            </el-table-column>
- 
-            <el-table-column label="操作" width="280" align="right" fixed="right">
-              <template #default="scope">
-                <el-button-group>
-                  <el-tooltip content="查看并管理数据" placement="top">
-                    <el-button type="info" size="small" plain icon="View" @click="$router.push(`/fill/${scope.row.id}?admin=true`)">数据</el-button>
-                  </el-tooltip>
-                  <el-tooltip v-if="isAdmin" content="编辑模板配置" placement="top">
-                    <el-button type="primary" size="small" plain icon="Edit" @click="$router.push(`/designer/${scope.row.id}`)">设计</el-button>
-                  </el-tooltip>
-                  <el-tooltip v-if="isAdmin" content="移动到其他目录" placement="top">
-                    <el-button type="warning" size="small" plain @click="openMoveDialog(scope.row)">移动</el-button>
-                  </el-tooltip>
-                  <el-popconfirm
-                    v-if="isAdmin"
-                    title="警告: 此操作将永久物理删除该表及其所有数据，无法恢复。确定删除吗？"
-                    confirm-button-text="确定删除"
-                    cancel-button-text="取消"
-                    confirm-button-type="danger"
-                    @confirm="handleDeleteForm(scope.row.id)"
-                  >
-                    <template #reference>
-                      <el-button type="danger" size="small" plain icon="Delete">删除</el-button>
+                <div class="action-cell">
+                  <el-button link type="primary" size="small" @click="$router.push(`/fill/${scope.row.id}?admin=true`)">数据</el-button>
+                  <el-divider direction="vertical" />
+                  <el-button v-if="isAdmin" link type="primary" size="small" @click="$router.push(`/designer/${scope.row.id}`)">设计</el-button>
+                  <el-divider v-if="isAdmin" direction="vertical" />
+                  <el-dropdown v-if="isAdmin" trigger="click">
+                    <el-button link type="info" size="small">更多</el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item @click="openMoveDialog(scope.row)">移动目录</el-dropdown-item>
+                        <el-dropdown-item divided @click="handleDeleteForm(scope.row.id)" style="color: #f56c6c">删除模板</el-dropdown-item>
+                      </el-dropdown-menu>
                     </template>
-                  </el-popconfirm>
-                </el-button-group>
+                  </el-dropdown>
+                </div>
               </template>
             </el-table-column>
           </el-table>
@@ -699,6 +682,7 @@ onBeforeUnmount(() => {
 .content-panel {
   flex: 1;
   min-width: 0;
+  width: 0; /* Ensures flex child doesn't overflow sibling */
 }
 
 .folder-card-header {
@@ -722,8 +706,9 @@ onBeforeUnmount(() => {
 }
 
 .folder-tree-panel {
-  min-height: 360px;
-  overflow: hidden;
+  min-height: 480px;
+  max-height: 480px;
+  overflow-y: auto;
 }
 
 .folder-all-item {
@@ -822,7 +807,8 @@ onBeforeUnmount(() => {
 
 .filter-bar {
   display: flex;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 12px;
   margin-bottom: 16px;
   background: white;
   padding: 16px;
@@ -857,10 +843,12 @@ onBeforeUnmount(() => {
 
 .search-input {
   width: 320px;
+  max-width: 100%;
 }
 
 .status-select {
   width: 160px;
+  max-width: 100%;
 }
 
 .table-card {
@@ -909,6 +897,17 @@ onBeforeUnmount(() => {
 .time-muted {
   color: #64748b;
   font-size: 13px;
+}
+
+.action-cell {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+:deep(.el-table .el-table__cell) {
+  padding: 8px 0;
 }
 
 .move-dialog-body {
@@ -961,9 +960,45 @@ onBeforeUnmount(() => {
   overflow-x: hidden !important;
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 1400px) {
   .folder-card {
-    width: 236px;
+    width: 210px;
+  }
+}
+
+@media (max-width: 1280px) {
+  .page-layout {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .folder-card {
+    width: 100%;
+    margin-bottom: 16px;
+  }
+  .folder-tree-panel {
+    max-height: 200px;
+  }
+  
+  /* 深度覆盖 Element Plus 表格固定列的宽度，防止留白过大 */
+  :deep(.el-table__fixed-right) {
+    height: 100% !important;
+  }
+  :deep(.el-table__fixed-column--right) {
+    background-color: #fff !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .search-input, .status-select {
+    width: 100%;
+  }
+  .toolbar-row {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 </style>

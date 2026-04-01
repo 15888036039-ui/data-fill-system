@@ -244,6 +244,8 @@ public class ExcelService {
                     rows.add(new ArrayList<>());
                     continue;
                 }
+                StringBuilder tsv = new StringBuilder(1024 * 1024);
+                int batchCount = 0;
                 List<String> cells = new ArrayList<>();
                 for (int i = 0; i < lastCellNum; i++) {
                     Cell cell = row.getCell(i);
@@ -621,7 +623,7 @@ public class ExcelService {
 
             int startRow = 1;
             boolean checkedTemplate = false;
-            int BATCH_SIZE = 2000;
+            int BATCH_SIZE = 10000;
             List<Map<String, Object>> buffer = new ArrayList<>(BATCH_SIZE);
             boolean hasReferenceMappings = !referenceHeaderMappings.isEmpty();
             java.util.Set<String> unresolvedHeaders = new java.util.LinkedHashSet<>();
@@ -647,6 +649,7 @@ public class ExcelService {
                 if (f.getColumnName() == null || f.getColumnName().trim().isEmpty())
                     continue;
                 String col = f.getColumnName().trim().toLowerCase();
+                String origCol = f.getColumnName().trim();
                 if ("extra_data".equals(col)) {
                     explicitExtraDataField = true;
                     continue;
@@ -655,8 +658,8 @@ public class ExcelService {
                     continue;
                 businessFieldColumns.add(col);
                 if (Boolean.TRUE.equals(f.getRequired())) {
-                    String display = (f.getName() == null || f.getName().isBlank()) ? f.getColumnName() : f.getName();
-                    requiredFieldDisplayByColumn.put(col, display);
+                    String display = (f.getName() == null || f.getName().isBlank()) ? origCol : f.getName();
+                    requiredFieldDisplayByColumn.put(origCol, display);
                 }
             }
 
@@ -664,7 +667,21 @@ public class ExcelService {
             String[] cachedDbCols = new String[lastCol];
             boolean[] isDateColumn = new boolean[lastCol];
             boolean[] dateColumnChecked = new boolean[lastCol];
+            boolean[] cachedIsBusinessCol = new boolean[lastCol];
+            boolean[] cachedIsJsonCol = new boolean[lastCol];
+            String[] cachedJsonKeys = new String[lastCol];
             Map<String, Integer> actualHeaderIndexMap = new LinkedHashMap<>();
+
+            // Build Json lookup set first
+            Set<String> jsonColumnNames = new HashSet<>();
+            for (FieldDef f : fields) {
+                if (f.getColumnName() == null) continue;
+                String col = f.getColumnName().trim().toLowerCase();
+                if (col.endsWith("_json") || "JSONB".equalsIgnoreCase(f.getDbType()) || "JSON".equalsIgnoreCase(f.getDbType())) {
+                    jsonColumnNames.add(col);
+                }
+            }
+
             for (int c = 0; c < lastCol; c++) {
                 if (headers[c] != null) {
                     cachedPinyinHeaders[c] = generateDwColumnName(headers[c], c);
@@ -674,6 +691,14 @@ public class ExcelService {
                     if (dbCol == null)
                         dbCol = normalizedHeaderMap.get(normalizeHeaderKey(headers[c]));
                     cachedDbCols[c] = dbCol;
+                    
+                    if (dbCol != null) {
+                        String lowerDbCol = dbCol.toLowerCase();
+                        cachedIsBusinessCol[c] = businessFieldColumns.contains(lowerDbCol);
+                        cachedIsJsonCol[c] = jsonColumnNames.contains(lowerDbCol);
+                    }
+                    cachedJsonKeys[c] = !headers[c].isBlank() ? headers[c].trim() : cachedPinyinHeaders[c];
+
                     actualHeaderIndexMap.putIfAbsent(headers[c].trim(), c);
                     actualHeaderIndexMap.putIfAbsent(headers[c].replaceAll("[\\r\\n]+", "").trim(), c);
                     actualHeaderIndexMap.putIfAbsent(normalizeHeaderKey(headers[c]), c);
@@ -691,16 +716,6 @@ public class ExcelService {
             record KVPairConfig(int fk, int fv, String targetJsonCol) {
             }
             List<KVPairConfig> activeKVPairs = new ArrayList<>();
-            Set<String> jsonColumnNames = new HashSet<>();
-            for (FieldDef f : fields) {
-                if (f.getColumnName() == null)
-                    continue;
-                String col = f.getColumnName().trim().toLowerCase();
-                if (col.endsWith("_json") || "JSONB".equalsIgnoreCase(f.getDbType())
-                        || "JSON".equalsIgnoreCase(f.getDbType())) {
-                    jsonColumnNames.add(col);
-                }
-            }
 
             for (Map.Entry<String, List<Integer>> entry : groups.entrySet()) {
                 List<Integer> idxs = entry.getValue();
@@ -863,39 +878,40 @@ public class ExcelService {
                     }
                 }
 
+                boolean hasMappedBusinessValue = false;
                 for (int c = 0; c < lastCol; c++) {
                     if (consumed.contains(c) || headers[c] == null)
                         continue;
                     Cell cell = row.getCell(c);
                     if (cell == null || cell.getCellType() == org.apache.poi.ss.usermodel.CellType.BLANK)
                         continue;
-                    Object val;
-                    if (cell.getCellType() == org.apache.poi.ss.usermodel.CellType.STRING) {
+                    Object val = null;
+                    org.apache.poi.ss.usermodel.CellType type = cell.getCellType();
+                    if (type == org.apache.poi.ss.usermodel.CellType.STRING) {
                         val = cell.getStringCellValue();
-                    } else if (cell.getCellType() == org.apache.poi.ss.usermodel.CellType.NUMERIC) {
+                    } else if (type == org.apache.poi.ss.usermodel.CellType.NUMERIC) {
                         if (!dateColumnChecked[c]) {
                             isDateColumn[c] = org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell);
                             dateColumnChecked[c] = true;
                         }
                         val = isDateColumn[c] ? cell.getDateCellValue() : cell.getNumericCellValue();
-                    } else if (cell.getCellType() == org.apache.poi.ss.usermodel.CellType.BOOLEAN) {
+                    } else if (type == org.apache.poi.ss.usermodel.CellType.BOOLEAN) {
                         val = cell.getBooleanCellValue();
+                    } else if (type == org.apache.poi.ss.usermodel.CellType.FORMULA) {
+                        try { val = cell.getStringCellValue(); } catch(Exception e) { val = cell.getNumericCellValue(); }
                     } else {
-                        val = dataFormatter.formatCellValue(cell).trim();
+                        val = dataFormatter.formatCellValue(cell);
+                        if(val != null) val = val.toString().trim();
                     }
                     if (val != null && !"".equals(val)) {
                         empty = false;
                         String dbCol = cachedDbCols[c];
                         if (dbCol != null) {
-                            String lowerDbCol = dbCol.toLowerCase();
-                            if (jsonColumnNames.contains(lowerDbCol)) {
-                                // 兜底：若该列映射到 JSON 字段但未进入配对，也不要覆盖成单值，归并进该 JSON 对象
-                                String jsonKey = headers[c] != null && !headers[c].isBlank()
-                                        ? headers[c].trim()
-                                        : cachedPinyinHeaders[c];
-                                dynamicExtras.computeIfAbsent(dbCol, k -> new LinkedHashMap<>()).put(jsonKey, val);
+                            if (cachedIsJsonCol[c]) {
+                                dynamicExtras.computeIfAbsent(dbCol, k -> new LinkedHashMap<>()).put(cachedJsonKeys[c], val);
                             } else {
                                 rowData.put(dbCol, val);
+                                if (cachedIsBusinessCol[c]) hasMappedBusinessValue = true;
                             }
                         } else
                             defaultExtra.put(cachedPinyinHeaders[c], val);
@@ -914,16 +930,28 @@ public class ExcelService {
 
                 // 将所有 JSON 列转换为字符串并加入 rowData
                 for (Map.Entry<String, Map<String, Object>> exEntry : dynamicExtras.entrySet()) {
-                    try {
-                        rowData.put(exEntry.getKey(), objectMapper.writeValueAsString(exEntry.getValue()));
-                    } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                    Map<String, Object> extraMap = exEntry.getValue();
+                    if (extraMap.isEmpty()) {
                         rowData.put(exEntry.getKey(), "{}");
+                        continue;
                     }
+                    // Fast JSON building for simple maps
+                    StringBuilder jsonSb = new StringBuilder(extraMap.size() * 64);
+                    jsonSb.append("{");
+                    boolean first = true;
+                    for (Map.Entry<String, Object> entry : extraMap.entrySet()) {
+                        if (!first) jsonSb.append(",");
+                        first = false;
+                        jsonSb.append("\"").append(entry.getKey().replace("\"", "\\\"")).append("\":");
+                        Object v = entry.getValue();
+                        if (v == null) jsonSb.append("null");
+                        else if (v instanceof Number || v instanceof Boolean) jsonSb.append(v.toString());
+                        else jsonSb.append("\"").append(v.toString().replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")).append("\"");
+                    }
+                    jsonSb.append("}");
+                    rowData.put(exEntry.getKey(), jsonSb.toString());
                 }
 
-                boolean hasMappedBusinessValue = rowData.keySet().stream()
-                        .map(String::toLowerCase)
-                        .anyMatch(businessFieldColumns::contains);
                 if (!hasMappedBusinessValue && !explicitExtraDataField) {
                     skippedUnmappedRowCount++;
                     if (firstSkippedUnmappedRowNum == null) {

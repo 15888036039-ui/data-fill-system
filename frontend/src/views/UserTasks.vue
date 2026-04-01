@@ -401,8 +401,9 @@ const formatTimeLeft = (seconds) => {
 }
 
 .folder-tree-panel {
-  min-height: 360px;
-  overflow: hidden;
+  min-height: 480px;
+  max-height: 480px;
+  overflow-y: auto;
 }
 
 .folder-all-item {
@@ -593,8 +594,17 @@ const formatTimeLeft = (seconds) => {
 }
 
 @media (max-width: 1280px) {
+  .page-layout {
+    flex-direction: column;
+    align-items: stretch;
+  }
   .folder-card {
-    width: 236px;
+    width: 100%;
+    margin-bottom: 16px;
+  }
+  .folder-tree-panel {
+    min-height: 200px;
+    max-height: 200px;
   }
 }
 

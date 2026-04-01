@@ -22,6 +22,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class DynamicDataDmlService {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(DynamicDataDmlService.class);
+    private static final java.util.regex.Pattern NUMBER_PATTERN = java.util.regex.Pattern.compile("^-?\\d*\\.?\\d+(?:[eE][-+]?\\d+)?$");
 
     private final DataFillFormMapper formMapper;
 
@@ -139,7 +140,9 @@ public class DynamicDataDmlService {
         } else if (type.contains("uuid")) {
             if (val instanceof String && !isStringEmpty) {
                 try {
-                    return java.util.UUID.fromString(((String) val).trim());
+                    String s = ((String) val).trim();
+                    if (s.length() != 36 && s.length() != 32) return val;
+                    return java.util.UUID.fromString(s);
                 } catch (Exception ignored) {}
             }
         } else if (type.contains("int") || type.contains("numeric") || type.contains("decimal") || type.contains("real") || type.contains("double") || type.contains("float") || type.contains("serial") || type.equals("smallint") || type.equals("bigint")) {
@@ -147,6 +150,7 @@ public class DynamicDataDmlService {
                 try {
                     // Remove currency symbols, commas, percent signs before parsing to numeric
                     String s = ((String) val).trim().replace(",", "").replace("$", "").replace("¥", "").replace("%", "");
+                    if (s.isEmpty() || s.equals("-") || s.equalsIgnoreCase("N/A") || s.equalsIgnoreCase("NA")) return val;
                     return new java.math.BigDecimal(s);
                 } catch (Exception ignored) {}
             }
@@ -293,10 +297,12 @@ public class DynamicDataDmlService {
         if (hasColumn(physicalColumns, "load_user")) columns.add("\"load_user\"");
 
         List<String> dataColumns = new ArrayList<>();
+        List<String> dataColumnTypes = new ArrayList<>();
         for (FieldDef f : fields) {
             if (f.getColumnName() != null && !SYSTEM_FIELDS.contains(f.getColumnName().toLowerCase())) {
                 dataColumns.add(f.getColumnName());
                 columns.add("\"" + f.getColumnName() + "\"");
+                dataColumnTypes.add(physicalColumns.get(f.getColumnName().toLowerCase()));
             }
         }
         if (hasColumn(physicalColumns, "extra_data")) columns.add("\"extra_data\"");
@@ -310,8 +316,9 @@ public class DynamicDataDmlService {
                 org.postgresql.copy.CopyIn copyIn = copyManager.copyIn(copySql);
 
                 try {
+                    StringBuilder tsv = new StringBuilder(1024 * 1024 * 2);
+                    int batchCount = 0;
                     for (Map<String, Object> row : rows) {
-                        StringBuilder tsv = new StringBuilder();
                         if (hasColumn(physicalColumns, "id")) appendTsv(tsv, java.util.UUID.randomUUID().toString().replace("-", ""));
                         for (String col : CREATION_FIELDS) {
                             if (hasColumn(physicalColumns, col)) appendTsv(tsv, now);
@@ -321,9 +328,10 @@ public class DynamicDataDmlService {
                         }
                         if (hasColumn(physicalColumns, "load_user")) appendTsv(tsv, row.get("load_user") != null ? row.get("load_user") : row.get("creator"));
 
-                        for (String col : dataColumns) {
+                        for (int i = 0; i < dataColumns.size(); i++) {
+                            String col = dataColumns.get(i);
+                            String colType = dataColumnTypes.get(i);
                             Object val = row.get(col);
-                            String colType = physicalColumns.get(col.toLowerCase());
                             val = convertValueForDb(val, colType);
                             
                             if (val != null && (col.toLowerCase().endsWith("_json") || col.toLowerCase().equals("extra_data") || "jsonb".equalsIgnoreCase(colType) || "json".equalsIgnoreCase(colType))) {
@@ -337,6 +345,14 @@ public class DynamicDataDmlService {
                         }
                         tsv.setCharAt(tsv.length() - 1, '\n');
                         
+                        batchCount++;
+                        if (batchCount % 500 == 0) {
+                            byte[] bytes = tsv.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                            copyIn.writeToCopy(bytes, 0, bytes.length);
+                            tsv.setLength(0);
+                        }
+                    }
+                    if (tsv.length() > 0) {
                         byte[] bytes = tsv.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
                         copyIn.writeToCopy(bytes, 0, bytes.length);
                     }
@@ -373,12 +389,22 @@ public class DynamicDataDmlService {
                 s = val.toString().trim();
                 // 彻底防御：如果是 .0 结尾或者科学计数法，二次平滑。兼容 POI formatCellValue 有时会带出的格式。
                 if (s.contains(".") || s.contains("E") || s.contains("e")) {
-                    try {
-                        s = new java.math.BigDecimal(s).stripTrailingZeros().toPlainString();
-                    } catch (Exception ignored) {}
+                    if (NUMBER_PATTERN.matcher(s).matches()) {
+                        try {
+                            s = new java.math.BigDecimal(s).stripTrailingZeros().toPlainString();
+                        } catch (Exception ignored) {}
+                    }
                 }
             }
-            sb.append(s.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")).append('\t');
+            for (int i = 0; i < s.length(); i++) {
+                char c = s.charAt(i);
+                if (c == '\\') sb.append("\\\\");
+                else if (c == '\t') sb.append("\\t");
+                else if (c == '\n') sb.append("\\n");
+                else if (c == '\r') sb.append("\\r");
+                else sb.append(c);
+            }
+            sb.append('\t');
         }
     }
 
