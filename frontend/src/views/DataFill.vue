@@ -215,20 +215,13 @@
                   @click="handleEdit(scope.row)" 
                   :disabled="isLocked || isRowLocked(scope.row)"
                 >编辑</el-button>
-                <el-popconfirm 
-                  title="确定删除这条记录吗？" 
-                  @confirm="handleDelete(scope.row.id)" 
+                <el-button 
+                  type="danger" 
+                  size="small" 
+                  link 
+                  @click="confirmDelete(scope.row)" 
                   :disabled="isLocked || isRowLocked(scope.row)"
-                >
-                  <template #reference>
-                    <el-button 
-                      type="danger" 
-                      size="small" 
-                      link 
-                      :disabled="isLocked || isRowLocked(scope.row)"
-                    >删除</el-button>
-                  </template>
-                </el-popconfirm>
+                >删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -591,13 +584,27 @@ const handleBatchDelete = async () => {
     await loadTableData()
   } catch(e) {
     if (e !== 'cancel') {
-        ElMessage.error(e.response?.data?.message || '操作失败')
+        ElMessage.error(e?.response?.data?.message || '操作失败')
     }
   }
 }
 
 const selectAllFiltered = () => {
   isSelectAllFiltered.value = true
+}
+
+const confirmDelete = async (row) => {
+  try {
+    await ElMessageBox.confirm('确定要删除这条记录吗？', '删除确认', {
+      confirmButtonText: '确定删除',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+    
+    await handleDelete(row.id)
+  } catch (e) {
+    // cancelled
+  }
 }
 
 const handleDelete = async (dataId) => {

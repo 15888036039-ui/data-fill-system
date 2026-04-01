@@ -73,4 +73,8 @@ public class DataFillForm {
     /** 数据库模式 (Schema) */
     @TableField("schema_name")
     private String schemaName;
+
+    /** 是否强制硬删除（系统硬删代替软删） */
+    @TableField("hard_delete")
+    private Boolean hardDelete;
 }

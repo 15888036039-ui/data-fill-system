@@ -148,8 +148,10 @@ public class DynamicDataDmlService {
         } else if (type.contains("int") || type.contains("numeric") || type.contains("decimal") || type.contains("real") || type.contains("double") || type.contains("float") || type.contains("serial") || type.equals("smallint") || type.equals("bigint")) {
             if (val instanceof String && !isStringEmpty) {
                 try {
-                    // Remove currency symbols, commas, percent signs before parsing to numeric
-                    String s = ((String) val).trim().replace(",", "").replace("$", "").replace("¥", "").replace("%", "");
+                    String s = ((String) val).trim();
+                    // Remove currency symbols, common thousand separators (comma, non-breaking space), percent signs, and all spaces
+                    s = s.replace(",", "").replace("$", "").replace("¥", "").replace("%", "").replaceAll("\\s+", "");
+                    
                     if (s.isEmpty() || s.equals("-") || s.equalsIgnoreCase("N/A") || s.equalsIgnoreCase("NA")) return val;
                     return new java.math.BigDecimal(s);
                 } catch (Exception ignored) {}
@@ -544,11 +546,13 @@ public class DynamicDataDmlService {
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         String fullTableName = schema + "." + form.getTableName();
         java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());
+        
+        boolean isHardDeleteMode = Boolean.TRUE.equals(form.getHardDelete());
 
         StringJoiner ps = new StringJoiner(",");
         for (int i = 0; i < dataIds.size(); i++) ps.add("?");
         
-        if (hasColumn(physicalColumns, "is_deleted")) {
+        if (hasColumn(physicalColumns, "is_deleted") && !isHardDeleteMode) {
             jdbcTemplate.update(String.format("UPDATE %s SET is_deleted=1 WHERE id IN (%s)", SqlUtil.quoteTable(fullTableName), ps), dataIds.toArray());
         } else {
             jdbcTemplate.update(String.format("DELETE FROM %s WHERE id IN (%s)", SqlUtil.quoteTable(fullTableName), ps), dataIds.toArray());
@@ -561,6 +565,8 @@ public class DynamicDataDmlService {
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         String fullTableName = schema + "." + form.getTableName();
         java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());
+        
+        boolean isHardDeleteMode = Boolean.TRUE.equals(form.getHardDelete());
 
         StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         List<Object> args = new ArrayList<>();
@@ -569,7 +575,7 @@ public class DynamicDataDmlService {
             args.add(operatorEmail);
         }
 
-        if (hasColumn(physicalColumns, "is_deleted")) {
+        if (hasColumn(physicalColumns, "is_deleted") && !isHardDeleteMode) {
             jdbcTemplate.update(String.format("UPDATE %s SET is_deleted=1 %s", SqlUtil.quoteTable(fullTableName), where), args.toArray());
         } else {
             jdbcTemplate.update(String.format("DELETE FROM %s %s", SqlUtil.quoteTable(fullTableName), where), args.toArray());

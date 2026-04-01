@@ -192,6 +192,9 @@ public class DynamicTableDdlService {
         if (form.getReminderTime() == null || form.getReminderTime().trim().isEmpty()) {
             form.setReminderTime("09:00");
         }
+        if (form.getHardDelete() == null) {
+            form.setHardDelete(false);
+        }
         form.setCreateTime(LocalDateTime.now());
         form.setUpdateTime(LocalDateTime.now());
         schedulerService.initOrRefreshDeadline(form, LocalDateTime.now());
@@ -602,6 +605,10 @@ public class DynamicTableDdlService {
 
         if (incoming.getSchemaName() != null) {
             exist.setSchemaName(incoming.getSchemaName());
+        }
+
+        if (incoming.getHardDelete() != null) {
+            exist.setHardDelete(incoming.getHardDelete());
         }
 
         // 1.7 [新增/修改逻辑]: 处理字段变更（支持新增列、修改中文名、重命名列、修改物理类型）

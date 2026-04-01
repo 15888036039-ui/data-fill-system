@@ -65,6 +65,7 @@ import net.sourceforge.pinyin4j.format.HanyuPinyinToneType;
 public class ExcelService {
     private static final Logger log = LoggerFactory.getLogger(ExcelService.class);
     private static final String EXCEL_ROW_META_KEY = "__excel_row_num__";
+    private static final java.util.regex.Pattern NUMBER_PATTERN = java.util.regex.Pattern.compile("^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$");
 
     private static final java.util.Set<String> EXISTING_TABLE_SYSTEM_COLUMNS = new java.util.HashSet<>(java.util.Arrays.asList(
             "id", "load_user", "w_insert_dt", "w_update_dt", "is_deleted", "extra_data", "job_instance"));
@@ -868,7 +869,13 @@ public class ExcelService {
                             }
                             vvObj = isDateColumn[vCol] ? vc.getDateCellValue() : vc.getNumericCellValue();
                         } else {
-                            vvObj = dataFormatter.formatCellValue(vc).trim();
+                            String s = dataFormatter.formatCellValue(vc).trim();
+                            // Handle formatted numbers like "1,875.00"
+                            if (s.contains(",") && s.replace(",", "").matches("-?\\d*\\.?\\d+")) {
+                                try { vvObj = new java.math.BigDecimal(s.replace(",", "")); } catch (Exception e) { vvObj = s; }
+                            } else {
+                                vvObj = s;
+                            }
                         }
                     }
                     if (kvStr != null && !kvStr.isEmpty() && vvObj != null && !"".equals(vvObj)) {
@@ -900,8 +907,13 @@ public class ExcelService {
                     } else if (type == org.apache.poi.ss.usermodel.CellType.FORMULA) {
                         try { val = cell.getStringCellValue(); } catch(Exception e) { val = cell.getNumericCellValue(); }
                     } else {
-                        val = dataFormatter.formatCellValue(cell);
-                        if(val != null) val = val.toString().trim();
+                        String s = dataFormatter.formatCellValue(cell).trim();
+                        // Handle formatted numbers like "1,875.00"
+                        if (s.contains(",") && s.replace(",", "").matches("-?\\d*\\.?\\d+")) {
+                            try { val = new java.math.BigDecimal(s.replace(",", "")); } catch (Exception e) { val = s; }
+                        } else {
+                            val = s;
+                        }
                     }
                     if (val != null && !"".equals(val)) {
                         empty = false;
@@ -946,7 +958,14 @@ public class ExcelService {
                         Object v = entry.getValue();
                         if (v == null) jsonSb.append("null");
                         else if (v instanceof Number || v instanceof Boolean) jsonSb.append(v.toString());
-                        else jsonSb.append("\"").append(v.toString().replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")).append("\"");
+                        else {
+                            String s = v.toString();
+                            if (NUMBER_PATTERN.matcher(s).matches()) {
+                                jsonSb.append(s);
+                            } else {
+                                jsonSb.append("\"").append(s.replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")).append("\"");
+                            }
+                        }
                     }
                     jsonSb.append("}");
                     rowData.put(exEntry.getKey(), jsonSb.toString());

@@ -75,6 +75,13 @@
                   <el-option label="停用（管理员可见）" value="DISABLED" />
                 </el-select>
               </el-form-item>
+              
+              <el-form-item label="用户数据删除方式" style="flex: 1" required>
+                <el-select v-model="formMeta.hardDelete" style="width: 100%">
+                  <el-option label="软删除 (标记为已删除，管理员可查)" :value="false" />
+                  <el-option label="彻底硬删除 (直接从库中移除，谨慎)" :value="true" />
+                </el-select>
+              </el-form-item>
             </div>
 
             <el-divider />
@@ -507,7 +514,8 @@ const formMeta = reactive({
   cycleDays: 0,
   fillUserEmails: '',
   kvConfig: '',
-  referenceTemplateConfig: ''
+  referenceTemplateConfig: '',
+  hardDelete: false
 })
 
 const fields = ref([

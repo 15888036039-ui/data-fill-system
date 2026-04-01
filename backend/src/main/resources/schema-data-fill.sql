@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS data_fill_form (
     fill_user_emails  TEXT,
     reference_template_config TEXT,
     creator         VARCHAR(100),
+    hard_delete     BOOLEAN DEFAULT FALSE,
 
     schema_name     VARCHAR(100) DEFAULT 'public',
     create_time     TIMESTAMP,
@@ -77,6 +78,9 @@ ALTER TABLE data_fill_form
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS schema_name VARCHAR(100) DEFAULT 'public';
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS hard_delete BOOLEAN DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS idx_data_fill_form_folder_id ON data_fill_form(folder_id);
 
