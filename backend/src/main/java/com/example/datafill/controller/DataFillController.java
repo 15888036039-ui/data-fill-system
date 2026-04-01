@@ -216,12 +216,16 @@ public class DataFillController {
         return formMapper.selectById(id);
     }
 
-    // [管理端核心]: 软删除表单及其物理表
+    // [管理端核心]: 删除表单模板（根据参数决定是重命名备份还是彻底删除物理表）
     @DeleteMapping("/forms/{id}")
-    public String deleteFormAndTable(@PathVariable String id, @RequestParam String userEmail) {
+    public String deleteFormAndTable(
+            @PathVariable String id, 
+            @RequestParam String userEmail,
+            @RequestParam(required = false, defaultValue = "false") boolean dropTable) {
         assertAdmin(userEmail);
-        tableDdlService.deleteFormAndTable(id);
-        recordLog(id, userEmail, "DELETE_FORM", "删除了表单及其物理表");
+        tableDdlService.deleteFormAndTable(id, dropTable);
+        String logDesc = dropTable ? "彻底删除了表单及其物理表(DROP)" : "删除了表单及其物理表(RENAME备份)";
+        recordLog(id, userEmail, "DELETE_FORM", logDesc);
         return "success";
     }
 

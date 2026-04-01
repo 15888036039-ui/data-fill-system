@@ -501,29 +501,36 @@ public class DynamicTableDdlService {
      */
 
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
-    public void deleteFormAndTable(String formId) {
+    public void deleteFormAndTable(String formId, boolean dropTable) {
         DataFillForm form = formMapper.selectById(formId);
         if (form == null) return;
 
-        // 仅当“非外部绑定表”时，才尝试对物理表执行重命名备份
+        // 仅当“非外部绑定表”时，才尝试对物理表执行相关删除/备份操作
         boolean isExt = (form.getIsExternal() != null && form.getIsExternal());
         
         if (!isExt) {
+            String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
+            String fullTable = schema + "." + form.getTableName();
+            
             try {
-                String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
                 if (physicalTableExists(schema, form.getTableName())) {
-                    long timestamp = System.currentTimeMillis();
-                    String newTableName = SqlUtil.extractTable(form.getTableName()) + "_del_" + timestamp;
-                    log.info("检测到表单 {} 为系统创建，正在将物理表 {} 重命名为 {} 以释放空间并保留备份", form.getName(), form.getTableName(), newTableName);
-                    jdbcTemplate.execute("ALTER TABLE " + SqlUtil.quoteTable(schema + "." + form.getTableName()) + " RENAME TO \"" + newTableName + "\"");
+                    if (dropTable) {
+                        log.info("检测到表单 {} 为系统创建，且管理员要求彻底销毁，执行 DROP TABLE {}", form.getName(), fullTable);
+                        jdbcTemplate.execute("DROP TABLE " + SqlUtil.quoteTable(fullTable));
+                    } else {
+                        long timestamp = System.currentTimeMillis();
+                        String newTableName = SqlUtil.extractTable(form.getTableName()) + "_del_" + timestamp;
+                        log.info("检测到表单 {} 为系统创建，执行表重命名备份 {} -> {}", form.getName(), fullTable, newTableName);
+                        jdbcTemplate.execute("ALTER TABLE " + SqlUtil.quoteTable(fullTable) + " RENAME TO \"" + newTableName + "\"");
+                    }
                 } else {
-                    log.warn("物理表 {} 不存在，跳过重命名步骤", form.getTableName());
+                    log.warn("物理表 {} 不存在，跳过物理删除/备份步骤", fullTable);
                 }
             } catch (Exception e) {
-                log.error("物理表重命名失败: {}", form.getTableName(), e);
+                log.error("操作物理表 {} 失败", fullTable, e);
             }
         } else {
-            log.info("检测到表单 {} 为外部绑定表，仅删除元数据，不操作物理表 {}", form.getName(), form.getTableName());
+            log.info("检测到表单 {} 为外部绑定表，仅删除元数据，不触碰物理表", form.getName());
         }
 
         // 删除元数据记录

@@ -179,7 +179,7 @@
                     <template #dropdown>
                       <el-dropdown-menu>
                         <el-dropdown-item @click="openMoveDialog(scope.row)">移动目录</el-dropdown-item>
-                        <el-dropdown-item divided @click="handleDeleteForm(scope.row.id)" style="color: #f56c6c">删除模板</el-dropdown-item>
+                        <el-dropdown-item divided @click="handleDeleteForm(scope.row)" style="color: #f56c6c">删除模板</el-dropdown-item>
                       </el-dropdown-menu>
                     </template>
                   </el-dropdown>
@@ -252,6 +252,32 @@
         <el-button type="primary" @click="confirmBatchMove">确认移动</el-button>
       </template>
     </el-dialog>
+ 
+    <!-- 彻底销毁确认弹窗 -->
+    <el-dialog v-model="deleteDialogVisible" title="确认删除模板" width="420px" class="delete-dialog">
+      <div class="delete-dialog-body">
+        <div class="delete-warning">
+          <el-icon class="warning-icon"><WarningFilled /></el-icon>
+          <div class="warning-text">确定要删除模板“{{ deletingForm?.name }}”吗？</div>
+        </div>
+        <div class="delete-hint">删除后，该模板将从列表中移除，用户无法再填报。</div>
+        
+        <div v-if="!deletingForm?.isExternal" class="delete-option-area">
+          <el-checkbox v-model="shouldDropTable">
+            <span class="option-label">同时彻底销毁物理表及所有数据</span>
+          </el-checkbox>
+          <div class="option-desc">勾选后执行 DROP TABLE，数据将不可恢复。不勾选则仅执行重命名备份。</div>
+        </div>
+        <div v-else class="delete-info-area">
+          <el-icon><InfoFilled /></el-icon>
+          <span>当前为外部绑定表，删除模板不会影响原始表。</span>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="deleteDialogVisible = false">取消</el-button>
+        <el-button type="danger" :loading="deleteLoading" @click="confirmDeleteForm">确认删除</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -259,7 +285,7 @@
 import { ref, onMounted, onBeforeUnmount, inject, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Document, Folder, Timer, User } from '@element-plus/icons-vue'
+import { Document, Folder, Timer, User, WarningFilled, InfoFilled } from '@element-plus/icons-vue'
 import axios from 'axios'
 
 const route = useRoute()
@@ -283,6 +309,10 @@ const movingForm = ref(null)
 const moveTargetFolderId = ref('')
 const batchMoveTargetFolderId = ref('')
 const selectedFormIds = ref([])
+const deleteDialogVisible = ref(false)
+const deleteLoading = ref(false)
+const deletingForm = ref(null)
+const shouldDropTable = ref(false)
 const contextMenu = ref({
   visible: false,
   x: 0,
@@ -641,13 +671,29 @@ const handleFolderDrop = async (draggingNode, dropNode, dropType) => {
   }
 }
 
-const handleDeleteForm = async (id) => {
+const handleDeleteForm = (form) => {
+  deletingForm.value = form
+  shouldDropTable.value = false
+  deleteDialogVisible.value = true
+}
+
+const confirmDeleteForm = async () => {
+  if (!deletingForm.value) return
+  deleteLoading.value = true
   try {
-    await axios.delete(`/api/fill/forms/${id}`, { params: { userEmail: currentUser.value } })
-    ElMessage.success('模板及物理表已永久删除')
+    await axios.delete(`/api/fill/forms/${deletingForm.value.id}`, { 
+      params: { 
+        userEmail: currentUser.value,
+        dropTable: shouldDropTable.value
+      } 
+    })
+    ElMessage.success('模板已成功删除')
+    deleteDialogVisible.value = false
     await Promise.all([loadFolders(), loadForms()])
   } catch (e) {
     ElMessage.error(e.response?.data?.message || '删除操作失败')
+  } finally {
+    deleteLoading.value = false
   }
 }
 
@@ -1002,5 +1048,83 @@ onBeforeUnmount(() => {
     flex-direction: column;
     align-items: flex-start;
   }
+}
+/* 彻底销毁确认弹窗样式 */
+.delete-dialog-body {
+  padding: 10px 4px;
+}
+
+.delete-warning {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.warning-icon {
+  font-size: 24px;
+  color: #f56c6c;
+}
+
+.warning-text {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.delete-hint {
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 20px;
+  padding-left: 36px;
+}
+
+.delete-option-area {
+  margin-left: 36px;
+  padding: 12px 16px;
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  border-radius: 8px;
+}
+
+.delete-info-area {
+  margin-left: 36px;
+  padding: 12px 16px;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #0369a1;
+}
+
+.option-label {
+  font-weight: 600;
+  color: #991b1b;
+}
+
+.option-desc {
+  font-size: 12px;
+  color: #b91c1c;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+:deep(.delete-dialog .el-dialog__header) {
+  margin-right: 0;
+  border-bottom: 1px solid #f1f5f9;
+  padding: 16px 20px;
+}
+
+:deep(.delete-dialog .el-dialog__title) {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+:deep(.delete-dialog .el-dialog__footer) {
+  border-top: 1px solid #f1f5f9;
+  padding: 12px 20px;
 }
 </style>
