@@ -119,7 +119,7 @@
             @selection-change="handleSelectionChange"
           >
             <el-table-column v-if="isAdmin" type="selection" width="48" align="center" />
-            <el-table-column prop="name" label="模板名称" min-width="200" show-overflow-tooltip>
+            <el-table-column prop="name" label="模板名称" min-width="250" show-overflow-tooltip>
               <template #default="scope">
                 <div class="form-name-cell">
                   <el-icon class="form-icon"><Document /></el-icon>
@@ -128,19 +128,19 @@
               </template>
             </el-table-column>
             
-            <el-table-column prop="folderId" label="所属目录" width="120" show-overflow-tooltip>
+            <el-table-column prop="folderId" label="所属目录" width="160" show-overflow-tooltip>
               <template #default="scope">
                 <span class="folder-path-text">{{ resolveFolderPath(scope.row.folderId) }}</span>
               </template>
             </el-table-column>
             
-            <el-table-column prop="tableName" label="物理表名" width="160" show-overflow-tooltip>
+            <el-table-column prop="tableName" label="物理表名" width="200" show-overflow-tooltip>
               <template #default="scope">
                 <code class="table-code">{{ scope.row.tableName }}</code>
               </template>
             </el-table-column>
  
-            <el-table-column prop="status" label="状态" width="85" align="center">
+            <el-table-column prop="status" label="状态" width="100" align="center">
               <template #default="scope">
                 <el-tag
                   :type="scope.row.status === 'ACTIVE' ? 'success' : (scope.row.status === 'EXPIRED' ? 'danger' : 'info')"
@@ -153,7 +153,7 @@
               </template>
             </el-table-column>
  
-            <el-table-column prop="deadline" label="截止时间" width="140">
+            <el-table-column prop="deadline" label="截止时间" width="150">
               <template #default="scope">
                 <div class="time-cell">
                   <span>{{ scope.row.deadline ? new Date(scope.row.deadline).toLocaleDateString() : '长期有效' }}</span>
@@ -161,7 +161,7 @@
               </template>
             </el-table-column>
  
-            <el-table-column prop="creator" label="创建人" width="100" show-overflow-tooltip>
+            <el-table-column prop="creator" label="创建人" width="150" show-overflow-tooltip>
               <template #default="scope">
                 <span class="time-muted">{{ scope.row.creator || 'admin' }}</span>
               </template>
@@ -401,6 +401,7 @@ const loadFolders = async () => {
   try {
     const params = {}
     if (currentUser.value) params.userEmail = currentUser.value
+    if (route.query.groupTag) params.groupTag = route.query.groupTag
     const res = await axios.get('/api/fill/folders/tree', { params })
     folderTree.value = res.data || []
   } catch (e) {
@@ -417,6 +418,7 @@ const loadForms = async () => {
     const params = {}
     if (currentUser.value) params.userEmail = currentUser.value
     if (selectedFolderId.value) params.folderId = selectedFolderId.value
+    if (route.query.groupTag) params.groupTag = route.query.groupTag
     const res = await axios.get('/api/fill/forms', { params })
     forms.value = res.data || []
     currentPage.value = 1

@@ -66,6 +66,12 @@
                 />
               </el-select>
             </el-form-item>
+            <el-form-item label="分组标识 (Group Tag)">
+              <el-input
+                v-model="formMeta.groupTag"
+                placeholder="例如: link_a (用于多链接展示过滤)"
+              />
+            </el-form-item>
             
             <div class="form-row">
               <el-form-item label="运营状态" style="flex: 1">
@@ -256,7 +262,7 @@
                 </el-table-column>
                 <el-table-column label="筛选" width="80" align="center">
                   <template #default="scope">
-                    <el-switch v-model="scope.row.filterable" :disabled="isEditMode" />
+                    <el-switch v-model="scope.row.filterable" />
                   </template>
                 </el-table-column>
                 <el-table-column label="操作" width="80" align="center">
@@ -515,7 +521,8 @@ const formMeta = reactive({
   fillUserEmails: '',
   kvConfig: '',
   referenceTemplateConfig: '',
-  hardDelete: false
+  hardDelete: false,
+  groupTag: ''
 })
 
 const fields = ref([

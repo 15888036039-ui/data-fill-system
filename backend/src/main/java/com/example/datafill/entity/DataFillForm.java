@@ -77,4 +77,8 @@ public class DataFillForm {
     /** 是否强制硬删除（系统硬删代替软删） */
     @TableField("hard_delete")
     private Boolean hardDelete;
+
+    /** 分组标识（用于分链接展示，如 link_a, link_b） */
+    @TableField("group_tag")
+    private String groupTag;
 }

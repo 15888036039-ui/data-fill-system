@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS data_fill_form (
     hard_delete     BOOLEAN DEFAULT FALSE,
 
     schema_name     VARCHAR(100) DEFAULT 'public',
+    group_tag       VARCHAR(255),
     create_time     TIMESTAMP,
     update_time     TIMESTAMP
 );
@@ -81,6 +82,9 @@ ALTER TABLE data_fill_form
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS hard_delete BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS group_tag VARCHAR(255);
 
 CREATE INDEX IF NOT EXISTS idx_data_fill_form_folder_id ON data_fill_form(folder_id);
 

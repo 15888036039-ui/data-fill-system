@@ -103,9 +103,14 @@ public class DataFillController {
     @GetMapping("/forms")
     public List<DataFillForm> getForms(
             @RequestParam(required = false) String userEmail,
-            @RequestParam(required = false) String folderId) {
+            @RequestParam(required = false) String folderId,
+            @RequestParam(required = false) String groupTag) {
         boolean isAdmin = isUserAdmin(userEmail);
-        List<DataFillForm> allForms = formMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DataFillForm>().orderByDesc("create_time"));
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DataFillForm> qw = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DataFillForm>().orderByDesc("create_time");
+        if (groupTag != null && !groupTag.trim().isEmpty()) {
+            qw.eq("group_tag", groupTag.trim());
+        }
+        List<DataFillForm> allForms = formMapper.selectList(qw);
         List<DataFillForm> visibleForms;
         if (isAdmin || (userEmail == null || userEmail.isBlank())) {
             visibleForms = allForms;
@@ -136,9 +141,14 @@ public class DataFillController {
 
     @GetMapping("/folders/tree")
     public List<com.example.datafill.dto.DataFillFolderNode> getFolderTree(
-            @RequestParam(required = false) String userEmail) {
+            @RequestParam(required = false) String userEmail,
+            @RequestParam(required = false) String groupTag) {
         boolean isAdmin = isUserAdmin(userEmail);
-        List<DataFillForm> allForms = formMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DataFillForm>().orderByDesc("create_time"));
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DataFillForm> qw = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DataFillForm>().orderByDesc("create_time");
+        if (groupTag != null && !groupTag.trim().isEmpty()) {
+            qw.eq("group_tag", groupTag.trim());
+        }
+        List<DataFillForm> allForms = formMapper.selectList(qw);
         List<DataFillForm> visibleForms = allForms.stream()
                 .filter(form -> canUserAccessForm(form, userEmail, isAdmin))
                 .toList();

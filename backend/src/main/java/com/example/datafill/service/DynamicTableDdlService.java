@@ -611,6 +611,10 @@ public class DynamicTableDdlService {
             exist.setHardDelete(incoming.getHardDelete());
         }
 
+        if (incoming.getGroupTag() != null || incoming.getGroupTag() == null) {
+            exist.setGroupTag(incoming.getGroupTag());
+        }
+
         // 1.7 [新增/修改逻辑]: 处理字段变更（支持新增列、修改中文名、重命名列、修改物理类型）
         if (incoming.getForms() != null) {
             try {
