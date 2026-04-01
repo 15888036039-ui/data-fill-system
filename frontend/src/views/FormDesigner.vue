@@ -804,11 +804,12 @@ const inspectExistingTable = async () => {
       }
     })
     
-    if (res.data && res.data.length > 0) {
-      fields.value = res.data.map(f => ({
+    // 后端返回的是 ExcelParseResult 对象，其 fields 属性才是字段数组
+    if (res.data && res.data.fields && res.data.fields.length > 0) {
+      fields.value = res.data.fields.map(f => ({
         ...f,
-        required: false,
-        filterable: false,
+        required: f.required || false,
+        filterable: f.filterable || false,
         systemLocked: isSystemManagedField(f)
       }))
       
@@ -817,6 +818,8 @@ const inspectExistingTable = async () => {
       bindExistingTableMode.value = true
       existingTableDialogVisible.value = false
       ElMessage.success('已识别已有表结构，发布时将直接绑定该表')
+    } else {
+      ElMessage.warning('未识别到该表的业务字段')
     }
   } catch (e) {
     ElMessage.error(e.response?.data?.message || '读取已有表结构失败')

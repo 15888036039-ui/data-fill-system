@@ -1834,19 +1834,22 @@ public class ExcelService {
         return result;
     }
 
-    public com.example.datafill.dto.ExcelParseResult inspectExistingTable(String tableName) {
+    public com.example.datafill.dto.ExcelParseResult inspectExistingTable(String schemaName, String tableName) {
         if (tableName == null || tableName.trim().isEmpty()) {
             throw new RuntimeException("物理表名不能为空");
         }
         if (!tableName.matches("^[a-zA-Z0-9_]+$")) {
             throw new RuntimeException("物理表名只能包含字母、数字和下划线");
         }
+        if (schemaName == null || schemaName.trim().isEmpty()) {
+            schemaName = "public";
+        }
 
         String existenceSql = "SELECT COUNT(1) FROM information_schema.tables " +
-                "WHERE table_schema = current_schema() AND table_name = ?";
-        Integer tableCount = jdbcTemplate.queryForObject(existenceSql, Integer.class, tableName);
+                "WHERE table_schema = ? AND table_name = ?";
+        Integer tableCount = jdbcTemplate.queryForObject(existenceSql, Integer.class, schemaName, tableName);
         if (tableCount == null || tableCount <= 0) {
-            throw new RuntimeException("指定的物理表不存在: " + tableName);
+            throw new RuntimeException("指定的物理表不存在: " + schemaName + "." + tableName);
         }
 
         String sql = "SELECT c.ordinal_position, c.column_name, c.data_type, c.udt_name, " +
@@ -1856,12 +1859,12 @@ public class ExcelService {
                 "LEFT JOIN pg_catalog.pg_class cls ON cls.relname = c.table_name " +
                 "LEFT JOIN pg_catalog.pg_namespace ns ON ns.oid = cls.relnamespace AND ns.nspname = c.table_schema " +
                 "LEFT JOIN pg_catalog.pg_description pgd ON pgd.objoid = cls.oid AND pgd.objsubid = c.ordinal_position " +
-                "WHERE c.table_schema = current_schema() AND c.table_name = ? " +
+                "WHERE c.table_schema = ? AND c.table_name = ? " +
                 "ORDER BY c.ordinal_position";
 
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, tableName);
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, schemaName, tableName);
         if (rows.isEmpty()) {
-            throw new RuntimeException("未读取到表字段: " + tableName);
+            throw new RuntimeException("未读取到表字段: " + schemaName + "." + tableName);
         }
 
         List<FieldDef> fields = new ArrayList<>();

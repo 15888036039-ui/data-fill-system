@@ -552,6 +552,7 @@ const submitData = async (formDataVal) => {
     
     isFilling.value = false
     await loadTableData()
+    loadFilterOptions()
   } catch (e) {
     ElMessage.error(e.response?.data?.message || '操作失败，请重试')
   }
@@ -643,6 +644,7 @@ const handleImportSuccess = (response) => {
   if (response.success) {
     ElMessage.success(`成功导入 ${response.count} 条记录`)
     loadTableData()
+    loadFilterOptions()
   } else {
     ElMessage.error(response.message || '导入失败，请检查文件格式')
   }

@@ -21,6 +21,7 @@ import java.util.*;
 @Service
 @RequiredArgsConstructor
 public class DynamicDataDmlService {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(DynamicDataDmlService.class);
 
     private final DataFillFormMapper formMapper;
 
@@ -35,10 +36,19 @@ public class DynamicDataDmlService {
     private static final java.util.Set<String> SYSTEM_FIELDS = new java.util.HashSet<>(Arrays.asList(
         "id", "load_user", "creator", "w_insert_dt", "w_update_dt", 
         "create_time", "update_time", "is_deleted", "extra_data", "job_instance",
-        "applicantemail", "applicantname", "applicant_email", "applicant_name"
+        "applicantemail", "applicantname", "applicant_email", "applicant_name",
+        "ctime", "mtime", "created_at", "updated_at"
     ));
 
-    private java.util.Set<String> loadPhysicalColumns(String schema, String table) {
+    private static final java.util.Set<String> CREATION_FIELDS = new java.util.HashSet<>(Arrays.asList(
+        "w_insert_dt", "create_time", "ctime", "created_at"
+    ));
+
+    private static final java.util.Set<String> UPDATE_FIELDS = new java.util.HashSet<>(Arrays.asList(
+        "w_update_dt", "update_time", "mtime", "updated_at"
+    ));
+
+    private java.util.Map<String, String> loadPhysicalColumns(String schema, String table) {
         if (schema == null || schema.trim().isEmpty()) {
             schema = SqlUtil.extractSchema(table);
             if (schema == null) {
@@ -47,36 +57,106 @@ public class DynamicDataDmlService {
             table = SqlUtil.extractTable(table);
         }
         
-        List<String> columns = jdbcTemplate.queryForList("SELECT column_name FROM " + "information_schema.columns" + " WHERE table_schema = ? AND table_name = ?", String.class, schema, table);
-        java.util.Set<String> result = new java.util.HashSet<>();
-        for (String column : columns) {
-            if (column != null) {
-                result.add(column.toLowerCase());
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+            "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = ? AND table_name = ?",
+            schema, table
+        );
+        java.util.Map<String, String> result = new java.util.HashMap<>();
+        for (Map<String, Object> row : rows) {
+            String name = (String) row.get("column_name");
+            String type = (String) row.get("data_type");
+            if (name != null) {
+                result.put(name.toLowerCase(), type != null ? type.toLowerCase() : "text");
             }
         }
         return result;
     }
 
-    private boolean hasColumn(java.util.Set<String> physicalColumns, String columnName) {
-        return physicalColumns.contains(columnName.toLowerCase());
+    private boolean hasColumn(java.util.Map<String, String> physicalColumns, String columnName) {
+        return columnName != null && physicalColumns.containsKey(columnName.toLowerCase());
     }
 
-    private String resolvePhysicalColumn(java.util.Set<String> physicalColumns, String configuredColumn) {
+    private String resolvePhysicalColumn(java.util.Map<String, String> physicalColumns, String configuredColumn) {
         if (configuredColumn == null) return null;
         String raw = configuredColumn.trim();
         if (raw.isEmpty()) return null;
         String lower = raw.toLowerCase();
-        if (physicalColumns.contains(lower)) return lower;
+        if (physicalColumns.containsKey(lower)) return lower;
 
         String normalized = raw
                 .replaceAll("([a-z0-9])([A-Z])", "$1_$2")
                 .replaceAll("[\\s\\-]+", "_")
                 .replaceAll("[^a-zA-Z0-9_]", "")
                 .toLowerCase();
-        if (!normalized.trim().isEmpty() && physicalColumns.contains(normalized)) {
+        if (!normalized.trim().isEmpty() && physicalColumns.containsKey(normalized)) {
             return normalized;
         }
         return null;
+    }
+
+    private Object convertValueForDb(Object val, String dbType) {
+        if (val == null) return null;
+        if (dbType == null) return val;
+        String type = dbType.toLowerCase();
+
+        boolean isStringEmpty = val instanceof String && ((String) val).trim().isEmpty();
+        if (isStringEmpty && !type.contains("text") && !type.contains("char") && !type.contains("json")) {
+            return null; // Prevent casting empty strings to numeric, timestamp, uuid, etc.
+        }
+        
+        if (type.contains("timestamp") || type.contains("date")) {
+            if (val instanceof String && !isStringEmpty) {
+                String s = ((String) val).trim();
+                // Handle common date formats like 20260315 or 2026-03-15
+                if (s.matches("\\d{8}")) {
+                    s = s.substring(0, 4) + "-" + s.substring(4, 6) + "-" + s.substring(6, 8);
+                }
+                try {
+                    if (s.contains(" ") || s.contains("T")) {
+                        return java.sql.Timestamp.valueOf(s.replace("T", " "));
+                    } else {
+                        // If it's just a date, add time or use Date.valueOf
+                        if (type.contains("timestamp")) {
+                            return java.sql.Timestamp.valueOf(s + " 00:00:00");
+                        } else {
+                            return java.sql.Date.valueOf(s);
+                        }
+                    }
+                } catch (Exception e) {
+                    return val; // Fallback to original
+                }
+            }
+        } else if (type.contains("time") && !type.contains("timestamp")) {
+            if (val instanceof String && !isStringEmpty) {
+                String s = ((String) val).trim();
+                try {
+                    if (s.length() == 5) s += ":00"; // Handle HH:mm -> HH:mm:ss
+                    return java.sql.Time.valueOf(s);
+                } catch (Exception e) {
+                    return val;
+                }
+            }
+        } else if (type.contains("uuid")) {
+            if (val instanceof String && !isStringEmpty) {
+                try {
+                    return java.util.UUID.fromString(((String) val).trim());
+                } catch (Exception ignored) {}
+            }
+        } else if (type.contains("int") || type.contains("numeric") || type.contains("decimal") || type.contains("real") || type.contains("double") || type.contains("float") || type.contains("serial") || type.equals("smallint") || type.equals("bigint")) {
+            if (val instanceof String && !isStringEmpty) {
+                try {
+                    // Remove currency symbols, commas, percent signs before parsing to numeric
+                    String s = ((String) val).trim().replace(",", "").replace("$", "").replace("¥", "").replace("%", "");
+                    return new java.math.BigDecimal(s);
+                } catch (Exception ignored) {}
+            }
+        } else if (type.contains("boolean") || type.contains("bool")) {
+            if (val instanceof String) {
+                String s = ((String) val).toLowerCase().trim();
+                return "true".equals(s) || "1".equals(s) || "yes".equals(s) || "t".equals(s) || "on".equals(s);
+            }
+        }
+        return val;
     }
 
     private void putFilterOptions(Map<String, List<String>> result, String configuredCol, String physicalCol, List<String> values) {
@@ -116,7 +196,7 @@ public class DynamicDataDmlService {
         String tableName = form.getTableName();
         String fullTableName = schema + "." + tableName;
 
-        java.util.Set<String> physicalColumns = loadPhysicalColumns(schema, tableName);
+        java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, tableName);
         List<String> columns = new ArrayList<>();
         List<String> placeholders = new ArrayList<>();
         List<Object> args = new ArrayList<>();
@@ -135,40 +215,40 @@ public class DynamicDataDmlService {
             args.add(loadUser);
         }
 
-        if (hasColumn(physicalColumns, "w_insert_dt")) {
-            columns.add("\"w_insert_dt\"");
-            placeholders.add("?");
-            args.add(now);
-        }
-        if (hasColumn(physicalColumns, "w_update_dt")) {
-            columns.add("\"w_update_dt\"");
-            placeholders.add("?");
-            args.add(now);
-        }
-
-        java.util.Set<String> jsonbCols = new java.util.HashSet<>();
-        if (hasColumn(physicalColumns, "extra_data")) jsonbCols.add("extra_data");
-        try {
-            List<FieldDef> fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
-            for (FieldDef f : fields) {
-                if ("JSONB".equalsIgnoreCase(f.getDbType()) || (f.getColumnName() != null && f.getColumnName().toLowerCase().endsWith("_json"))) {
-                    jsonbCols.add(f.getColumnName().toLowerCase());
-                }
+        for (String col : CREATION_FIELDS) {
+            if (hasColumn(physicalColumns, col)) {
+                columns.add("\"" + col + "\"");
+                placeholders.add("?");
+                args.add(now);
             }
-        } catch (Exception ignored) {}
+        }
+        for (String col : UPDATE_FIELDS) {
+            if (hasColumn(physicalColumns, col)) {
+                columns.add("\"" + col + "\"");
+                placeholders.add("?");
+                args.add(now);
+            }
+        }
 
         for (Map.Entry<String, Object> entry : rowData.entrySet()) {
             String key = entry.getKey();
-            if (SYSTEM_FIELDS.contains(key.toLowerCase())) continue;
+            if (SYSTEM_FIELDS.contains(key.toLowerCase()) || !hasColumn(physicalColumns, key)) continue;
+            
+            String colType = physicalColumns.get(key.toLowerCase());
             columns.add("\"" + key + "\"");
             Object val = entry.getValue();
-            placeholders.add("?");
-            if (jsonbCols.contains(key.toLowerCase()) && val != null) {
+            val = convertValueForDb(val, colType);
+            
+            // 使用 CAST(? AS ...) 系统化处理 PostgreSQL 类型
+            if (colType != null && !colType.equals("text") && !colType.equals("character varying")) {
+                placeholders.add(String.format("CAST(? AS %s)", colType));
+            } else {
+                placeholders.add("?");
+            }
+            
+            if (val != null && (key.toLowerCase().endsWith("_json") || key.toLowerCase().equals("extra_data") || "jsonb".equalsIgnoreCase(colType) || "json".equalsIgnoreCase(colType))) {
                 try {
-                    org.postgresql.util.PGobject pgObj = new org.postgresql.util.PGobject();
-                    pgObj.setType("jsonb");
-                    pgObj.setValue(val instanceof String ? (String)val : objectMapper.writeValueAsString(val));
-                    val = pgObj;
+                    val = val instanceof String ? (String)val : objectMapper.writeValueAsString(val);
                 } catch (Exception ignored) {}
             }
             args.add(val);
@@ -194,7 +274,7 @@ public class DynamicDataDmlService {
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         String tableName = form.getTableName();
         String fullTableName = schema + "." + tableName;
-        java.util.Set<String> physicalColumns = loadPhysicalColumns(schema, tableName);
+        java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, tableName);
         LocalDateTime now = LocalDateTime.now();
 
         List<FieldDef> fields;
@@ -204,8 +284,12 @@ public class DynamicDataDmlService {
 
         List<String> columns = new ArrayList<>();
         if (hasColumn(physicalColumns, "id")) columns.add("\"id\"");
-        if (hasColumn(physicalColumns, "w_insert_dt")) columns.add("\"w_insert_dt\"");
-        if (hasColumn(physicalColumns, "w_update_dt")) columns.add("\"w_update_dt\"");
+        for (String col : CREATION_FIELDS) {
+            if (hasColumn(physicalColumns, col)) columns.add("\"" + col + "\"");
+        }
+        for (String col : UPDATE_FIELDS) {
+            if (hasColumn(physicalColumns, col)) columns.add("\"" + col + "\"");
+        }
         if (hasColumn(physicalColumns, "load_user")) columns.add("\"load_user\"");
 
         List<String> dataColumns = new ArrayList<>();
@@ -229,13 +313,20 @@ public class DynamicDataDmlService {
                     for (Map<String, Object> row : rows) {
                         StringBuilder tsv = new StringBuilder();
                         if (hasColumn(physicalColumns, "id")) appendTsv(tsv, java.util.UUID.randomUUID().toString().replace("-", ""));
-                        if (hasColumn(physicalColumns, "w_insert_dt")) appendTsv(tsv, now);
-                        if (hasColumn(physicalColumns, "w_update_dt")) appendTsv(tsv, now);
+                        for (String col : CREATION_FIELDS) {
+                            if (hasColumn(physicalColumns, col)) appendTsv(tsv, now);
+                        }
+                        for (String col : UPDATE_FIELDS) {
+                            if (hasColumn(physicalColumns, col)) appendTsv(tsv, now);
+                        }
                         if (hasColumn(physicalColumns, "load_user")) appendTsv(tsv, row.get("load_user") != null ? row.get("load_user") : row.get("creator"));
 
                         for (String col : dataColumns) {
                             Object val = row.get(col);
-                            if (val != null && (col.toLowerCase().endsWith("_json") || col.toLowerCase().equals("extra_data"))) {
+                            String colType = physicalColumns.get(col.toLowerCase());
+                            val = convertValueForDb(val, colType);
+                            
+                            if (val != null && (col.toLowerCase().endsWith("_json") || col.toLowerCase().equals("extra_data") || "jsonb".equalsIgnoreCase(colType) || "json".equalsIgnoreCase(colType))) {
                                 try { val = val instanceof String ? (String)val : objectMapper.writeValueAsString(val); } catch (Exception ignored) {}
                             }
                             appendTsv(tsv, val);
@@ -267,6 +358,12 @@ public class DynamicDataDmlService {
             String s;
             if (val instanceof LocalDateTime) {
                 s = ((LocalDateTime)val).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            } else if (val instanceof java.sql.Time) {
+                s = val.toString(); // HH:mm:ss
+            } else if (val instanceof java.sql.Date) {
+                s = val.toString(); // yyyy-MM-dd
+            } else if (val instanceof java.sql.Timestamp) {
+                s = val.toString(); // yyyy-MM-dd HH:mm:ss.xxx
             } else if (val instanceof Double || val instanceof Float || val instanceof java.math.BigDecimal) {
                 // 使用 BigDecimal 转为 plain string，移除科学计数法 (如 2.0260315E7 -> 20260315)
                 s = new java.math.BigDecimal(val.toString()).stripTrailingZeros().toPlainString();
@@ -291,7 +388,7 @@ public class DynamicDataDmlService {
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         String tableName = form.getTableName();
         String fullTableName = schema + "." + tableName;
-        java.util.Set<String> physicalColumns = loadPhysicalColumns(schema, tableName);
+        java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, tableName);
 
         StringJoiner sets = new StringJoiner(",");
         List<Object> args = new ArrayList<>();
@@ -299,19 +396,29 @@ public class DynamicDataDmlService {
         for (Map.Entry<String, Object> entry : rowData.entrySet()) {
             String key = entry.getKey();
             if (SYSTEM_FIELDS.contains(key.toLowerCase()) || !hasColumn(physicalColumns, key)) continue;
-            sets.add("\"" + key + "\" = ?");
+            
+            String colType = physicalColumns.get(key.toLowerCase());
             Object val = entry.getValue();
-            if ((key.toLowerCase().endsWith("_json") || key.toLowerCase().equals("extra_data")) && val != null) {
+            val = convertValueForDb(val, colType);
+            
+            if (colType != null && !colType.equals("text") && !colType.equals("character varying")) {
+                sets.add(String.format("\"%s\" = CAST(? AS %s)", key, colType));
+            } else {
+                sets.add("\"" + key + "\" = ?");
+            }
+            
+            if (val != null && (key.toLowerCase().endsWith("_json") || key.toLowerCase().equals("extra_data") || "jsonb".equalsIgnoreCase(colType) || "json".equalsIgnoreCase(colType))) {
                 try {
-                    org.postgresql.util.PGobject pgObj = new org.postgresql.util.PGobject();
-                    pgObj.setType("jsonb");
-                    pgObj.setValue(val instanceof String ? (String)val : objectMapper.writeValueAsString(val));
-                    val = pgObj;
+                    val = val instanceof String ? (String)val : objectMapper.writeValueAsString(val);
                 } catch (Exception ignored) {}
             }
             args.add(val);
         }
-        if (hasColumn(physicalColumns, "w_update_dt")) sets.add("\"w_update_dt\" = CURRENT_TIMESTAMP");
+        for (String col : UPDATE_FIELDS) {
+            if (hasColumn(physicalColumns, col)) {
+                sets.add("\"" + col + "\" = CURRENT_TIMESTAMP");
+            }
+        }
 
         if (sets.length() > 0) {
             args.add(dataId);
@@ -323,7 +430,7 @@ public class DynamicDataDmlService {
         DataFillForm form = formMapper.selectById(formId);
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         String fullTableName = schema + "." + form.getTableName();
-        java.util.Set<String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());
+        java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());
 
         StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         List<Object> args = new ArrayList<>();
@@ -357,20 +464,51 @@ public class DynamicDataDmlService {
 
     public Map<String, List<String>> getFilterOptions(String formId, String operatorEmail, boolean isAdmin) {
         DataFillForm form = formMapper.selectById(formId);
+        if (form == null) return Collections.emptyMap();
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         String fullTableName = schema + "." + form.getTableName();
-        java.util.Set<String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());
+        java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());
 
         Map<String, List<String>> res = new LinkedHashMap<>();
         try {
             List<FieldDef> fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
-            for (FieldDef f : fields) {
-                if (Boolean.TRUE.equals(f.getFilterable()) && hasColumn(physicalColumns, f.getColumnName())) {
-                    List<String> options = jdbcTemplate.queryForList("SELECT DISTINCT CAST(\"" + f.getColumnName() + "\" AS TEXT) FROM " + SqlUtil.quoteTable(fullTableName) + " WHERE \"" + f.getColumnName() + "\" IS NOT NULL LIMIT 100", String.class);
+            List<FieldDef> filterableFields = fields.stream()
+                .filter(f -> Boolean.TRUE.equals(f.getFilterable()))
+                .collect(java.util.stream.Collectors.toList());
+            
+            // 兼容前端 fallback 逻辑：如果没配置，默认取前三个
+            if (filterableFields.isEmpty()) {
+                filterableFields = fields.stream().limit(3).collect(java.util.stream.Collectors.toList());
+            }
+
+            for (FieldDef f : filterableFields) {
+                String physicalCol = resolvePhysicalColumn(physicalColumns, f.getColumnName());
+                if (physicalCol != null) {
+                    StringBuilder sql = new StringBuilder("SELECT DISTINCT CAST(\"")
+                        .append(physicalCol)
+                        .append("\" AS TEXT) FROM ")
+                        .append(SqlUtil.quoteTable(fullTableName))
+                        .append(" WHERE \"")
+                        .append(physicalCol)
+                        .append("\" IS NOT NULL ");
+                    
+                    List<Object> args = new ArrayList<>();
+                    if (hasColumn(physicalColumns, "is_deleted")) {
+                        sql.append(" AND (is_deleted IS NULL OR is_deleted = 0) ");
+                    }
+                    if (!isAdmin && operatorEmail != null && hasColumn(physicalColumns, "load_user")) {
+                        sql.append(" AND (\"load_user\" = ? OR \"load_user\" IS NULL) ");
+                        args.add(operatorEmail);
+                    }
+                    sql.append(" LIMIT 100");
+                    
+                    List<String> options = jdbcTemplate.queryForList(sql.toString(), String.class, args.toArray());
                     res.put(f.getColumnName(), options);
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.error("Failed to get filter options for form {}: {}", formId, e.getMessage());
+        }
         return res;
     }
 
@@ -379,7 +517,7 @@ public class DynamicDataDmlService {
         DataFillForm form = formMapper.selectById(formId);
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         String fullTableName = schema + "." + form.getTableName();
-        java.util.Set<String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());
+        java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());
 
         StringJoiner ps = new StringJoiner(",");
         for (int i = 0; i < dataIds.size(); i++) ps.add("?");
@@ -396,7 +534,7 @@ public class DynamicDataDmlService {
         DataFillForm form = formMapper.selectById(formId);
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         String fullTableName = schema + "." + form.getTableName();
-        java.util.Set<String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());
+        java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());
 
         StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         List<Object> args = new ArrayList<>();

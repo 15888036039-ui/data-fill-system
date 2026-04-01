@@ -403,9 +403,11 @@ public class DataFillController {
         return excelService.parseReferenceTemplate(file);
     }
 
-    @GetMapping("/forms/inspectTable")
-    public com.example.datafill.dto.ExcelParseResult inspectExistingTable(@RequestParam String tableName) {
-        return excelService.inspectExistingTable(tableName);
+    @GetMapping("/inspectTable")
+    public com.example.datafill.dto.ExcelParseResult inspectExistingTable(
+            @RequestParam(required = false, defaultValue = "public") String schemaName,
+            @RequestParam String tableName) {
+        return excelService.inspectExistingTable(schemaName, tableName);
     }
 
     /**

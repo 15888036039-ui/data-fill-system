@@ -119,7 +119,7 @@
             @selection-change="handleSelectionChange"
           >
             <el-table-column v-if="isAdmin" type="selection" width="48" align="center" />
-            <el-table-column prop="name" label="模板名称" min-width="220">
+            <el-table-column prop="name" label="模板名称" min-width="200" show-overflow-tooltip>
               <template #default="scope">
                 <div class="form-name-cell">
                   <el-icon class="form-icon"><Document /></el-icon>
@@ -128,19 +128,19 @@
               </template>
             </el-table-column>
             
-            <el-table-column prop="folderId" label="所属目录" min-width="220">
+            <el-table-column prop="folderId" label="所属目录" min-width="150" show-overflow-tooltip>
               <template #default="scope">
                 <span class="folder-path-text">{{ resolveFolderPath(scope.row.folderId) }}</span>
               </template>
             </el-table-column>
             
-            <el-table-column prop="tableName" label="物理表名" min-width="180">
+            <el-table-column prop="tableName" label="物理表名" min-width="180" show-overflow-tooltip>
               <template #default="scope">
                 <code class="table-code">{{ scope.row.tableName }}</code>
               </template>
             </el-table-column>
-
-            <el-table-column prop="status" label="状态" min-width="120" align="center">
+ 
+            <el-table-column prop="status" label="状态" width="100" align="center">
               <template #default="scope">
                 <el-tag
                   :type="scope.row.status === 'ACTIVE' ? 'success' : (scope.row.status === 'EXPIRED' ? 'danger' : 'info')"
@@ -151,8 +151,8 @@
                 </el-tag>
               </template>
             </el-table-column>
-
-            <el-table-column prop="deadline" label="截止时间" min-width="180">
+ 
+            <el-table-column prop="deadline" label="截止时间" width="160">
               <template #default="scope">
                 <div class="time-cell">
                   <el-icon v-if="scope.row.deadline"><Timer /></el-icon>
@@ -160,8 +160,8 @@
                 </div>
               </template>
             </el-table-column>
-
-            <el-table-column prop="creator" label="创建人" min-width="140">
+ 
+            <el-table-column prop="creator" label="创建人" width="120" show-overflow-tooltip>
               <template #default="scope">
                 <div class="creator-cell">
                   <el-icon><User /></el-icon>
@@ -169,14 +169,14 @@
                 </div>
               </template>
             </el-table-column>
-
-            <el-table-column prop="createTime" label="创建时间" min-width="180">
+ 
+            <el-table-column prop="createTime" label="创建时间" width="160">
               <template #default="scope">
                 <span class="time-muted">{{ scope.row.createTime ? scope.row.createTime.replace('T', ' ') : '-' }}</span>
               </template>
             </el-table-column>
-
-            <el-table-column label="操作" width="350" align="right" fixed="right">
+ 
+            <el-table-column label="操作" width="280" align="right" fixed="right">
               <template #default="scope">
                 <el-button-group>
                   <el-tooltip content="查看并管理数据" placement="top">

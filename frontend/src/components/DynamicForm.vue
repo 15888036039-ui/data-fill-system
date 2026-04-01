@@ -8,7 +8,9 @@
       <el-col 
         v-for="field in schema" 
         :key="field.columnName" 
-        :span="field.type === 'textarea' ? 24 : 12"
+        :xs="24"
+        :sm="field.type === 'textarea' ? 24 : 12"
+        :md="field.type === 'textarea' ? 24 : 12"
       >
         <el-form-item 
           :label="field.name" 
