@@ -145,7 +145,7 @@ public class DynamicTableDdlService {
         }
     }
 
-    private boolean physicalTableExists(String schema, String table) {
+    public boolean physicalTableExists(String schema, String table) {
         if (schema == null || schema.trim().isEmpty()) {
             schema = SqlUtil.extractSchema(table);
             if (schema == null) {
@@ -157,6 +157,40 @@ public class DynamicTableDdlService {
         String sql = "SELECT COUNT(1) FROM information_schema.tables WHERE table_schema = ? AND table_name = ?";
         Integer count = jdbcTemplate.queryForObject(sql, Integer.class, schema, table);
         return count != null && count > 0;
+    }
+
+    private String getConflictTemplateName(String schema, String table) {
+        if (table == null || table.trim().isEmpty()) return null;
+        schema = (schema == null || schema.trim().isEmpty()) ? "public" : schema.trim();
+        
+        QueryWrapper<DataFillForm> qw = new QueryWrapper<DataFillForm>().eq("table_name", table.trim());
+        if ("public".equalsIgnoreCase(schema)) {
+            // 兼容旧记录中 schema_name 可能为 null 或为空的情况
+            qw.and(i -> i.eq("schema_name", "public").or().isNull("schema_name").or().eq("schema_name", ""));
+        } else {
+            qw.eq("schema_name", schema);
+        }
+        DataFillForm exist = formMapper.selectOne(qw.last("limit 1"));
+        return (exist != null) ? exist.getName() : null;
+    }
+
+    public Map<String, Object> checkTableStatus(String schema, String table) {
+        schema = (schema == null || schema.trim().isEmpty()) ? "public" : schema.trim();
+        table = table == null ? "" : table.trim();
+
+        // 1. 检查元数据是否已注册，通过冲突名称识别
+        String conflictName = getConflictTemplateName(schema, table);
+        
+        // 2. 检查物理表是否存在
+        boolean physicalExists = physicalTableExists(schema, table);
+        
+        Map<String, Object> res = new java.util.HashMap<>();
+        res.put("metaExists", conflictName != null);
+        res.put("conflictTemplateName", conflictName);
+        res.put("physicalExists", physicalExists);
+        res.put("schemaName", schema);
+        res.put("tableName", table);
+        return res;
     }
 
     private java.util.Set<String> loadPhysicalColumns(String schema, String table) {
@@ -233,12 +267,12 @@ public class DynamicTableDdlService {
 
     public String createFormAndTable(DataFillForm form) {
 
-        // 1. 检查物理表名是否重复
-
-        if (formMapper.selectCount(new QueryWrapper<DataFillForm>().eq("table_name", form.getTableName())) > 0) {
-
-            throw new RuntimeException("物理表名已存在！");
-
+        // 1. 检查物理表名是否重复 (Schema 粒度, 含公共模式兼容)
+        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
+        form.setSchemaName(schema); // 确保元数据中 schema_name 不为 null
+        String conflictName = getConflictTemplateName(schema, form.getTableName());
+        if (conflictName != null) {
+            throw new RuntimeException("物理表 [" + schema + "." + form.getTableName() + "] 已被模板「" + conflictName + "」占用，请重命名表名或更换模式(Schema)！");
         }
 
         // 2. 解析前端传来的字段 JSON
@@ -250,7 +284,6 @@ public class DynamicTableDdlService {
         validateTableName(form.getTableName());
 
         // 3. 拼接 PostgreSQL 建表 DDL 语句
-        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         String fullTableName = schema + "." + form.getTableName();
 
         StringBuilder ddl = new StringBuilder();
@@ -402,9 +435,8 @@ public class DynamicTableDdlService {
         }
 
         // 5. 将表单元数据存入元数据表
-
         applyFormDefaultsForMetadata(form);
-
+        form.setIsExternal(false); // 系统创建的表，非外部绑定
         formMapper.insert(form);
 
         return form.getId();
@@ -413,12 +445,14 @@ public class DynamicTableDdlService {
 
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
     public String bindExistingTable(DataFillForm form) {
-        if (formMapper.selectCount(new QueryWrapper<DataFillForm>().eq("table_name", form.getTableName())) > 0) {
-            throw new RuntimeException("物理表名已存在！");
+        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
+        form.setSchemaName(schema); // 确保元数据中 schema_name 不为 null
+        String conflictName = getConflictTemplateName(schema, form.getTableName());
+        if (conflictName != null) {
+            throw new RuntimeException("物理表 [" + schema + "." + form.getTableName() + "] 已被模板「" + conflictName + "」占用，请重命名表名或更换模式(Schema)！");
         }
 
         validateTableName(form.getTableName());
-        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         if (!physicalTableExists(schema, form.getTableName())) {
             throw new RuntimeException("指定的物理表不存在: " + schema + "." + form.getTableName());
         }
@@ -447,6 +481,7 @@ public class DynamicTableDdlService {
 
         form.setForms(writeFieldsJson(fields));
         applyFormDefaultsForMetadata(form);
+        form.setIsExternal(true); // 外部绑定表
         formMapper.insert(form);
         return form.getId();
     }
@@ -466,31 +501,33 @@ public class DynamicTableDdlService {
      */
 
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
-
     public void deleteFormAndTable(String formId) {
-
         DataFillForm form = formMapper.selectById(formId);
-
         if (form == null) return;
 
-        // 删除物理表变更为重命名
-        try {
-            String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
-            if (physicalTableExists(schema, form.getTableName())) {
-                long timestamp = System.currentTimeMillis();
-                String newTableName = SqlUtil.extractTable(form.getTableName()) + "_del_" + timestamp;
-                jdbcTemplate.execute("ALTER TABLE " + SqlUtil.quoteTable(schema + "." + form.getTableName()) + " RENAME TO \"" + newTableName + "\"");
-            } else {
-                log.warn("物理表 {} 不存在，跳过重命名步骤", form.getTableName());
+        // 仅当“非外部绑定表”时，才尝试对物理表执行重命名备份
+        boolean isExt = (form.getIsExternal() != null && form.getIsExternal());
+        
+        if (!isExt) {
+            try {
+                String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
+                if (physicalTableExists(schema, form.getTableName())) {
+                    long timestamp = System.currentTimeMillis();
+                    String newTableName = SqlUtil.extractTable(form.getTableName()) + "_del_" + timestamp;
+                    log.info("检测到表单 {} 为系统创建，正在将物理表 {} 重命名为 {} 以释放空间并保留备份", form.getName(), form.getTableName(), newTableName);
+                    jdbcTemplate.execute("ALTER TABLE " + SqlUtil.quoteTable(schema + "." + form.getTableName()) + " RENAME TO \"" + newTableName + "\"");
+                } else {
+                    log.warn("物理表 {} 不存在，跳过重命名步骤", form.getTableName());
+                }
+            } catch (Exception e) {
+                log.error("物理表重命名失败: {}", form.getTableName(), e);
             }
-        } catch (Exception e) {
-            // 兜底异常捕获，即使判断后执行依然报错也不应阻断元数据删除
-            log.error("物理表重命名失败: {}", form.getTableName(), e);
+        } else {
+            log.info("检测到表单 {} 为外部绑定表，仅删除元数据，不操作物理表 {}", form.getName(), form.getTableName());
         }
 
         // 删除元数据记录
         formMapper.deleteById(formId);
-
     }
 
     /**

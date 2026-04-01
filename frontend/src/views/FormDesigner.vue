@@ -1,10 +1,20 @@
 <template>
   <div class="form-designer-page">
-    <div class="page-header">
+    <div class="page-header sticky-header">
+      <div class="header-info">
+        <div class="header-breadcrumb">
+          <span class="breadcrumb-item" @click="$router.push('/forms')">模板管理</span>
+          <el-icon><ArrowRight /></el-icon>
+          <span class="breadcrumb-current">{{ isEditMode ? '编辑填报模板' : '创建新模板' }}</span>
+        </div>
+        <h1 class="page-title">
+          {{ isEditMode ? (formMeta.name || '正在读取...') : '新建填报模板' }}
+        </h1>
+      </div>
       <div class="header-actions">
-        <el-button @click="$router.push('/forms')">取消返回</el-button>
-        <el-button v-if="!isEditMode" type="primary" size="large" icon="Platform" @click="submitFormAndCreateTable">{{ bindExistingTableMode ? '绑定并发布' : '创建并发布' }}</el-button>
-        <el-button v-else type="primary" size="large" icon="Check" @click="updateFormMeta">保存设置</el-button>
+        <el-button @click="$router.push('/forms')" class="btn-cancel">取消并返回</el-button>
+        <el-button v-if="!isEditMode" type="primary" size="large" icon="Platform" @click="submitFormAndCreateTable">{{ bindExistingTableMode ? '确认绑定并发布' : '创建并发布模板' }}</el-button>
+        <el-button v-else type="primary" size="large" icon="Check" @click="updateFormMeta">完成并保存</el-button>
       </div>
     </div>
 
@@ -196,7 +206,7 @@
           </p>
           <el-alert
             v-if="!isEditMode && bindExistingTableMode"
-            title="当前已切换为“绑定已有表”模式。发布时不会新建物理表，而是直接绑定您已存在的数据库表。"
+            title="检测到物理表已存在，系统将直接绑定您现有的数据库表，不再创建新表。"
             type="warning"
             show-icon
             style="margin-bottom: 16px;"
@@ -493,8 +503,8 @@
 <script setup>
 import { reactive, ref, onMounted, inject, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { Setting, Notification, Grid, User, Plus, Upload, Delete, Check, Platform, UploadFilled, InfoFilled, Connection, Tickets, Document } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Setting, Notification, Grid, User, Plus, Upload, Delete, Check, Platform, UploadFilled, InfoFilled, Connection, Tickets, Document, ArrowRight } from '@element-plus/icons-vue'
 import axios from 'axios'
 
 const router = useRouter()
@@ -960,6 +970,47 @@ const submitFormAndCreateTable = async () => {
     ElMessage.error('名称和物理表名必填')
     return
   }
+
+  // 1. 无论是新建还是绑定模式，都先检查物理表冲突情况
+  try {
+    const checkRes = await axios.get('/api/fill/checkTable', {
+      params: { 
+        schemaName: formMeta.schemaName || 'public', 
+        tableName: formMeta.tableName 
+      }
+    })
+    
+    // 如果该物理表（Schema + Table Name）已经在系统中被其他模板占用了，显示强冲突错误
+    if (checkRes.data.metaExists) {
+      const conflictName = checkRes.data.conflictTemplateName || '其他模板'
+      ElMessage.error(`物理表 [${formMeta.schemaName}.${formMeta.tableName}] 已被系统中的模板「${conflictName}」占用，请重命名表名或更换模式(Schema)！`)
+      return
+    }
+
+    // 只有在非绑定模式下（即用户选择了“由系统创建新表”），如果发现物理表已存在，才弹出“转为绑定”的选择框
+    if (!bindExistingTableMode.value && checkRes.data.physicalExists) {
+      try {
+        await ElMessageBox.confirm(
+          `检测到数据库中已存在物理表 "${formMeta.schemaName}.${formMeta.tableName}"。是否直接绑定您已存在的这个表，直接使用已有的表而不创建新表了？`,
+          '检测到已有物理表',
+          {
+            confirmButtonText: '确认绑定并使用',
+            cancelButtonText: '取消',
+            type: 'warning'
+          }
+        )
+        // 用户确认，标记为绑定模式
+        bindExistingTableMode.value = true
+      } catch (e) {
+        // 用户取消，中断发布
+        return
+      }
+    }
+  } catch (e) {
+    console.warn('校验物理表状态失败', e)
+    // 校验接口报错不阻断后续发布，交由后端最终校验兜底
+  }
+
   const formattedFields = fields.value.map(f => ({
     name: f.name,
     columnName: f.columnName,
@@ -1088,19 +1139,67 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 32px;
+  padding: 24px 0;
+  background: white;
+  z-index: 100;
+  transition: all 0.3s;
+}
+
+.sticky-header {
+  position: sticky;
+  top: 0;
+  padding: 16px 0;
+  border-bottom: 1px solid #f1f5f9;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+}
+
+.header-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.header-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #94a3b8;
+  margin-bottom: 4px;
+}
+
+.breadcrumb-item {
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.breadcrumb-item:hover {
+  color: var(--primary-color);
+}
+
+.breadcrumb-current {
+  color: #64748b;
+  font-weight: 500;
+}
+
+.btn-cancel {
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+}
+
+.btn-cancel:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #1e293b;
 }
 
 .page-title {
-  font-size: 26px;
-  font-weight: 800;
-  color: #0f172a;
-  margin: 0 0 6px;
-}
-
-.page-subtitle {
-  font-size: 14px;
-  color: #64748b;
+  font-size: 28px;
+  font-weight: 900;
+  color: #1e293b;
   margin: 0;
+  letter-spacing: -0.5px;
 }
 
 .designer-container {

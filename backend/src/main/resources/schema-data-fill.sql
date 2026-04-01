@@ -5,7 +5,7 @@
 CREATE TABLE IF NOT EXISTS data_fill_form (
     id              VARCHAR(64) PRIMARY KEY,
     name            VARCHAR(255),
-    table_name      VARCHAR(255) UNIQUE,
+    table_name      VARCHAR(255),
     table_comment   TEXT,
     folder_id       VARCHAR(64),
     forms           TEXT,
@@ -27,8 +27,10 @@ CREATE TABLE IF NOT EXISTS data_fill_form (
 
     schema_name     VARCHAR(100) DEFAULT 'public',
     group_tag       VARCHAR(255),
+    is_external     BOOLEAN DEFAULT FALSE,
     create_time     TIMESTAMP,
-    update_time     TIMESTAMP
+    update_time     TIMESTAMP,
+    UNIQUE (schema_name, table_name)
 );
 
 -- 兼容已有老表：为缺失字段补列
@@ -85,6 +87,15 @@ ALTER TABLE data_fill_form
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS group_tag VARCHAR(255);
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS is_external BOOLEAN DEFAULT FALSE;
+
+-- 修正唯一性约束：从单一 table_name 改为 (schema_name, table_name) 复合约束
+-- 1. 移除旧的单列唯一约束
+ALTER TABLE data_fill_form DROP CONSTRAINT IF EXISTS data_fill_form_table_name_key;
+-- 2. 创建复合唯一索引（IF NOT EXISTS 保证幂等，等效于复合唯一约束）
+CREATE UNIQUE INDEX IF NOT EXISTS idx_data_fill_form_schema_table_unique ON data_fill_form (schema_name, table_name);
 
 CREATE INDEX IF NOT EXISTS idx_data_fill_form_folder_id ON data_fill_form(folder_id);
 

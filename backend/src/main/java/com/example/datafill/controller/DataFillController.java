@@ -231,6 +231,13 @@ public class DataFillController {
         return tableDdlService.getAvailableSchemas();
     }
 
+    @GetMapping("/checkTable")
+    public Map<String, Object> checkTable(
+            @RequestParam(required = false) String schemaName,
+            @RequestParam String tableName) {
+        return tableDdlService.checkTableStatus(schemaName, tableName);
+    }
+
     // [管理端核心]: 提交表单配置，并在数据库真实建表 (CREATE TABLE)
     @PostMapping("/forms/createTable")
     public String createTable(@RequestBody DataFillForm form, @RequestParam String userEmail) {

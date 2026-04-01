@@ -81,4 +81,8 @@ public class DataFillForm {
     /** 分组标识（用于分链接展示，如 link_a, link_b） */
     @TableField("group_tag")
     private String groupTag;
+
+    /** 是否为外部绑定表 (true: 仅删除元数据; false: 重命名物理表) */
+    @TableField("is_external")
+    private Boolean isExternal;
 }
