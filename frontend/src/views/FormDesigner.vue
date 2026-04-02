@@ -965,11 +965,33 @@ const applyParsedResults = (data) => {
   }
 }
 
-const submitFormAndCreateTable = async () => {
+const validateForm = () => {
   if (!formMeta.name || !formMeta.tableName) {
     ElMessage.error('名称和物理表名必填')
-    return
+    return false
   }
+  // 物理表名正则校验 (仅允许小写字母、数字、下划线，必须字母开头)
+  if (!/^[a-z][a-z0-9_]*$/.test(formMeta.tableName)) {
+    ElMessage.error('物理表名格式不正确（仅允许小写字母、数字、下划线，且必须以字母开头）')
+    return false
+  }
+
+  for (let i = 0; i < fields.value.length; i++) {
+    const f = fields.value[i]
+    if (!f.name || !f.columnName) {
+      ElMessage.error(`第 ${i + 1} 个字段的名称和物理列名必填`)
+      return false
+    }
+    if (!/^[a-z][a-z0-9_]*$/.test(f.columnName)) {
+      ElMessage.error(`字段 "${f.name}" 的物理列名 "${f.columnName}" 格式不计（仅允许小写字母、数字、下划线，且必须以字母开头）`)
+      return false
+    }
+  }
+  return true
+}
+
+const submitFormAndCreateTable = async () => {
+  if (!validateForm()) return
 
   // 1. 无论是新建还是绑定模式，都先检查物理表冲突情况
   try {
@@ -1098,6 +1120,7 @@ const loadFormForEdit = async () => {
 }
 
 const updateFormMeta = async () => {
+  if (!validateForm()) return
   const id = route.params.id
   const payload = {
     ...formMeta,

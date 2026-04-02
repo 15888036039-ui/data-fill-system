@@ -85,24 +85,31 @@ public class DynamicTableDdlService {
         if (dbType == null) {
             return null;
         }
-        String trimmed = dbType.trim();
+        String trimmed = dbType.trim().toUpperCase();
         if (trimmed.isEmpty()) {
             return trimmed;
         }
-        // 页面可保留 INT(10) / int10 这类展示值，但 PostgreSQL 不支持整型带长度，执行 DDL 时归一化。
-        if (trimmed.matches("(?i)^int\\s*\\(\\s*\\d+\\s*\\)$")) {
+        
+        // --- 核心安全性拦截：禁止分号、注释等常见注入字符 ---
+        if (trimmed.contains(";") || trimmed.contains("--") || trimmed.contains("/*") || trimmed.contains("*/")) {
+            throw new RuntimeException("非法的数据类型定义，检测到异常字符");
+        }
+
+        // 页面可用展示值：INT(10) / int10 这类值；PostgreSQL 不支持整型带长度，执行 DDL 时归一化。
+        if (trimmed.matches("^INT\\s*\\(\\s*\\d+\\s*\\)$") || trimmed.matches("^INT\\s*\\d+$")) {
             return "INT";
         }
-        if (trimmed.matches("(?i)^int\\s*\\d+$")) {
-            return "INT";
-        }
-        if (trimmed.matches("(?i)^integer\\s*\\(\\s*\\d+\\s*\\)$")) {
+        if (trimmed.matches("^INTEGER\\s*\\(\\s*\\d+\\s*\\)$") || trimmed.matches("^INTEGER\\s*\\d+$")) {
             return "INTEGER";
         }
-        if (trimmed.matches("(?i)^integer\\s*\\d+$")) {
-            return "INTEGER";
+        
+        // 允许标准的 PG 类型关键词及其带长度的定义 (如 VARCHAR(50), NUMERIC(10,2))
+        // 使用正则确保它是一个符合词法规律的类型定义
+        if (trimmed.matches("^[A-Z0-9_\\s\\(\\),]+$")) {
+            return trimmed;
         }
-        return trimmed;
+
+        throw new RuntimeException("不支持的数据类型定义: " + trimmed);
     }
 
     private String buildPgErrorPositionText(org.postgresql.util.PSQLException e) {

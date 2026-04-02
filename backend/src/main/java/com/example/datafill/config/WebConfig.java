@@ -12,11 +12,23 @@ import org.springframework.http.HttpStatus;
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
+    @org.springframework.beans.factory.annotation.Value("${data-fill.cors.allowed-origins:*}")
+    private String allowedOrigins;
+
     @Override
     public void addViewControllers(ViewControllerRegistry registry) {
         // forward empty urls to index.html
         registry.addViewController("/")
                 .setViewName("forward:/index.html");
+    }
+
+    @Override
+    public void addCorsMappings(org.springframework.web.servlet.config.annotation.CorsRegistry registry) {
+        registry.addMapping("/api/**")
+                .allowedOriginPatterns(allowedOrigins.split(","))
+                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                .allowedHeaders("*")
+                .allowCredentials(true);
     }
 
     @Bean

@@ -19,7 +19,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/fill")
-@CrossOrigin(origins = "*") // 允许前端本地测试跨域
 public class DataFillController {
 
     private final DynamicTableDdlService tableDdlService;
@@ -64,7 +63,7 @@ public class DataFillController {
 
     private void assertAdmin(String userEmail) {
         if (!isUserAdmin(userEmail)) {
-            throw new RuntimeException("仅管理员可执行该操作");
+            throw new com.example.datafill.exception.AppException(403, "仅管理员可执行该操作");
         }
     }
 

@@ -490,7 +490,7 @@ public class ExcelService {
      * 优化：元数据计算外提，分片分批入库
      */
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
-    public int importData(String formId, MultipartFile file, String mode, String creator) throws IOException {
+    public Map<String, Object> importData(String formId, MultipartFile file, String mode, String creator) throws IOException {
         DataFillForm form = formMapper.selectById(formId);
         if (form == null)
             throw new RuntimeException("表单不存在");
@@ -568,21 +568,37 @@ public class ExcelService {
         }
 
         int totalCount = 0;
+        java.util.Set<String> unresolvedHeaders = new java.util.LinkedHashSet<>();
+        int skippedUnmappedRowCount = 0;
+        Integer firstSkippedUnmappedRowNum = null;
+
         try (Workbook workbook = StreamingReader.builder()
                 .rowCacheSize(1000)
                 .bufferSize(131072)
                 .open(file.getInputStream())) {
             Sheet sheet = workbook.getSheetAt(0);
-            if (sheet == null)
-                return 0;
+            if (sheet == null) {
+                Map<String, Object> res = new HashMap<>();
+                res.put("success", true);
+                res.put("count", 0);
+                return res;
+            }
 
             java.util.Iterator<Row> rowIterator = sheet.iterator();
-            if (!rowIterator.hasNext())
-                return 0;
+            if (!rowIterator.hasNext()) {
+                Map<String, Object> res = new HashMap<>();
+                res.put("success", true);
+                res.put("count", 0);
+                return res;
+            }
 
             Row headerRow = rowIterator.next();
-            if (headerRow == null)
-                return 0;
+            if (headerRow == null) {
+                Map<String, Object> res = new HashMap<>();
+                res.put("success", true);
+                res.put("count", 0);
+                return res;
+            }
 
             int lastCol = headerRow.getLastCellNum();
             String[] headers = new String[lastCol];
@@ -627,9 +643,6 @@ public class ExcelService {
             int BATCH_SIZE = 10000;
             List<Map<String, Object>> buffer = new ArrayList<>(BATCH_SIZE);
             boolean hasReferenceMappings = !referenceHeaderMappings.isEmpty();
-            java.util.Set<String> unresolvedHeaders = new java.util.LinkedHashSet<>();
-            int skippedUnmappedRowCount = 0;
-            Integer firstSkippedUnmappedRowNum = null;
 
             java.util.Set<String> importSystemColumns = new java.util.HashSet<>(EXISTING_TABLE_SYSTEM_COLUMNS);
             importSystemColumns.add("ctime");
@@ -1028,7 +1041,13 @@ public class ExcelService {
             }
 
         }
-        return totalCount;
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("count", totalCount);
+        if (!unresolvedHeaders.isEmpty()) {
+            result.put("unresolvedHints", String.join(", ", unresolvedHeaders));
+        }
+        return result;
     }
 
     private void flushImportBuffer(String formId, List<Map<String, Object>> rows) {
@@ -1436,14 +1455,6 @@ public class ExcelService {
             List<com.example.datafill.dto.ReferenceFieldMapping> mappings) {
         List<com.example.datafill.dto.ExcelParseResult.DetectedPair> pairs = new ArrayList<>();
         Map<String, String> kwPairs = new LinkedHashMap<>();
-        kwPairs.put("description", "amount");
-        kwPairs.put("desc", "amt");
-        kwPairs.put("name", "price");
-        kwPairs.put("type", "val");
-        kwPairs.put("key", "value");
-        kwPairs.put("item", "total");
-        kwPairs.put("label", "val");
-        kwPairs.put("msg", "count");
         kwPairs.putAll(configService.getKwPairs());
 
         Map<String, List<com.example.datafill.dto.ReferenceFieldMapping>> groupedBySuffix = new LinkedHashMap<>();
@@ -1751,14 +1762,6 @@ public class ExcelService {
             java.util.regex.Pattern numPattern = java.util.regex.Pattern.compile("(.*?)(\\d*)$");
 
             if (kvPairEnabled) {
-                kwPairs.put("description", "amount");
-                kwPairs.put("desc", "amt");
-                kwPairs.put("name", "price");
-                kwPairs.put("type", "val");
-                kwPairs.put("key", "value");
-                kwPairs.put("item", "total");
-                kwPairs.put("label", "val");
-                kwPairs.put("msg", "count");
                 kwPairs.putAll(configService.getKwPairs());
 
                 // 先扫描所有列名，填充 groupedBySuffix
