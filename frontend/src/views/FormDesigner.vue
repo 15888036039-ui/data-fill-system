@@ -163,7 +163,7 @@
               </el-form-item>
             </div>
 
-            <el-form-item label="收件人邮箱 (管理员通知)">
+            <el-form-item label="填报人邮箱 (发送提醒邮件)">
               <el-select
                 v-model="recipientList"
                 multiple
