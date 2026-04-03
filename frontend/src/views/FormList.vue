@@ -74,6 +74,8 @@
             prefix-icon="Search"
             clearable
             class="search-input"
+            @keyup.enter="handleFilter"
+            @clear="handleFilter"
           />
           <el-select v-model="statusFilter" placeholder="模板状态" clearable class="status-select">
             <el-option label="所有状态" value="" />
@@ -81,7 +83,7 @@
             <el-option label="已过期" value="EXPIRED" />
             <el-option label="待发布" value="DISABLED" />
           </el-select>
-          <el-button type="primary" icon="Search" @click="loadForms">查询</el-button>
+          <el-button type="primary" icon="Search" @click="handleFilter">查询</el-button>
           <el-button icon="Refresh" @click="resetFilter">重置</el-button>
         </div>
 
@@ -301,6 +303,8 @@ const folderLoading = ref(false)
 const selectedFolderId = ref(route.query.folderId || '')
 const searchQuery = ref('')
 const statusFilter = ref('')
+const appliedSearchQuery = ref('')
+const appliedStatusFilter = ref('')
 const currentPage = ref(1)
 const pageSize = ref(10)
 const moveDialogVisible = ref(false)
@@ -321,12 +325,12 @@ const contextMenu = ref({
 })
 
 const filteredForms = computed(() => {
-  const keyword = searchQuery.value.trim().toLowerCase()
+  const keyword = appliedSearchQuery.value.trim().toLowerCase()
   return forms.value.filter(form => {
     const matchesSearch = !keyword ||
       (form.name || '').toLowerCase().includes(keyword) ||
       (form.tableName || '').toLowerCase().includes(keyword)
-    const matchesStatus = !statusFilter.value || form.status === statusFilter.value
+    const matchesStatus = !appliedStatusFilter.value || form.status === appliedStatusFilter.value
     return matchesSearch && matchesStatus
   })
 })
@@ -418,11 +422,20 @@ const hideContextMenu = () => {
 const resetFilter = async () => {
   searchQuery.value = ''
   statusFilter.value = ''
+  appliedSearchQuery.value = ''
+  appliedStatusFilter.value = ''
   currentPage.value = 1
   if (selectedFolderId.value) {
     selectedFolderId.value = ''
     await updateRouteFolder('')
   }
+  await loadForms()
+}
+
+const handleFilter = async () => {
+  appliedSearchQuery.value = searchQuery.value
+  appliedStatusFilter.value = statusFilter.value
+  currentPage.value = 1
   await loadForms()
 }
 
