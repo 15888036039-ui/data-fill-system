@@ -68,22 +68,25 @@ public class DataFillController {
     }
 
     private boolean canUserAccessForm(DataFillForm form, String userEmail, boolean isAdmin) {
-        if (isAdmin || userEmail == null || userEmail.isBlank()) {
+        if (isAdmin) {
             return true;
+        }
+        if (userEmail == null || userEmail.isBlank()) {
+            return false;
         }
         String fillEmails = form.getFillUserEmails();
         if (fillEmails == null || fillEmails.isBlank()) {
-            return true;
+            return false;
         }
         try {
             List<String> allowed = objectMapper
                     .readValue(fillEmails, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
             if (allowed == null || allowed.isEmpty()) {
-                return true;
+                return false;
             }
             return allowed.stream().anyMatch(e -> e != null && e.equalsIgnoreCase(userEmail));
         } catch (Exception e) {
-            return true;
+            return false;
         }
     }
 
@@ -111,7 +114,7 @@ public class DataFillController {
         }
         List<DataFillForm> allForms = formMapper.selectList(qw);
         List<DataFillForm> visibleForms;
-        if (isAdmin || (userEmail == null || userEmail.isBlank())) {
+        if (isAdmin) {
             visibleForms = allForms;
         } else {
             visibleForms = allForms.stream()
@@ -304,8 +307,11 @@ public class DataFillController {
      * 供帆软“我的填报”嵌入页面使用
      */
     @GetMapping("/user/tasks")
-    public Map<String, Object> getUserTasks(@RequestParam String userEmail) {
-        return tableDdlService.getUserTasks(userEmail);
+    public Map<String, Object> getUserTasks(
+            @RequestParam String userEmail,
+            @RequestParam(required = false) String groupTag) {
+        boolean isAdmin = isUserAdmin(userEmail);
+        return tableDdlService.getUserTasks(userEmail, groupTag, isAdmin);
     }
 
     // [用户端核心]: 条件筛选查询
@@ -401,8 +407,7 @@ public class DataFillController {
             @RequestParam(value = "load_user", required = false) String loadUser) throws IOException {
         String finalCreator = (loadUser != null && !loadUser.trim().isEmpty()) ? loadUser : creator;
         recordLog(formId, finalCreator, "UPLOAD", "通过 Excel 导入了 " + (finalCreator == null ? "未知用户" : finalCreator) + " 的数据");
-        int count = excelService.importData(formId, file, mode, finalCreator);
-        return Map.of("success", true, "count", count);
+        return excelService.importData(formId, file, mode, finalCreator);
     }
 
     /**

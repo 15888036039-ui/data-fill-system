@@ -26,7 +26,7 @@
           </div>
           <el-form :model="formMeta" label-position="top" class="meta-form">
             <el-form-item label="模板中文名" required>
-              <el-input v-model="formMeta.name" placeholder="例如: 员工入职登记表" />
+              <el-input v-model="formMeta.name" placeholder="请输入模板展示名称" />
             </el-form-item>
             <el-form-item label="数据库物理模式 (Schema)" required>
               <el-select
@@ -48,14 +48,14 @@
             <el-form-item label="数据库物理表名" required>
               <el-input
                 v-model="formMeta.tableName"
-                placeholder="例如: df_emp_reg (建议 df_ 前缀)"
+                placeholder="请输入数据库物理表名"
                 :disabled="isEditMode"
               />
             </el-form-item>
             <el-form-item label="数据库表注释">
               <el-input
                 v-model="formMeta.tableComment"
-                placeholder="例如: 美国快递费账单"
+                placeholder="请输入物理表注释（可选）"
               />
             </el-form-item>
             <el-form-item label="所属目录">
@@ -79,7 +79,7 @@
             <el-form-item label="分组标识 (Group Tag)">
               <el-input
                 v-model="formMeta.groupTag"
-                placeholder="例如: link_a (用于多链接展示过滤)"
+                placeholder="用于不同链接的展示过滤"
               />
             </el-form-item>
             
@@ -254,20 +254,20 @@
                       style="width: 100%"
                       @change="(val) => handleDbTypeChange(val, scope.row)"
                     >
-                      <el-option label="VARCHAR(255)" value="VARCHAR(255)" />
-                      <el-option label="TEXT" value="TEXT" />
-                      <el-option label="INTEGER" value="INTEGER" />
-                      <el-option label="NUMERIC(15, 4)" value="NUMERIC(15, 4)" />
-                      <el-option label="TIMESTAMP" value="TIMESTAMP" />
-                      <el-option label="BOOLEAN" value="BOOLEAN" />
-                      <el-option label="JSONB" value="JSONB" />
-                      <el-option label="DATE" value="DATE" />
+                      <el-option label="varchar(255)" value="varchar(255)" />
+                      <el-option label="text" value="text" />
+                      <el-option label="int4" value="int4" />
+                      <el-option label="int8" value="int8" />
+                      <el-option label="numeric(15, 2)" value="numeric(15, 2)" />
+                      <el-option label="timestamp" value="timestamp" />
+                      <el-option label="date" value="date" />
+                      <el-option label="bool" value="bool" />
                     </el-select>
                   </template>
                 </el-table-column>
                 <el-table-column label="必填" width="80" align="center">
                   <template #default="scope">
-                    <el-switch v-model="scope.row.required" :disabled="isEditMode" />
+                    <el-switch v-model="scope.row.required" />
                   </template>
                 </el-table-column>
                 <el-table-column label="筛选" width="80" align="center">
@@ -341,7 +341,7 @@
                 filterable
                 default-first-option
                 :reserve-keyword="false"
-                placeholder="选择或搜索用户，留空表示对所有人开放"
+                placeholder="选择或搜索用户，留空表示仅管理员可见"
                 style="width: 100%"
                 :loading="userListLoading"
               >
@@ -352,7 +352,7 @@
                   :value="u.value"
                 />
               </el-select>
-              <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">不选择任何用户 = 所有人都可以查看和填报</div>
+              <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">不选择任何用户 = 只有管理员可以查看和填报</div>
             </el-form-item>
           </el-form>
         </el-card>
@@ -741,6 +741,12 @@ const removeField = (index) => {
 const onFileChange = async (uploadFile) => {
   if (!uploadFile.raw) return
   const file = uploadFile.raw
+  
+  if (file.size > 20 * 1024 * 1024) {
+    ElMessage.error('上传文件过大（超过 20MB），为了确保系统稳定性，请将数据分批进行识别或导入。')
+    return
+  }
+  
   lastFileName.value = file.name
   const formData = new FormData()
   formData.append('file', file)
@@ -777,6 +783,12 @@ const onFileChange = async (uploadFile) => {
 const onReferenceTemplateFileChange = async (uploadFile) => {
   if (!uploadFile.raw) return
   const file = uploadFile.raw
+  
+  if (file.size > 20 * 1024 * 1024) {
+    ElMessage.error('上传文件过大（超过 20MB），为了确保系统稳定性，请将数据分批进行参考或识别。')
+    return
+  }
+  
   lastFileName.value = file.name
   const formData = new FormData()
   formData.append('file', file)

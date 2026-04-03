@@ -192,11 +192,12 @@
 
 <script setup>
 import { ref, onMounted, watch, inject, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 import { Document, Folder, Edit, Calendar, Search, Refresh, AlarmClock, Check, CircleClose } from '@element-plus/icons-vue'
 
+const route = useRoute()
 const router = useRouter()
 const currentUser = inject('currentUser', ref(''))
 const userEmail = computed(() => currentUser.value)
@@ -246,7 +247,14 @@ const loadTasks = async () => {
   
   loading.value = true
   try {
-    const res = await axios.get(`/api/fill/user/tasks?userEmail=${encodeURIComponent(userEmail.value)}`)
+    const params = {
+      userEmail: userEmail.value
+    }
+    if (route.query.groupTag) {
+      params.groupTag = route.query.groupTag
+    }
+    
+    const res = await axios.get('/api/fill/user/tasks', { params })
     const pending = res.data.pending || []
     const completed = res.data.completed || []
     const expired = res.data.expired || []
@@ -269,7 +277,13 @@ const loadFolders = async () => {
   if (!userEmail.value) return
   folderLoading.value = true
   try {
-    const res = await axios.get(`/api/fill/folders/tree?userEmail=${encodeURIComponent(userEmail.value)}`)
+    const params = {
+      userEmail: userEmail.value
+    }
+    if (route.query.groupTag) {
+      params.groupTag = route.query.groupTag
+    }
+    const res = await axios.get('/api/fill/folders/tree', { params })
     folderTree.value = res.data || []
   } catch (e) {
     folderTree.value = []

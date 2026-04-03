@@ -55,7 +55,11 @@ data-fill:
     admin-email: 15888036039@163.com   # TODO: 修改为实际管理员邮箱
   user:
     default-email-domain: furniwell.com
-
+  cors:
+    allowed-origins: "*"
+  import:
+    max-rows: 10000
+    max-file-size-mb: 20
 mybatis-plus:
   configuration:
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl # 打印 SQL 方便调试

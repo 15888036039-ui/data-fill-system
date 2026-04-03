@@ -816,52 +816,48 @@ public class DynamicTableDdlService {
 
      */
 
-    public Map<String, Object> getUserTasks(String userEmail) {
-
+    public Map<String, Object> getUserTasks(String userEmail, String groupTag, boolean isAdmin) {
         LocalDateTime now = LocalDateTime.now();
-
-        List<DataFillForm> allForms = formMapper.selectList(null);
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DataFillForm> qw = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+        if (groupTag != null && !groupTag.trim().isEmpty()) {
+            qw.eq("group_tag", groupTag.trim());
+        }
+        List<DataFillForm> allForms = formMapper.selectList(qw);
 
         Map<String, String> folderPathMap = buildFolderPathMap();
-
         List<Map<String, Object>> pending = new ArrayList<>();
-
         List<Map<String, Object>> expired = new ArrayList<>();
-
         List<Map<String, Object>> completed = new ArrayList<>();
 
         for (DataFillForm form : allForms) {
-
-            if (!"ACTIVE".equalsIgnoreCase(form.getStatus()) && !"EXPIRED".equalsIgnoreCase(form.getStatus())) {
-
+            String status = form.getStatus();
+            if (!"ACTIVE".equalsIgnoreCase(status) && !"EXPIRED".equalsIgnoreCase(status)) {
                 continue;
-
             }
 
-            // 如果表单配置了允许填报用户列表，则根据 userEmail 过滤
-
-            if (userEmail != null && form.getFillUserEmails() != null && !form.getFillUserEmails().trim().isEmpty()) {
-
-                try {
-
-                    List<String> allowed = objectMapper.readValue(form.getFillUserEmails(), new TypeReference<List<String>>() {});
-
-                    if (allowed != null && !allowed.isEmpty()) {
-
-                        boolean match = allowed.stream().anyMatch(e -> e != null && e.equalsIgnoreCase(userEmail));
-
-                        if (!match) {
-
-                            continue;
-
-                        }
-
-                    }
-
-                } catch (Exception ignored) {
-
+            // 权限校验逻辑
+            if (!isAdmin) {
+                String fillUserEmails = form.getFillUserEmails();
+                // 如果没有配置授权用户列表，默认仅管理员可见，普通用户跳过
+                if (fillUserEmails == null || fillUserEmails.trim().isEmpty() || "[]".equals(fillUserEmails.trim())) {
+                    continue;
                 }
-
+                
+                // 如果配置了列表，则必须在列表中
+                try {
+                    List<String> allowed = objectMapper.readValue(fillUserEmails, new TypeReference<List<String>>() {});
+                    if (allowed != null && !allowed.isEmpty()) {
+                        boolean match = allowed.stream().anyMatch(e -> e != null && e.trim().equalsIgnoreCase(userEmail.trim()));
+                        if (!match) {
+                            continue;
+                        }
+                    } else {
+                        // 列表解析为空对象 [] 的情况
+                        continue;
+                    }
+                } catch (Exception e) {
+                    continue;
+                }
             }
 
             LocalDateTime deadline = form.getDeadline();

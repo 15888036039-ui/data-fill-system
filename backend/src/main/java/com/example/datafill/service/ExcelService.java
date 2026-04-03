@@ -82,6 +82,12 @@ public class ExcelService {
 
     private final SystemConfigService configService;
 
+    @org.springframework.beans.factory.annotation.Value("${data-fill.import.max-file-size-mb:20}")
+    private int maxFileSizeMb;
+
+    @org.springframework.beans.factory.annotation.Value("${data-fill.import.max-rows:10000}")
+    private int maxRows;
+
     static {
         // 针对 50MB 压缩文件，解压后的单个 Record 块可能超过默认的 100MB 限制
         // 这里设置为 500MB，允许处理更大或更复杂的 Excel 结构
@@ -491,6 +497,9 @@ public class ExcelService {
      */
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
     public Map<String, Object> importData(String formId, MultipartFile file, String mode, String creator) throws IOException {
+        if (file.getSize() > (long) maxFileSizeMb * 1024 * 1024) {
+            throw new RuntimeException("上传文件过大（超过 " + maxFileSizeMb + "MB），为了确保系统稳定性，请将数据分批进行导入。");
+        }
         DataFillForm form = formMapper.selectById(formId);
         if (form == null)
             throw new RuntimeException("表单不存在");
@@ -1017,6 +1026,9 @@ public class ExcelService {
                 if (creator != null && !creator.isBlank())
                     rowData.put("creator", creator);
                 buffer.add(rowData);
+                if (totalCount + buffer.size() > maxRows) {
+                    throw new RuntimeException("导入数据行数超过限制（最多允许 " + maxRows + " 行），请分批次拆分 Excel 文件进行导入。");
+                }
 
                 if (buffer.size() >= BATCH_SIZE) {
                     flushImportBuffer(formId, buffer);
@@ -1084,6 +1096,9 @@ public class ExcelService {
 
     public com.example.datafill.dto.ReferenceTemplateParseResult parseReferenceTemplate(MultipartFile file)
             throws IOException {
+        if (file.getSize() > (long) maxFileSizeMb * 1024 * 1024) {
+            throw new RuntimeException("上传文件过大（超过 " + maxFileSizeMb + "MB），为了确保系统稳定性，请将数据分批进行识别。");
+        }
         List<List<String>> rows = readReferenceTemplateRows(file);
         if (rows.isEmpty()) {
             throw new RuntimeException("参考模板内容为空");
@@ -1216,7 +1231,7 @@ public class ExcelService {
                     field.setColumnName(mapping.getColumnName());
                     field.setOriginalColumnName(mapping.getColumnName());
                     field.setName(mapping.getExcelHeader());
-                    field.setDbType(mapping.getColumnName().toLowerCase().endsWith("_json") ? "JSONB" : "VARCHAR(255)");
+                    field.setDbType(mapping.getColumnName().toLowerCase().endsWith("_json") ? "jsonb" : "varchar(255)");
                     applyFieldTypeByDbType(field, field.getDbType());
                     field.setRequired(false);
                     field.setFilterable(filterColumnSet.contains(mapping.getColumnName().toLowerCase()));
@@ -1660,6 +1675,9 @@ public class ExcelService {
 
     public com.example.datafill.dto.ExcelParseResult parseExcelHeaders(MultipartFile file, String mode,
             boolean smartType, boolean kvPairEnabled) throws IOException {
+        if (file.getSize() > (long) maxFileSizeMb * 1024 * 1024) {
+            throw new RuntimeException("上传文件过大，当前限制为 " + maxFileSizeMb + "MB");
+        }
         com.example.datafill.dto.ExcelParseResult result = new com.example.datafill.dto.ExcelParseResult();
         List<FieldDef> fields = new ArrayList<>();
         List<com.example.datafill.dto.ExcelParseResult.DetectedPair> potentialPairs = new ArrayList<>();
@@ -1972,17 +1990,17 @@ public class ExcelService {
         usedColNames.add(finalColName);
         def.setColumnName(finalColName);
         def.setType("input");
-        def.setDbType("VARCHAR(255)");
+        def.setDbType("varchar(255)");
         if (smartType && s.nonBlankCount > 0) {
             if (s.couldBeDate) {
                 def.setType("datetime");
-                def.setDbType("TIMESTAMP");
+                def.setDbType("timestamp");
             } else if (s.couldBeNumber) {
                 def.setType("number");
-                def.setDbType(s.hasDecimal ? "NUMERIC" : "INTEGER");
+                def.setDbType(s.hasDecimal ? "numeric" : "int4");
             } else if (s.rawValues.stream().anyMatch(val -> val.length() > 50)) {
                 def.setType("textarea");
-                def.setDbType("TEXT");
+                def.setDbType("text");
             }
         }
         def.setRequired(false);
@@ -1998,52 +2016,52 @@ public class ExcelService {
         Integer scale = asInteger(row.get("numeric_scale"));
 
         if ("character varying".equals(dataType) || "varchar".equals(dataType)) {
-            return charLength != null && charLength > 0 ? "VARCHAR(" + charLength + ")" : "VARCHAR(255)";
+            return charLength != null && charLength > 0 ? "varchar(" + charLength + ")" : "varchar(255)";
         }
         if ("character".equals(dataType) || "bpchar".equals(udtName)) {
-            return charLength != null && charLength > 0 ? "CHAR(" + charLength + ")" : "CHAR(1)";
+            return charLength != null && charLength > 0 ? "char(" + charLength + ")" : "char(1)";
         }
         if ("text".equals(dataType)) {
-            return "TEXT";
+            return "text";
         }
         if ("integer".equals(dataType) || "int4".equals(udtName)) {
-            return "INTEGER";
+            return "int4";
         }
         if ("bigint".equals(dataType) || "int8".equals(udtName)) {
-            return "BIGINT";
+            return "int8";
         }
         if ("smallint".equals(dataType) || "int2".equals(udtName)) {
-            return "SMALLINT";
+            return "int2";
         }
         if ("boolean".equals(dataType) || "bool".equals(udtName)) {
-            return "BOOLEAN";
+            return "bool";
         }
         if ("date".equals(dataType)) {
-            return "DATE";
+            return "date";
         }
         if ("timestamp without time zone".equals(dataType) || "timestamp with time zone".equals(dataType)
                 || "timestamp".equals(dataType) || "timestamptz".equals(udtName)) {
-            return "TIMESTAMP";
+            return "timestamp";
         }
         if ("jsonb".equals(dataType) || "jsonb".equals(udtName)) {
-            return "JSONB";
+            return "jsonb";
         }
         if ("json".equals(dataType) || "json".equals(udtName)) {
-            return "JSON";
+            return "json";
         }
         if ("numeric".equals(dataType) || "decimal".equals(dataType) || "numeric".equals(udtName)) {
             if (precision != null && scale != null) {
-                return "NUMERIC(" + precision + ", " + scale + ")";
+                return "numeric(" + precision + ", " + scale + ")";
             }
-            return "NUMERIC";
+            return "numeric";
         }
         if ("double precision".equals(dataType) || "float8".equals(udtName)) {
-            return "DOUBLE PRECISION";
+            return "float8";
         }
         if ("real".equals(dataType) || "float4".equals(udtName)) {
-            return "REAL";
+            return "float4";
         }
-        return dataType != null ? dataType.toUpperCase() : "VARCHAR(255)";
+        return udtName != null ? udtName : (dataType != null ? dataType : "varchar(255)");
     }
 
     private void applyFieldTypeByDbType(FieldDef field, String dbType) {

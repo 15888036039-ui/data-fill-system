@@ -9,45 +9,121 @@
     <el-card class="settings-card" shadow="never">
 
       <el-tabs v-model="activeTab">
-        <!-- 字典管理 -->
-        <el-tab-pane label="数仓字典 (中英文映射)" name="dict">
+        <!-- 列名识别中心 (合并了原有的字典和规范) -->
+        <el-tab-pane label="列名识别中心 (映射与策略)" name="naming">
           <div class="tab-content">
-            <el-alert title="这些映射用于将 Excel 中文表头自动转为数仓规范的英文列名。" type="info" show-icon :closable="false" style="margin-bottom: 15px;" />
+            <el-alert 
+              title="配置 Excel 中文表头转数据库列名的完整逻辑。系统会按照‘精准字典 > 英文提取 > 智能拼音 > 保底策略’的优先级自动生成规范列名。" 
+              type="info" 
+              show-icon 
+              :closable="false" 
+              style="margin-bottom: 20px;" 
+            />
             
-            <div class="dict-actions">
-              <el-button type="success" size="small" @click="addDictRow">添加映射</el-button>
+            <div class="naming-layout">
+              <!-- 左侧：全局转换策略 -->
+              <div class="left-config">
+                <div class="section-header">
+                  <div class="section-title"><el-icon><Setting /></el-icon> 1. 全局转换策略参数</div>
+                </div>
+                <el-form :model="namingConvention" label-position="top" class="settings-form mini-form">
+                  <div class="form-grid">
+                    <el-form-item label="默认自动前缀">
+                      <el-input v-model="namingConvention.column_prefix" placeholder="如：field_" />
+                    </el-form-item>
+                    <el-form-item label="拼音缩写阈值">
+                      <el-input-number v-model="namingConvention.initials_threshold" :min="1" :max="20" style="width: 100%" />
+                    </el-form-item>
+                  </div>
+
+                  <div class="form-grid">
+                    <el-form-item label="列名最大长度">
+                      <el-input-number v-model="namingConvention.max_length" :min="10" :max="64" style="width: 100%" />
+                    </el-form-item>
+                    <el-form-item label="非法字符清洗(正则)">
+                      <el-input v-model="namingConvention.replace_regex" placeholder="正则" />
+                    </el-form-item>
+                  </div>
+
+                  <el-form-item label="字典匹配模式">
+                    <el-select v-model="namingConvention.dict_match_mode" style="width: 100%;">
+                      <el-option label="包含匹配 (模糊识别)" value="contains" />
+                      <el-option label="精确匹配 (严格对应)" value="exact" />
+                    </el-select>
+                  </el-form-item>
+
+                  <el-divider />
+                  
+                  <div class="section-header">
+                    <div class="section-title"><el-icon><MagicStick /></el-icon> 2. 规则试运行与调试</div>
+                  </div>
+                  <div class="test-container">
+                    <el-input 
+                      v-model="ruleTestInput" 
+                      placeholder="输入中文表头测试，如：创建时间" 
+                      class="test-input"
+                      @keyup.enter="runRuleTest"
+                    >
+                      <template #append>
+                        <el-button @click="runRuleTest">运行</el-button>
+                      </template>
+                    </el-input>
+                    <div v-if="ruleTestResult" class="test-result-box mini">
+                      <span class="res-label">生成结果：</span>
+                      <code class="res-value">{{ ruleTestResult }}</code>
+                    </div>
+                  </div>
+
+                  <div class="logic-flow-horizontal mini">
+                    <div class="logic-title">⚡ 优先级：</div>
+                    <div class="flow-steps">
+                      <span>英文直取</span> <el-icon><ArrowRight /></el-icon>
+                      <span class="highlighter">字典映射</span> <el-icon><ArrowRight /></el-icon>
+                      <span>拼音/全拼</span> <el-icon><ArrowRight /></el-icon>
+                      <span>清洗保底</span>
+                    </div>
+                  </div>
+                </el-form>
+              </div>
+
+              <!-- 右侧：属性高优映射表 (原数仓字典) -->
+              <div class="right-dict">
+                <div class="section-header-flex">
+                   <div class="section-title"><el-icon><Reading /></el-icon> 3. 精准词典映射 (高优先级)</div>
+                   <el-button type="success" size="small" icon="Plus" @click="addDictRow">添加词条</el-button>
+                </div>
+                <el-table :data="dwDictList" border stripe height="550" class="dict-table-compact">
+                  <el-table-column label="中文名称" prop="cn">
+                    <template #default="scope">
+                      <el-input v-model="scope.row.cn" size="small" placeholder="如：年龄" />
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="映射英文列名" prop="en">
+                    <template #default="scope">
+                      <el-input v-model="scope.row.en" size="small" placeholder="如：age" />
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="60" align="center">
+                    <template #default="scope">
+                      <el-button type="danger" link @click="removeDictRow(scope.$index)"><el-icon><Delete /></el-icon></el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
             </div>
-            
-            <el-table :data="dwDictList" border stripe height="500">
-              <el-table-column label="中文名称" prop="cn">
-                <template #default="scope">
-                  <el-input v-model="scope.row.cn" placeholder="如：部门" />
-                </template>
-              </el-table-column>
-              <el-table-column label="英文列名" prop="en">
-                <template #default="scope">
-                  <el-input v-model="scope.row.en" placeholder="如：dept" />
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="80" align="center">
-                <template #default="scope">
-                  <el-button type="danger" link @click="removeDictRow(scope.$index)">删除</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
           </div>
         </el-tab-pane>
 
-        <!-- 关键词库 -->
-        <el-tab-pane label="智能配对基因库 (一对一)" name="keywords">
+        <!-- 关键词库 remains separate as it is for JSON pairs identification -->
+        <el-tab-pane label="智能配对基因库 (KV 归集)" name="keywords">
           <div class="tab-content">
-            <el-alert title="定义精确的 Key-Value 配对关系。当 Excel 中出现带相同序号的列（如 Desc 1 和 Amt 1）且命中了定义好的配对时，系统将自动进行归并。" type="warning" show-icon :closable="false" style="margin-bottom: 20px;" />
+            <el-alert title="定义精确的 Key-Value 配对关系 (如 Desc 和 Amount)。用于识别 Excel 中成对出现的复杂字段，系统会自动将其归并在 JSON 列中。" type="warning" show-icon :closable="false" style="margin-bottom: 20px;" />
             
             <div class="dict-actions">
-              <el-button type="success" size="small" @click="addPairRow">添加配对基因</el-button>
+              <el-button type="success" size="small" icon="Plus" @click="addPairRow">添加配对基因</el-button>
             </div>
 
-            <el-table :data="kwPairsList" border stripe height="500">
+            <el-table :data="kwPairsList" border stripe height="550">
               <el-table-column label="Key 特征列名 (键)" prop="key">
                 <template #default="scope">
                   <el-input v-model="scope.row.key" placeholder="如：description" />
@@ -58,108 +134,12 @@
                   <el-input v-model="scope.row.val" placeholder="如：amount" />
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="80" align="center">
+              <el-table-column label="操作" width="100" align="center">
                 <template #default="scope">
                   <el-button type="danger" link @click="removePairRow(scope.$index)">删除</el-button>
                 </template>
               </el-table-column>
             </el-table>
-          </div>
-        </el-tab-pane>
-
-        <!-- 列名规范 -->
-        <el-tab-pane label="列名生成规范" name="naming">
-          <div class="tab-content">
-            <el-alert title="定义 Excel 表头转为数据库列名的转换策略。" type="info" show-icon :closable="false" style="margin-bottom: 12px;" />
-            
-            <div class="naming-layout">
-              <div class="left-config">
-                <el-form :model="namingConvention" label-width="150px" class="settings-form">
-                  <el-form-item label="默认自动前缀">
-                    <el-input v-model="namingConvention.column_prefix" placeholder="如：field_" />
-                    <div class="form-tip">当识别不到有效列名或列名以数字开头时补齐的前缀</div>
-                  </el-form-item>
-
-                  <el-form-item label="拼音缩写阈值">
-                    <el-input-number v-model="namingConvention.initials_threshold" :min="1" :max="20" />
-                    <div class="form-tip">汉字超过此字数时，将由全拼转换为缩写 (如：创建时间 -> cjsj)</div>
-                  </el-form-item>
-
-                  <el-form-item label="列名最大长度">
-                    <el-input-number v-model="namingConvention.max_length" :min="10" :max="64" />
-                    <div class="form-tip">超过此长度的字段名将被截断</div>
-                  </el-form-item>
-
-                  <el-form-item label="非法字符剔除(正则)">
-                    <el-input v-model="namingConvention.replace_regex" placeholder="正则表达式" />
-                    <div class="form-tip">匹配这些正则的字符将被完全删除，默认涵盖空格及各类括号</div>
-                  </el-form-item>
-
-                  <el-divider content-position="left">高级补偿规则</el-divider>
-
-                  <el-form-item label="数字开头补偿前缀">
-                    <el-input v-model="namingConvention.numeric_prefix" placeholder="如：col_" />
-                    <div class="form-tip">如果转换后的列名以数字开头，将自动补齐此前缀</div>
-                  </el-form-item>
-
-                  <el-form-item label="拼音单词分隔符">
-                    <el-input v-model="namingConvention.pinyin_separator" placeholder="如：_" />
-                    <div class="form-tip">全拼模式下每个拼音字母之间的间隔符号</div>
-                  </el-form-item>
-
-                  <el-form-item label="括号英文提取长度">
-                    <el-input-number v-model="namingConvention.bracket_eng_min_len" :min="1" :max="10" />
-                    <div class="form-tip">括号内英文字段至少达到此长度才会被优先提取</div>
-                  </el-form-item>
-
-                  <el-form-item label="字典匹配模式">
-                    <el-select v-model="namingConvention.dict_match_mode" style="width: 100%;">
-                      <el-option label="包含匹配 (推荐，模糊识别)" value="contains" />
-                      <el-option label="精确匹配 (严格对应映射表)" value="exact" />
-                    </el-select>
-                    <div class="form-tip">数仓字典映射时，是匹配表头包含关键词还是必须完全一致</div>
-                  </el-form-item>
-                </el-form>
-              </div>
-
-              <div class="right-preview">
-                <!-- 规则试运行工具 -->
-                <div class="rule-test-section">
-                  <el-divider content-position="left"><el-icon><MagicStick /></el-icon> 规则试运行与调试</el-divider>
-                  <div class="test-container">
-                    <el-input 
-                      v-model="ruleTestInput" 
-                      placeholder="输入一个 Excel 中文表头进行测试，如：项目名称(Project)" 
-                      class="test-input"
-                      @keyup.enter="runRuleTest"
-                    >
-                      <template #append>
-                        <el-button @click="runRuleTest">立即试运行</el-button>
-                      </template>
-                    </el-input>
-                    <div v-if="ruleTestResult" class="test-result-box">
-                      <span class="res-label">生成列名：</span>
-                      <code class="res-value">{{ ruleTestResult }}</code>
-                      <el-button type="primary" link icon="Close" @click="ruleTestResult = ''" style="margin-left: auto;" />
-                    </div>
-                  </div>
-
-                  <!-- 优先级逻辑说明 -->
-                  <div class="logic-flow">
-                    <div class="logic-title">💡 列名转换 7 层优先级逻辑：</div>
-                    <el-steps direction="vertical" :active="7" finish-status="success" space="50px">
-                      <el-step title="优先级 1：括号内英文提取" description="检测 [ ] 或 ( ) 中的内容，符合长度则直取。" />
-                      <el-step title="优先级 2：连续英文识别" description="表头中包含超过 2 个字母的连续英文则优先提取。" />
-                      <el-step title="优先级 3：数仓字典映射" description="命中当前配置的“数仓字典”映射表。" />
-                      <el-step title="优先级 4：智能拼音缩写" description="汉字数量达到阈值时，转为首字母缩写（如 cjsj）。" />
-                      <el-step title="优先级 5：全拼规则补偿" description="短词转为全拼，并插入您设置的单词分隔符。" />
-                      <el-step title="优先级 6：非法字符清洗" description="剔除空格、括号等所有命中正则的非标准字符。" />
-                      <el-step title="优先级 7：保底/前缀处理" description="数字开头补偿、最大长度截断以及 field_ 序号保底。" />
-                    </el-steps>
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -172,7 +152,7 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
 
-const activeTab = ref('dict')
+const activeTab = ref('naming')
 const dwDictList = ref([])
 const kwPairsList = ref([])
 const namingConvention = ref({
@@ -305,100 +285,116 @@ onMounted(() => {
 }
 
 .dict-actions {
-  margin-bottom: 10px;
+  margin-bottom: 20px;
   display: flex;
   justify-content: flex-end;
 }
 
-.settings-form {
-  padding: 10px 0;
-  width: 100%;
-}
-
 .naming-layout {
   display: flex;
-  gap: 40px;
+  gap: 32px;
   align-items: flex-start;
 }
 
 .left-config {
+  flex: 0 0 420px;
+}
+
+.right-dict {
   flex: 1;
-  max-width: 600px;
+  min-width: 0;
 }
 
-.right-preview {
-  flex: 1;
-  min-width: 450px;
+.mini-form :deep(.el-form-item) {
+  margin-bottom: 14px;
 }
 
-.rule-test-section {
-  padding: 20px 24px;
-  background: #f8fafc;
-  border-radius: 12px;
-  border: 1px solid #e2e8f0;
-  margin-top: 10px; /* To match form's top padding */
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
 }
 
-.rule-test-section :deep(.el-divider--horizontal) {
-  margin-top: 5px; /* Small adjustment for perfect visual alignment */
-}
-
-.test-container {
-  margin-bottom: 30px;
-}
-
-.test-input {
-  max-width: 500px;
-}
-
-.test-result-box {
-  margin-top: 16px;
-  padding: 12px 20px;
-  background: white;
-  border-radius: 8px;
+.section-header, .section-header-flex {
+  margin-bottom: 16px;
   display: flex;
   align-items: center;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-  border: 1px solid #e2e8f0;
-  max-width: 500px;
 }
 
-.res-label {
-  font-size: 14px;
-  color: #64748b;
-}
-
-.res-value {
-  font-family: 'JetBrains Mono', monospace;
-  font-weight: bold;
-  font-size: 16px;
-  color: #2563eb;
-  background: #eff6ff;
-  padding: 4px 10px;
-  border-radius: 4px;
-}
-
-.logic-flow {
-  border-top: 1px solid #e2e8f0;
-  padding-top: 20px;
-}
-
-.logic-title {
-  font-weight: bold;
-  color: #475569;
-  margin-bottom: 20px;
+.section-header-flex {
+  justify-content: space-between;
 }
 
 .section-title {
-  font-weight: bold;
-  margin-bottom: 10px;
-  color: #333;
+  font-weight: 700;
+  color: #1e293b;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
 }
 
-.keyword-tip, .form-tip {
-  margin-top: 5px;
+.form-tip {
   font-size: 12px;
-  color: #999;
+  color: #64748b;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.test-container {
+  margin-bottom: 20px;
+}
+
+.test-result-box.mini {
+  margin-top: 12px;
+  padding: 8px 16px;
+  background: #fdfdfd;
+  border-radius: 6px;
+  border: 1px dashed #cbd5e1;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+}
+
+.res-value {
+  font-family: 'JetBrains Mono', 'Monaco', monospace;
+  color: #2563eb;
+  font-weight: 700;
+  margin-left: 4px;
+}
+
+.logic-flow-horizontal.mini {
+  background: #f8fafc;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.logic-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 8px;
+}
+
+.flow-steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.flow-steps .highlighter {
+  color: #2563eb;
+  font-weight: 700;
+  background: #eff6ff;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.dict-table-compact :deep(.el-table__cell) {
+  padding: 4px 0;
 }
 
 :deep(.el-tabs__content) {

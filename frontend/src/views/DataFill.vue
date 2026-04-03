@@ -407,14 +407,44 @@ const formatDateTime = (val) => {
 
 const formatCellValue = (val) => {
   if (val === null || val === undefined) return ''
+  
+  // 处理对象类型 (日期或 JSON 对象)
   if (typeof val === 'object') {
     if (val instanceof Date) return formatDateTime(val)
+    
+    // 特殊处理：PostgreSQL 的 PGobject 对象 (Jackson 序列化后会带 {type: 'jsonb', value: '...'})
+    if (val.type && val.value !== undefined && (val.type === 'jsonb' || val.type === 'json')) {
+      const jsonStr = val.value
+      try {
+        const parsed = JSON.parse(jsonStr)
+        return JSON.stringify(parsed)
+      } catch (e) {
+        // 如果解析失败，至少把转义符去了
+        return String(jsonStr).replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+      }
+    }
+
     try {
+      // 普通对象直接序列化
       return JSON.stringify(val)
     } catch (e) {
       return String(val)
     }
   }
+
+  // 处理字符串类型 (可能是 JSON 字符串)
+  if (typeof val === 'string') {
+    const trimmed = val.trim()
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        const parsed = JSON.parse(trimmed)
+        return JSON.stringify(parsed)
+      } catch (e) {
+        return val.replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+      }
+    }
+  }
+  
   return val
 }
 
@@ -623,6 +653,12 @@ const downloadTemplate = () => window.open(`/api/fill/template/${formId}`)
 
 const handleUpload = async (options) => {
   const file = options.file
+  
+  // 增加前端初步校验：20MB 限制（与后端配置一致）
+  if (file.size > 20 * 1024 * 1024) {
+    ElMessage.error('上传文件过大（超过 20MB），为了确保系统稳定性，请将数据分批进行导入。')
+    return
+  }
   
   const loading = ElLoading.service({
     lock: true,
