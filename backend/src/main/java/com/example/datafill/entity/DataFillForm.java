@@ -30,8 +30,9 @@ public class DataFillForm {
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
     private LocalDateTime deadline;
 
-    /** 提醒天数（距离截止时间还剩多少天时发提醒，不配置默认 3 天） */
-    private Integer reminderDays;
+    /** 提前提醒天数（支持小数，如 0.5 代表提前 12 小时） */
+    @TableField("reminder_days")
+    private Double reminderDays;
 
     /** 提醒策略：DEADLINE=按固定截止时间一次性；MONTHLY=每月某日；WEEKLY=每周某天 */
     private String reminderMode;
@@ -82,7 +83,9 @@ public class DataFillForm {
     @TableField("group_tag")
     private String groupTag;
 
-    /** 是否为外部绑定表 (true: 仅删除元数据; false: 重命名物理表) */
+    /** 基于业务或填报规范的描述说明（展示在填报页顶部） */
+    private String description;
+
     @TableField("is_external")
     private Boolean isExternal;
 }

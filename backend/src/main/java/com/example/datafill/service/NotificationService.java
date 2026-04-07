@@ -185,6 +185,14 @@ public class NotificationService {
         }
 
         LocalDateTime cycleStart = calculateCycleStartTime(form.getReminderMode(), form.getDeadline());
+        LocalDateTime cycleEnd = form.getDeadline() != null ? form.getDeadline() : LocalDateTime.now().plusYears(10);
+
+        // 避免同一表单、同一周期重复创建截止警告
+        int existCount = notificationMapper.countNotificationByFormAndTypeInTimeRange(formId, "DEADLINE_WARNING", cycleStart, cycleEnd);
+        if (existCount > 0) {
+            log.info("表单 {} 在当前周期(自 {}) 的截止警告通知已存在，跳过创建", formId, cycleStart);
+            return;
+        }
 
         for (String email : recipients) {
 

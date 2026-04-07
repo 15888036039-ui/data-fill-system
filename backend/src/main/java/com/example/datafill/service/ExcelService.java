@@ -450,33 +450,26 @@ public class ExcelService {
 
             Sheet sheet = workbook.createSheet(form.getName() != null ? form.getName() : form.getTableName());
 
-            // 第一行：导入识别表头（参考模板场景为“原始 excel 表头”）
-
+            // 仅保留一行：业务表头
             Row headerRow = sheet.createRow(0);
-
-            // 第二行：中文显示名（给填报人看的，纯名称，避免被误当数据）
-            Row displayRow = sheet.createRow(1);
-
             int colIndex = 0;
 
             for (String header : templateHeaders) {
-
                 Cell headerCell = headerRow.createCell(colIndex);
-
-                headerCell.setCellValue(header);
-
-                Cell displayCell = displayRow.createCell(colIndex);
-
+                // 优先使用显示名称（字段中文名），对于参考模板则直接使用其存储的原始 excelHeader (header 变量)
                 String display = displayNameByHeader.getOrDefault(header, header);
 
-                displayCell.setCellValue(display);
+                // 如果是参考模板创建的表单，header 变量本身就是原始 excel 表头，直接设置即可
+                // 如果是常规表单，header 是数据库字段名，display 是字段中文名
+                if (form.getReferenceTemplateConfig() != null && !form.getReferenceTemplateConfig().trim().isEmpty()) {
+                    headerCell.setCellValue(header);
+                } else {
+                    headerCell.setCellValue(display);
+                }
 
                 // 自适应列宽
-
                 sheet.autoSizeColumn(colIndex);
-
                 colIndex++;
-
             }
 
             workbook.write(outputStream);
@@ -681,7 +674,7 @@ public class ExcelService {
                     continue;
                 businessFieldColumns.add(col);
                 if (Boolean.TRUE.equals(f.getRequired())) {
-                    String display = (f.getName() == null || f.getName().isBlank()) ? origCol : f.getName();
+                    String display = (f.getName() == null || f.getName().trim().isEmpty()) ? origCol : f.getName();
                     requiredFieldDisplayByColumn.put(origCol, display);
                 }
             }
@@ -720,12 +713,12 @@ public class ExcelService {
                         cachedIsBusinessCol[c] = businessFieldColumns.contains(lowerDbCol);
                         cachedIsJsonCol[c] = jsonColumnNames.contains(lowerDbCol);
                     }
-                    cachedJsonKeys[c] = !headers[c].isBlank() ? headers[c].trim() : cachedPinyinHeaders[c];
+                    cachedJsonKeys[c] = !headers[c].trim().isEmpty() ? headers[c].trim() : cachedPinyinHeaders[c];
 
                     actualHeaderIndexMap.putIfAbsent(headers[c].trim(), c);
                     actualHeaderIndexMap.putIfAbsent(headers[c].replaceAll("[\\r\\n]+", "").trim(), c);
                     actualHeaderIndexMap.putIfAbsent(normalizeHeaderKey(headers[c]), c);
-                    if (hasReferenceMappings && dbCol == null && !headers[c].isBlank()) {
+                    if (hasReferenceMappings && dbCol == null && !headers[c].trim().isEmpty()) {
                         unresolvedHeaders.add(headers[c].trim());
                     }
                 }
@@ -766,8 +759,8 @@ public class ExcelService {
                                 if (mappedCol != null && !jsonColumnNames.contains(mappedCol.toLowerCase()))
                                     continue;
 
-                                String source = (h == null || h.isBlank() || "...".equals(h.trim())) ? mappedCol : h;
-                                if (source == null || source.isBlank())
+                                String source = (h == null || h.trim().isEmpty() || "...".equals(h.trim())) ? mappedCol : h;
+                                if (source == null || source.trim().isEmpty())
                                     continue;
                                 String name = source.toLowerCase().trim().replaceAll("\\d+$", "").replaceAll("[_\\s]+$",
                                         "");
@@ -1023,7 +1016,7 @@ public class ExcelService {
                 }
 
                 rowData.put(EXCEL_ROW_META_KEY, row.getRowNum() + 1);
-                if (creator != null && !creator.isBlank())
+                if (creator != null && !creator.trim().isEmpty())
                     rowData.put("creator", creator);
                 buffer.add(rowData);
                 if (totalCount + buffer.size() > maxRows) {
@@ -1131,27 +1124,27 @@ public class ExcelService {
         for (int columnIndex = 1; columnIndex < maxColumnSize; columnIndex++) {
             String dbColumn = readCell(dbColumnsRow, columnIndex);
             String excelHeader = readCell(excelHeadersRow, columnIndex);
-            if (!dbColumn.isBlank()) {
+            if (!dbColumn.trim().isEmpty()) {
                 activeJsonColumn = dbColumn.toLowerCase().endsWith("_json") ? dbColumn : null;
             }
             // 参考模板里有些列用 "..." 或者表头为空做了省略展示。
             // 我们不能因为 excelHeader 为空就跳过映射，否则 kv 对应的列索引会丢失。
             // 这里仅在 dbColumn 也为空时才跳过。
-            if (excelHeader.isBlank() && dbColumn.isBlank()) {
+            if (excelHeader.trim().isEmpty() && dbColumn.trim().isEmpty()) {
                 continue;
             }
 
-            if (excelHeader.isBlank()) {
-                if (!dbColumn.isBlank() && !dbColumn.toLowerCase().endsWith("_json")) {
+            if (excelHeader.trim().isEmpty()) {
+                if (!dbColumn.trim().isEmpty() && !dbColumn.toLowerCase().endsWith("_json")) {
                     activeJsonColumn = null;
                 }
             }
             String mappedColumn = dbColumn;
             boolean jsonMapped = false;
-            if (mappedColumn.isBlank() && activeJsonColumn != null) {
+            if (mappedColumn.trim().isEmpty() && activeJsonColumn != null) {
                 mappedColumn = activeJsonColumn;
                 jsonMapped = true;
-            } else if (!mappedColumn.isBlank() && mappedColumn.toLowerCase().endsWith("_json")) {
+            } else if (!mappedColumn.trim().isEmpty() && mappedColumn.toLowerCase().endsWith("_json")) {
                 jsonMapped = true;
             }
 
@@ -1161,10 +1154,10 @@ public class ExcelService {
             com.example.datafill.dto.ReferenceFieldMapping mapping = new com.example.datafill.dto.ReferenceFieldMapping(
                     sequentialIndex, excelHeader, mappedColumn, jsonMapped);
             headerMappings.add(mapping);
-            if (!mappedColumn.isBlank() && mappedColumn.toLowerCase().endsWith("_json")) {
+            if (!mappedColumn.trim().isEmpty() && mappedColumn.toLowerCase().endsWith("_json")) {
                 jsonColumnMappings.computeIfAbsent(mappedColumn, key -> new ArrayList<>()).add(mapping);
             }
-            if (!dbColumn.isBlank() && !dbColumn.toLowerCase().endsWith("_json")) {
+            if (!dbColumn.trim().isEmpty() && !dbColumn.toLowerCase().endsWith("_json")) {
                 activeJsonColumn = null;
             }
         }
@@ -1256,13 +1249,13 @@ public class ExcelService {
 
         String tableName = tableNameRowIndex >= 0 ? readCell(rows.get(tableNameRowIndex), 1) : "";
         String tableComment = tableCommentRowIndex >= 0 ? readCell(rows.get(tableCommentRowIndex), 1) : "";
-        if (tableName.isBlank()) {
+        if (tableName.trim().isEmpty()) {
             throw new RuntimeException("未识别到参考模板中的表名");
         }
 
         com.example.datafill.dto.ReferenceTemplateParseResult result = new com.example.datafill.dto.ReferenceTemplateParseResult();
         result.setTableName(tableName);
-        result.setTableComment(tableComment.isBlank() ? tableName : tableComment);
+        result.setTableComment(tableComment.trim().isEmpty() ? tableName : tableComment);
         result.setFilterColumns(new ArrayList<>(filterColumnSet));
         result.setFields(new ArrayList<>(fieldMap.values()));
         result.setHeaderMappings(headerMappings);
@@ -1594,7 +1587,7 @@ public class ExcelService {
 
                 List<Integer> suffixNums = new ArrayList<>();
                 for (String s : pair.getSuffixes()) {
-                    if (s == null || s.isBlank())
+                    if (s == null || s.trim().isEmpty())
                         continue;
                     try {
                         suffixNums.add(Integer.parseInt(s));
@@ -1952,7 +1945,7 @@ public class ExcelService {
             field.setColumnName(columnName);
             field.setOriginalColumnName(columnName);
             String comment = asText(row.get("column_comment"));
-            field.setName((comment != null && !comment.isBlank()) ? comment : columnName);
+            field.setName((comment != null && !comment.trim().isEmpty()) ? comment : columnName);
 
             String dbType = buildPgType(row);
             field.setDbType(dbType);

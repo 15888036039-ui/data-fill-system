@@ -208,7 +208,7 @@ public class EmailService {
                     <div style="margin: 20px 0; text-align: center;">
                         <a href="%s" style="background-color: #ef4444; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">立即前往系统</a>
                     </div>
-                    <p>如果您需要继续填报数据，请联系管理员申请特别批准。</p>
+                    <p>请在此时间点前及时完成数据填报，逾期后该表单将停止接收新的数据，请合理安排填报进度。</p>
                     <p style="word-break: break-all;">链接地址：<a href="%s" style="color: #ef4444;">%s</a></p>
                     <hr style="border: none; border-top: 1px solid #fee2e2; margin: 20px 0;">
                     <p style="color: #64748b; font-size: 12px; text-align: center;">

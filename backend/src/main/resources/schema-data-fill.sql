@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS data_fill_form (
     -- 新增字段：状态 / 截止时间 / 提醒天数 / 提醒策略 / 每月日 / 每周几 / 提醒时间 / 收件人邮箱 / 填报周期（天）/ 允许填报用户
     status          VARCHAR(32) DEFAULT 'ACTIVE',
     deadline        TIMESTAMP,
-    reminder_days   INTEGER,
+    reminder_days   NUMERIC(5,2),
     reminder_mode   VARCHAR(32),
     monthly_day     INTEGER,
     weekly_day_of_week INTEGER,
@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS data_fill_form (
     schema_name     VARCHAR(100) DEFAULT 'public',
     group_tag       VARCHAR(255),
     is_external     BOOLEAN DEFAULT FALSE,
+    description     TEXT,
     create_time     TIMESTAMP,
     update_time     TIMESTAMP,
     UNIQUE (schema_name, table_name)
@@ -41,7 +42,10 @@ ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS deadline TIMESTAMP;
 
 ALTER TABLE data_fill_form
-    ADD COLUMN IF NOT EXISTS reminder_days INTEGER;
+    ADD COLUMN IF NOT EXISTS reminder_days NUMERIC(5,2);
+    
+-- 强制执行：将旧版本的数据表设计中已经生成的 INTEGER 类型强制转为浮点，否则界面虽然传3.6，到层底会自动被 PGSQL 隐式进位转成4
+ALTER TABLE data_fill_form ALTER COLUMN reminder_days TYPE NUMERIC(5,2);
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS reminder_mode VARCHAR(32);
@@ -90,6 +94,9 @@ ALTER TABLE data_fill_form
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS is_external BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS description TEXT;
 
 -- 修正唯一性约束：从单一 table_name 改为 (schema_name, table_name) 复合约束
 -- 1. 移除旧的单列唯一约束

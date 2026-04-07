@@ -24,21 +24,33 @@
       <div v-if="timeLeftMessage || lockStatus.hasSubmitted" 
            class="slim-banner" 
            :class="{ 
-             'warning': isNearDeadline || (lockStatus.hasSubmitted && !lockStatus.isLocked), 
+             'warning': !lockStatus.hasSubmitted && isNearDeadline, 
              'expired': isExpired || lockStatus.isLocked, 
-             'success': lockStatus.hasSubmitted && !lockStatus.isLocked 
+             'success': lockStatus.hasSubmitted 
            }">
         <el-icon v-if="lockStatus.isLocked"><CircleCheck /></el-icon>
+        <el-icon v-else-if="lockStatus.hasSubmitted"><CircleCheck /></el-icon>
         <el-icon v-else><AlarmClock /></el-icon>
         
         <span v-if="lockStatus.hasSubmitted">
-          已完成填报，您可以根据需要随时调整已提交的数据。
+          本期填报任务已完成！<span v-if="nextFillTime" style="margin-left: 10px; font-weight: 500;">下次填报时间：{{ nextFillTime }}</span>
         </span>
         <span v-else-if="lockStatus.isLocked">
           填报锁定 {{ isAdmin ? '(管理员模式)' : '' }}
         </span>
         <span v-else>{{ timeLeftMessage }}</span>
       </div>
+
+      <!-- 填报指引/注释框 (新增需求 #3) -->
+      <el-alert
+        v-if="formMeta?.description"
+        :title="formMeta?.name + ' - 填报指引'"
+        type="info"
+        :description="formMeta.description"
+        show-icon
+        :closable="true"
+        class="description-banner"
+      />
 
       <!-- 填报区域 (新增/编辑) -->
       <el-dialog 
@@ -128,24 +140,26 @@
         </div>
 
         <div class="toolbar-row filter-line">
-          <div class="filter-inputs">
+          <div class="filter-inputs-group">
             <template v-for="field in filterFields" :key="'filter_'+field.columnName">
-              <el-select
-                v-model="searchParams[field.columnName]"
-                :placeholder="field.name"
-                size="default"
-                clearable
-                filterable
-                class="filter-select"
-                @change="handleSearch"
-              >
-                <el-option
-                  v-for="opt in getFilterValues(field)"
-                  :key="opt"
-                  :label="opt"
-                  :value="opt"
-                />
-              </el-select>
+              <div class="filter-item">
+                <span class="filter-label">{{ field.name }}</span>
+                <el-select
+                  v-model="searchParams[field.columnName]"
+                  :placeholder="'请选择' + field.name"
+                  size="default"
+                  clearable
+                  filterable
+                  class="filter-select"
+                >
+                  <el-option
+                    v-for="opt in getFilterValues(field)"
+                    :key="opt"
+                    :label="opt"
+                    :value="opt"
+                  />
+                </el-select>
+              </div>
             </template>
             <div class="filter-actions-inline">
               <el-button type="primary" size="default" icon="Search" @click="handleSearch">查询</el-button>
@@ -350,6 +364,47 @@ const lockStatus = ref({
 
 const isLocked = computed(() => {
   return lockStatus.value.isLocked && !isAdmin.value
+})
+
+const nextFillTime = computed(() => {
+  // 优先使用后端返回的权威值（与 UserTasks 列表完全一致）
+  if (lockStatus.value.nextFillTime) {
+    const d = new Date(lockStatus.value.nextFillTime)
+    if (!isNaN(d.getTime())) {
+      const year = d.getFullYear()
+      const month = d.getMonth() + 1
+      const day = d.getDate()
+      const hours = String(d.getHours()).padStart(2, '0')
+      const minutes = String(d.getMinutes()).padStart(2, '0')
+      return `${year}/${month}/${day} ${hours}:${minutes}:00`
+    }
+  }
+
+  // fallback: 本地估算（仅在后端尚未返回时使用）
+  if (!formMeta.value || !formMeta.value.deadline) return null
+  const mode = formMeta.value.reminderMode
+  if (!mode || mode === 'DEADLINE') return null
+  
+  const rDays = formMeta.value.reminderDays || 0
+  const deadline = new Date(formMeta.value.deadline)
+  const lastReminder = new Date(deadline.getTime() - rDays * 24 * 60 * 60 * 1000)
+  
+  let nextDate = new Date(lastReminder)
+  if (mode === 'WEEKLY') {
+    nextDate.setDate(nextDate.getDate() + 7)
+  } else if (mode === 'MONTHLY') {
+    nextDate.setMonth(nextDate.getMonth() + 1)
+  } else {
+    return null
+  }
+  
+  const year = nextDate.getFullYear()
+  const month = nextDate.getMonth() + 1
+  const day = nextDate.getDate()
+  const hours = String(nextDate.getHours()).padStart(2, '0')
+  const minutes = String(nextDate.getMinutes()).padStart(2, '0')
+  
+  return `${year}/${month}/${day} ${hours}:${minutes}:00`
 })
 
 const graceTimeLeft = ref('')
@@ -935,5 +990,49 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   font-size: 18px;
   font-weight: 700;
   color: #0f172a;
+}
+
+.description-banner {
+  margin-bottom: 20px;
+  border: 1px solid #bae6fd;
+  background-color: #f0f9ff;
+  border-radius: 8px;
+}
+
+:deep(.description-banner .el-alert__title) {
+  font-weight: 700;
+  font-size: 15px;
+  color: #0369a1;
+}
+
+:deep(.description-banner .el-alert__description) {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #0c4a6e;
+  margin-top: 4px;
+}
+
+.filter-inputs-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.filter-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.filter-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.filter-select {
+  width: 180px;
 }
 </style>

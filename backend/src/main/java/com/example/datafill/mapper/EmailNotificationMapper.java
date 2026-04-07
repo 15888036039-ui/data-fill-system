@@ -28,4 +28,10 @@ public interface EmailNotificationMapper extends BaseMapper<EmailNotification> {
      */
     @Select("SELECT COUNT(1) FROM email_notification WHERE form_id = #{formId} AND notification_type = #{type} AND scheduled_time = #{scheduledTime}")
     int countNotificationByFormAndTypeAndTime(String formId, String type, LocalDateTime scheduledTime);
+
+    /**
+     * 判断某个表单在指定时间范围内是否已经存在某类型通知
+     */
+    @Select("SELECT COUNT(1) FROM email_notification WHERE form_id = #{formId} AND notification_type = #{type} AND create_time >= #{startTime} AND create_time <= #{endTime}")
+    int countNotificationByFormAndTypeInTimeRange(String formId, String type, LocalDateTime startTime, LocalDateTime endTime);
 }

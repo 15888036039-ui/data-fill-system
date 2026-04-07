@@ -14,4 +14,12 @@ public class FieldDef {
     private Boolean filterable;// 是否作为查询筛选条件
     private String dbType;     // 物理数据库类型，例如: VARCHAR(255), INTEGER, TEXT
     private List<String> options; // 下拉框选项 (仅给前端使用，建表时忽略)
+    
+    // 校验相关
+    private String pattern;      // 正则校验表达式
+    private String patternMsg;   // 正则校验失败提示
+    private Double min;          // 最小值 (仅数字)
+    private Double max;          // 最大值 (仅数字)
+    private Integer minLength;   // 最小长度 (仅文本)
+    private Integer maxLength;   // 最大长度 (仅文本与字段定义一致)
 }

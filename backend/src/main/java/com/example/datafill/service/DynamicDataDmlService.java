@@ -36,7 +36,7 @@ public class DynamicDataDmlService {
 
     private static final java.util.Set<String> SYSTEM_FIELDS = new java.util.HashSet<>(Arrays.asList(
         "id", "load_user", "creator", "w_insert_dt", "w_update_dt", 
-        "create_time", "update_time", "is_deleted", "extra_data", "job_instance",
+        "create_time", "update_time", "is_deleted", "delete_flag", "extra_data", "job_instance",
         "applicantemail", "applicantname", "applicant_email", "applicant_name",
         "ctime", "mtime", "created_at", "updated_at"
     ));
@@ -93,6 +93,121 @@ public class DynamicDataDmlService {
             return normalized;
         }
         return null;
+    }
+
+    private boolean isNumericType(String dbType) {
+        if (dbType == null) return false;
+        String type = dbType.toLowerCase();
+        return type.contains("int") || type.contains("numeric") || type.contains("decimal") || type.contains("real") || type.contains("double") || type.contains("float") || type.contains("serial") || type.equals("smallint") || type.equals("bigint");
+    }
+
+    private void validateRecord(DataFillForm form, Map<String, Object> rowData, Map<String, String> physicalColumns) {
+        List<FieldDef> fields;
+        try {
+            fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
+        } catch (Exception e) {
+            return; 
+        }
+
+        for (FieldDef field : fields) {
+            String colName = field.getColumnName();
+            if (colName == null) continue;
+            
+            Object val = rowData.get(colName);
+            if (val == null) {
+                for (String key : rowData.keySet()) {
+                    if (key.equalsIgnoreCase(colName)) {
+                        val = rowData.get(key);
+                        break;
+                    }
+                }
+            }
+
+            // 1. Required Check
+            if (Boolean.TRUE.equals(field.getRequired())) {
+                if (val == null || (val instanceof String && ((String) val).trim().isEmpty())) {
+                    throw new RuntimeException("字段「" + field.getName() + "」为必填项");
+                }
+            }
+
+            if (val == null || (val instanceof String && ((String) val).trim().isEmpty())) continue;
+
+            String dbType = physicalColumns.get(colName.toLowerCase());
+            
+            // 2. Type & Value Check
+            try {
+                Object converted = convertValueForDb(val, dbType);
+                
+                if (isNumericType(dbType) && converted instanceof String) {
+                     throw new RuntimeException("字段「" + field.getName() + "」需为数字类型");
+                }
+                if ((dbType.contains("timestamp") || dbType.contains("date")) && converted instanceof String) {
+                     throw new RuntimeException("字段「" + field.getName() + "」日期格式不正确");
+                }
+                
+                if (converted instanceof java.math.BigDecimal || converted instanceof Number) {
+                    double numVal = (converted instanceof java.math.BigDecimal) ? ((java.math.BigDecimal) converted).doubleValue() : ((Number) converted).doubleValue();
+                    if (field.getMin() != null && numVal < field.getMin()) {
+                        throw new RuntimeException("字段「" + field.getName() + "」数值不能小于 " + field.getMin());
+                    }
+                    if (field.getMax() != null && numVal > field.getMax()) {
+                        throw new RuntimeException("字段「" + field.getName() + "」数值不能大于 " + field.getMax());
+                    }
+                }
+                
+                String strVal = null;
+                if (val instanceof String) {
+                    strVal = (String) val;
+                } else if ((field.getPattern() != null && !field.getPattern().trim().isEmpty()) || field.getMinLength() != null || field.getMaxLength() != null) {
+                    if (val instanceof Double) {
+                        double d = (Double) val;
+                        if (Math.abs(d - (long) d) < 1e-9) {
+                            strVal = String.valueOf((long) d);
+                        } else {
+                            strVal = String.valueOf(d);
+                        }
+                    } else if (val instanceof Float) {
+                        float f = (Float) val;
+                        if (Math.abs(f - (int) f) < 1e-9) {
+                            strVal = String.valueOf((int) f);
+                        } else {
+                            strVal = String.valueOf(f);
+                        }
+                    } else if (val instanceof java.math.BigDecimal) {
+                        strVal = ((java.math.BigDecimal) val).toPlainString();
+                    } else if (val instanceof java.util.Date) {
+                        strVal = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format((java.util.Date) val);
+                    } else if (val instanceof java.time.LocalDateTime) {
+                        strVal = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").format((java.time.LocalDateTime) val);
+                    } else if (val instanceof java.time.LocalDate) {
+                        strVal = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd").format((java.time.LocalDate) val);
+                    } else {
+                        strVal = String.valueOf(val);
+                    }
+                }
+
+                if (strVal != null) {
+                    if (field.getMinLength() != null && strVal.length() < field.getMinLength()) {
+                         throw new RuntimeException("字段「" + field.getName() + "」长度不能少于 " + field.getMinLength() + " 个字符");
+                    }
+                    if (field.getMaxLength() != null && strVal.length() > field.getMaxLength()) {
+                         throw new RuntimeException("字段「" + field.getName() + "」长度不能超过 " + field.getMaxLength() + " 个字符");
+                    }
+                    if (field.getPattern() != null && !field.getPattern().trim().isEmpty()) {
+                        if (!strVal.matches(field.getPattern())) {
+                            String msg = (field.getPatternMsg() != null && !field.getPatternMsg().trim().isEmpty()) 
+                                        ? field.getPatternMsg() 
+                                        : "字段「" + field.getName() + "」校验未通过";
+                            throw new RuntimeException(msg);
+                        }
+                    }
+                }
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new RuntimeException("字段「" + field.getName() + "」格式错误");
+            }
+        }
     }
 
     private Object convertValueForDb(Object val, String dbType) {
@@ -203,6 +318,8 @@ public class DynamicDataDmlService {
         String fullTableName = schema + "." + tableName;
 
         java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, tableName);
+        validateRecord(form, rowData, physicalColumns);
+        
         List<String> columns = new ArrayList<>();
         List<String> placeholders = new ArrayList<>();
         List<Object> args = new ArrayList<>();
@@ -287,6 +404,19 @@ public class DynamicDataDmlService {
         try {
             fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
         } catch (Exception e) { throw new RuntimeException(e); }
+
+        for (Map<String, Object> row : rows) {
+            try {
+                validateRecord(form, row, physicalColumns);
+            } catch (Exception e) {
+                Object excelRowObj = row.get("__excel_row_num__");
+                if (excelRowObj != null) {
+                    throw new RuntimeException("数据格式错误（第 " + excelRowObj + " 行）：" + e.getMessage(), e);
+                } else {
+                    throw e;
+                }
+            }
+        }
 
         List<String> columns = new ArrayList<>();
         if (hasColumn(physicalColumns, "id")) columns.add("\"id\"");
@@ -417,6 +547,7 @@ public class DynamicDataDmlService {
         String tableName = form.getTableName();
         String fullTableName = schema + "." + tableName;
         java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, tableName);
+        validateRecord(form, rowData, physicalColumns);
 
         StringJoiner sets = new StringJoiner(",");
         List<Object> args = new ArrayList<>();
@@ -487,6 +618,78 @@ public class DynamicDataDmlService {
         Map<String, Object> res = new HashMap<>();
         res.put("total", total);
         res.put("records", rows);
+
+        // === 追加: 为 DataFill.vue 提供周期感知的 lockStatus ===
+        Map<String, Object> lockStatusMap = new HashMap<>();
+        lockStatusMap.put("isLocked", false);
+        lockStatusMap.put("hasSubmitted", false);
+        lockStatusMap.put("graceEndTime", null);
+        lockStatusMap.put("nextFillTime", null);
+
+        try {
+            LocalDateTime deadline = form.getDeadline();
+            String mode = form.getReminderMode();
+            double remDays = form.getReminderDays() != null ? form.getReminderDays() : 3.0;
+            LocalDateTime now = LocalDateTime.now();
+
+            // 1. 查询用户最近一次填报时间 (与 getUserTasks 完全一致的探测逻辑)
+            LocalDateTime lastSubmitTime = null;
+            if (userEmail != null && !userEmail.trim().isEmpty()) {
+                UserFillLog lastLog = userFillLogMapper.selectLastByFormAndUser(formId, userEmail);
+                lastSubmitTime = (lastLog != null && lastLog.getSubmitTime() != null) ? lastLog.getSubmitTime() : null;
+
+                // fallback: 从物理表直接探测
+                if (lastSubmitTime == null && form.getTableName() != null) {
+                    try {
+                        String checkSql = String.format("SELECT MAX(w_insert_dt) FROM %s WHERE load_user = ?",
+                                SqlUtil.quoteTable(fullTableName));
+                        lastSubmitTime = jdbcTemplate.queryForObject(checkSql, LocalDateTime.class, userEmail);
+                    } catch (Exception ignored) {}
+                }
+            }
+
+            // 2. 判定本期是否已完成
+            boolean completedCurrentCycle = false;
+            LocalDateTime nextFillTime = null;
+
+            if ("WEEKLY".equalsIgnoreCase(mode) || "MONTHLY".equalsIgnoreCase(mode)) {
+                if (deadline != null) {
+                    java.time.LocalTime rt = java.time.LocalTime.of(9, 0);
+                    try {
+                        if (form.getReminderTime() != null && !form.getReminderTime().trim().isEmpty()) {
+                            String[] parts = form.getReminderTime().split(":");
+                            int h = Integer.parseInt(parts[0]);
+                            int m = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
+                            rt = java.time.LocalTime.of(h, m);
+                        }
+                    } catch (Exception ignored) {}
+
+                    LocalDateTime startTimeOfCycle = deadline.minusHours((long)(remDays * 24)).with(rt).withNano(0);
+
+                    if (lastSubmitTime != null && lastSubmitTime.isAfter(startTimeOfCycle)) {
+                        completedCurrentCycle = true;
+                        if ("WEEKLY".equalsIgnoreCase(mode)) {
+                            nextFillTime = startTimeOfCycle.plusDays(7);
+                        } else {
+                            nextFillTime = startTimeOfCycle.plusMonths(1);
+                        }
+                    }
+                }
+            } else {
+                Integer cycleDays = form.getCycleDays();
+                if (cycleDays != null && cycleDays > 0 && lastSubmitTime != null) {
+                    nextFillTime = lastSubmitTime.plusDays(cycleDays);
+                    completedCurrentCycle = now.isBefore(nextFillTime);
+                }
+            }
+
+            lockStatusMap.put("hasSubmitted", completedCurrentCycle);
+            lockStatusMap.put("nextFillTime", nextFillTime);
+        } catch (Exception e) {
+            log.warn("计算 lockStatus 出错: {}", e.getMessage());
+        }
+
+        res.put("lockStatus", lockStatusMap);
         return res;
     }
 
@@ -521,7 +724,9 @@ public class DynamicDataDmlService {
                         .append("\" IS NOT NULL ");
                     
                     List<Object> args = new ArrayList<>();
-                    if (hasColumn(physicalColumns, "is_deleted")) {
+                    if (hasColumn(physicalColumns, "delete_flag")) {
+                        sql.append(" AND (delete_flag IS NULL OR delete_flag = FALSE) ");
+                    } else if (hasColumn(physicalColumns, "is_deleted")) {
                         sql.append(" AND (is_deleted IS NULL OR is_deleted = 0) ");
                     }
                     if (!isAdmin && operatorEmail != null && hasColumn(physicalColumns, "load_user")) {
@@ -552,7 +757,9 @@ public class DynamicDataDmlService {
         StringJoiner ps = new StringJoiner(",");
         for (int i = 0; i < dataIds.size(); i++) ps.add("?");
         
-        if (hasColumn(physicalColumns, "is_deleted") && !isHardDeleteMode) {
+        if (hasColumn(physicalColumns, "delete_flag") && !isHardDeleteMode) {
+            jdbcTemplate.update(String.format("UPDATE %s SET delete_flag=TRUE WHERE id IN (%s)", SqlUtil.quoteTable(fullTableName), ps), dataIds.toArray());
+        } else if (hasColumn(physicalColumns, "is_deleted") && !isHardDeleteMode) {
             jdbcTemplate.update(String.format("UPDATE %s SET is_deleted=1 WHERE id IN (%s)", SqlUtil.quoteTable(fullTableName), ps), dataIds.toArray());
         } else {
             jdbcTemplate.update(String.format("DELETE FROM %s WHERE id IN (%s)", SqlUtil.quoteTable(fullTableName), ps), dataIds.toArray());
@@ -575,7 +782,9 @@ public class DynamicDataDmlService {
             args.add(operatorEmail);
         }
 
-        if (hasColumn(physicalColumns, "is_deleted") && !isHardDeleteMode) {
+        if (hasColumn(physicalColumns, "delete_flag") && !isHardDeleteMode) {
+            jdbcTemplate.update(String.format("UPDATE %s SET delete_flag=TRUE %s", SqlUtil.quoteTable(fullTableName), where), args.toArray());
+        } else if (hasColumn(physicalColumns, "is_deleted") && !isHardDeleteMode) {
             jdbcTemplate.update(String.format("UPDATE %s SET is_deleted=1 %s", SqlUtil.quoteTable(fullTableName), where), args.toArray());
         } else {
             jdbcTemplate.update(String.format("DELETE FROM %s %s", SqlUtil.quoteTable(fullTableName), where), args.toArray());

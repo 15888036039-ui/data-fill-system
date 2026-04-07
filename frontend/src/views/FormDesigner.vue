@@ -28,6 +28,15 @@
             <el-form-item label="模板中文名" required>
               <el-input v-model="formMeta.name" placeholder="请输入模板展示名称" />
             </el-form-item>
+            <el-form-item label="填报指引 / 备注说明">
+              <el-input
+                v-model="formMeta.description"
+                type="textarea"
+                :rows="3"
+                placeholder="在此输入填报指引，将以横幅形式展示在填报页面顶部，用于引导用户正确填写数据。"
+              />
+            </el-form-item>
+            <el-divider border-style="dashed" style="margin: 12px 0" />
             <el-form-item label="数据库物理模式 (Schema)" required>
               <el-select
                 v-model="formMeta.schemaName"
@@ -150,7 +159,7 @@
 
             <div class="form-row">
               <el-form-item :label="formMeta.reminderMode === 'DEADLINE' ? '提前提醒天数' : '提醒后要求完成天数'" style="flex: 1">
-                <el-input-number v-model="formMeta.reminderDays" :min="1" :max="30" style="width: 100%" />
+                <el-input-number v-model="formMeta.reminderDays" :min="0.1" :max="30" :step="0.1" style="width: 100%" />
               </el-form-item>
               <el-form-item label="具体提醒时点" style="flex: 1">
                 <el-time-picker
@@ -231,7 +240,52 @@
           </div>
 
           <div class="fields-list">
-             <el-table :data="fields" style="width: 100%">
+             <el-table :data="fields" style="width: 100%" row-key="_uid">
+                <el-table-column type="expand">
+                  <template #default="props">
+                    <div style="padding: 16px 24px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; margin: 8px;">
+                      <div style="font-weight: 600; margin-bottom: 16px; font-size: 14px; color: #475569; display: flex; align-items: center;">
+                        <el-icon style="margin-right: 6px"><Filter /></el-icon> 字段校验与数据约束
+                      </div>
+                      <el-form label-position="top" size="default">
+                        <el-row :gutter="24">
+                          <el-col :span="8">
+                            <el-form-item label="正则表达式校验 (Regex)">
+                              <el-input v-model="props.row.pattern" placeholder="例: ^1[3-9]\d{9}$" />
+                            </el-form-item>
+                          </el-col>
+                          <el-col :span="8">
+                             <el-form-item label="预期校验失败提示">
+                              <el-input v-model="props.row.patternMsg" placeholder="请输入发生错误时的提示语" />
+                            </el-form-item>
+                          </el-col>
+                          <el-col :span="8">
+                            <div v-if="props.row.type === 'number' || props.row.dbType?.toLowerCase().includes('int') || props.row.dbType?.toLowerCase().includes('numeric')">
+                              <div style="display: flex; gap: 12px;">
+                                <el-form-item label="最小值" style="flex: 1">
+                                  <el-input-number v-model="props.row.min" style="width: 100%" />
+                                </el-form-item>
+                                <el-form-item label="最大值" style="flex: 1">
+                                  <el-input-number v-model="props.row.max" style="width: 100%" />
+                                </el-form-item>
+                              </div>
+                            </div>
+                            <div v-else-if="props.row.type === 'input' || props.row.type === 'textarea'">
+                              <div style="display: flex; gap: 12px;">
+                                <el-form-item label="最小字符数" style="flex: 1">
+                                  <el-input-number v-model="props.row.minLength" :min="0" style="width: 100%" />
+                                </el-form-item>
+                                <el-form-item label="最大字符数" style="flex: 1">
+                                  <el-input-number v-model="props.row.maxLength" :min="0" style="width: 100%" />
+                                </el-form-item>
+                              </div>
+                            </div>
+                          </el-col>
+                        </el-row>
+                      </el-form>
+                    </div>
+                  </template>
+                </el-table-column>
                 <el-table-column label="中文显示名" min-width="180">
                   <template #default="scope">
                     <el-input v-model="scope.row.name" placeholder="字段标题" />
@@ -532,11 +586,13 @@ const formMeta = reactive({
   kvConfig: '',
   referenceTemplateConfig: '',
   hardDelete: false,
-  groupTag: ''
+  groupTag: '',
+  description: ''
 })
 
+let _fieldUidCounter = 1
 const fields = ref([
-  { name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, systemLocked: false }
+  { _uid: _fieldUidCounter++, name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, systemLocked: false, pattern: '', patternMsg: '', min: null, max: null, minLength: null, maxLength: null }
 ])
 
 const importDialogVisible = ref(false)
@@ -714,7 +770,7 @@ const formatSuffixSummary = (suffixes = []) => {
 }
 
 const addField = () => {
-  fields.value.push({ name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, systemLocked: false })
+  fields.value.push({ _uid: _fieldUidCounter++, name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, systemLocked: false, pattern: '', patternMsg: '', min: null, max: null, minLength: null, maxLength: null })
 }
 
 const handleDbTypeChange = (dbType, row) => {
@@ -844,6 +900,7 @@ const inspectExistingTable = async () => {
     // 后端返回的是 ExcelParseResult 对象，其 fields 属性才是字段数组
     if (res.data && res.data.fields && res.data.fields.length > 0) {
       fields.value = res.data.fields.map(f => ({
+        _uid: _fieldUidCounter++,
         ...f,
         required: f.required || false,
         filterable: f.filterable || false,
@@ -955,6 +1012,7 @@ const applyParsedResults = (data) => {
   
   fields.value = data.fields.map(f => {
     const row = {
+      _uid: _fieldUidCounter++,
       ...f,
       columnName: f.columnName || '',
       originalColumnName: f.originalColumnName || '',
@@ -1094,6 +1152,7 @@ const loadFormForEdit = async () => {
     if (res.data.forms) {
         const parsed = JSON.parse(res.data.forms)
         fields.value = parsed.map(f => ({
+          _uid: _fieldUidCounter++,
           ...f,
           originalColumnName: f.columnName || '',
           systemLocked: isSystemManagedField(f)

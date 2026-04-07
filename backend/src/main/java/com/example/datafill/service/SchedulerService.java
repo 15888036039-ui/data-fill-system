@@ -136,7 +136,7 @@ public class SchedulerService {
 
                 String mode = form.getReminderMode();
 
-                if (mode == null || mode.isBlank()) {
+                if (mode == null || mode.trim().isEmpty()) {
 
                     mode = "DEADLINE";
 
@@ -148,18 +148,14 @@ public class SchedulerService {
 
                 if ("DEADLINE".equalsIgnoreCase(mode) || "MONTHLY".equalsIgnoreCase(mode) || "WEEKLY".equalsIgnoreCase(mode)) {
 
-                    int reminderDays = form.getReminderDays() != null ? form.getReminderDays() : 3;
+                    double rDays = form.getReminderDays() != null ? form.getReminderDays() : 3.0;
 
-                    java.time.LocalDate reminderDate = deadline.toLocalDate().minusDays(reminderDays);
+                    // 计算理论提醒时间 (以截止日期向前偏移)
+                    scheduledTime = deadline.minusHours((long)(rDays * 24)).with(rt).withNano(0);
 
-                    scheduledTime = reminderDate.atTime(rt);
-
-                    // 仅在目标日期当天、到达（或略晚于）提醒时间后触发
-
-                    if (!now.toLocalDate().equals(reminderDate) || now.isBefore(scheduledTime)) {
-
+                    // 仅在提醒时间当天且已到达时点时发送
+                    if (!now.toLocalDate().equals(scheduledTime.toLocalDate()) || now.isBefore(scheduledTime)) {
                         continue;
-
                     }
 
                 } else {
@@ -192,7 +188,7 @@ public class SchedulerService {
 
         try {
 
-            if (reminderTime != null && !reminderTime.isBlank()) {
+            if (reminderTime != null && !reminderTime.trim().isEmpty()) {
 
                 String[] parts = reminderTime.split(":");
 
@@ -242,14 +238,10 @@ public class SchedulerService {
 
                 int daysLeft = calculateDaysLeft(form.getDeadline(), now);
 
-                // 如果剩余1天或已到期，发送截止警告 (只在9点触发一次)
-
-                if (daysLeft <= 1 && daysLeft >= 0 && now.getHour() == 9 && now.getMinute() == 0) {
-
+                // 如果剩余1天，且尚未过截止时间，发送截止警告 (每天只在9点触发，由 NotificationService 负责去重)
+                if (daysLeft <= 1 && now.isBefore(form.getDeadline()) && now.getHour() == 9 && now.getMinute() == 0) {
                     log.info("表单 {} 即将到期（剩余 {} 天），发送截止警告", form.getName(), daysLeft);
-
                     notificationService.createDeadlineWarningNotification(form.getId(), now);
-
                 }
 
             } catch (Exception e) {
@@ -380,7 +372,7 @@ public class SchedulerService {
 
         java.time.LocalDate today = now.toLocalDate();
 
-        int reminderDays = form.getReminderDays() != null ? form.getReminderDays() : 3;
+        double rDays = form.getReminderDays() != null ? form.getReminderDays() : 3.0;
 
         java.time.LocalDate calculatedReminderDate = null;
 
@@ -394,7 +386,7 @@ public class SchedulerService {
 
             java.time.LocalDate targetDate = today.withDayOfMonth(Math.min(day, today.lengthOfMonth()));
 
-            java.time.LocalDate cycleDeadline = targetDate.plusDays(reminderDays);
+            java.time.LocalDate cycleDeadline = targetDate.plusDays((long) rDays);
 
             // 如果连"当前月的截止日"都已经过了，就安排到下个月
 
@@ -422,7 +414,7 @@ public class SchedulerService {
 
             java.time.LocalDate thisWeekTarget = today.minusDays(todayDow - 1).plusDays(dow - 1);
 
-            java.time.LocalDate cycleDeadline = thisWeekTarget.plusDays(reminderDays);
+            java.time.LocalDate cycleDeadline = thisWeekTarget.plusDays((long) rDays);
 
             // 如果连"这周的发信截止日"都已经过了，就安排到下周
 
@@ -440,7 +432,7 @@ public class SchedulerService {
 
         if (calculatedReminderDate != null) {
 
-            LocalDateTime newDeadline = calculatedReminderDate.plusDays(reminderDays).atTime(23, 59, 59);
+            LocalDateTime newDeadline = calculatedReminderDate.atTime(parseReminderTime(form.getReminderTime())).plusHours((long)(rDays * 24));
 
             form.setDeadline(newDeadline);
 

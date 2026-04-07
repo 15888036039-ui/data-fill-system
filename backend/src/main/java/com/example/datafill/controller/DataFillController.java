@@ -13,7 +13,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -50,10 +49,10 @@ public class DataFillController {
     }
 
     private boolean isUserAdmin(String email) {
-        if (email == null || email.isBlank()) return false;
+        if (email == null || email.trim().isEmpty()) return false;
         // 允许 FineReport 管理账号作为超级管理员
         if ("finereport_manage".equalsIgnoreCase(email.trim())) return true;
-        if (adminEmail == null || adminEmail.isBlank()) return false;
+        if (adminEmail == null || adminEmail.trim().isEmpty()) return false;
         String[] admins = adminEmail.split(",");
         for (String admin : admins) {
             if (admin.trim().equalsIgnoreCase(email.trim())) return true;
@@ -71,11 +70,11 @@ public class DataFillController {
         if (isAdmin) {
             return true;
         }
-        if (userEmail == null || userEmail.isBlank()) {
+        if (userEmail == null || userEmail.trim().isEmpty()) {
             return false;
         }
         String fillEmails = form.getFillUserEmails();
-        if (fillEmails == null || fillEmails.isBlank()) {
+        if (fillEmails == null || fillEmails.trim().isEmpty()) {
             return false;
         }
         try {
@@ -91,7 +90,7 @@ public class DataFillController {
     }
 
     private void recordLog(String formId, String userEmail, String type, String desc) {
-        if (userEmail == null || userEmail.isBlank()) userEmail = "未知用户";
+        if (userEmail == null || userEmail.trim().isEmpty()) userEmail = "未知用户";
         com.example.datafill.entity.OperationLog log = new com.example.datafill.entity.OperationLog();
         log.setFormId(formId);
         log.setUserEmail(userEmail);
@@ -119,26 +118,26 @@ public class DataFillController {
         } else {
             visibleForms = allForms.stream()
                     .filter(form -> canUserAccessForm(form, userEmail, false))
-                    .toList();
+                    .collect(java.util.stream.Collectors.toList());
         }
 
-        if (folderId == null || folderId.isBlank()) {
+        if (folderId == null || folderId.trim().isEmpty()) {
             return visibleForms;
         }
 
         if (DataFillFolderService.UNCATEGORIZED_FOLDER_ID.equals(folderId)) {
             return visibleForms.stream()
-                    .filter(form -> form.getFolderId() == null || form.getFolderId().isBlank())
-                    .toList();
+                    .filter(form -> form.getFolderId() == null || form.getFolderId().trim().isEmpty())
+                    .collect(java.util.stream.Collectors.toList());
         }
 
         java.util.Set<String> selectedFolderIds = folderService.collectFolderAndDescendants(folderId);
         if (selectedFolderIds.isEmpty()) {
-            return List.of();
+            return java.util.Collections.emptyList();
         }
         return visibleForms.stream()
                 .filter(form -> form.getFolderId() != null && selectedFolderIds.contains(form.getFolderId()))
-                .toList();
+                .collect(java.util.stream.Collectors.toList());
     }
 
     @GetMapping("/folders/tree")
@@ -153,7 +152,7 @@ public class DataFillController {
         List<DataFillForm> allForms = formMapper.selectList(qw);
         List<DataFillForm> visibleForms = allForms.stream()
                 .filter(form -> canUserAccessForm(form, userEmail, isAdmin))
-                .toList();
+                .collect(java.util.stream.Collectors.toList());
         return folderService.buildFolderTree(visibleForms, isAdmin);
     }
 
@@ -387,7 +386,7 @@ public class DataFillController {
         }
 
         String fileName = (form.getName() != null ? form.getName() : form.getTableName()) + "_模板.xlsx";
-        String encodedFileName = URLEncoder.encode(fileName, StandardCharsets.UTF_8);
+        String encodedFileName = URLEncoder.encode(fileName, "UTF-8");
 
         response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
         response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encodedFileName);

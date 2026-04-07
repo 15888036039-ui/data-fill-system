@@ -61,9 +61,9 @@ public class DynamicTableDdlService {
 
     private final DataFillFolderService folderService;
 
-    private static final java.util.Set<String> RESERVED_COLUMN_NAMES = java.util.Set.of(
-            "id", "is_deleted", "w_insert_dt", "w_update_dt", "load_user", "job_instance", "extra_data"
-    );
+    private static final java.util.Set<String> RESERVED_COLUMN_NAMES = new java.util.HashSet<>(java.util.Arrays.asList(
+            "id", "is_deleted", "delete_flag", "w_insert_dt", "w_update_dt", "load_user", "job_instance", "extra_data"
+    ));
 
     private boolean isReservedColumnName(String columnName) {
         return columnName != null && RESERVED_COLUMN_NAMES.contains(columnName.toLowerCase());
@@ -225,7 +225,7 @@ public class DynamicTableDdlService {
             form.setStatus("ACTIVE");
         }
         if (form.getReminderDays() == null) {
-            form.setReminderDays(3);
+            form.setReminderDays(3.0);
         }
         if (form.getReminderMode() == null || form.getReminderMode().trim().isEmpty()) {
             form.setReminderMode("DEADLINE");
@@ -374,7 +374,7 @@ public class DynamicTableDdlService {
 
         ddl.append("\"job_instance\" VARCHAR(80), ");
 
-        ddl.append("\"is_deleted\" SMALLINT DEFAULT 0");
+        ddl.append("\"delete_flag\" BOOLEAN DEFAULT FALSE");
 
         ddl.append(" );");
 
@@ -666,6 +666,10 @@ public class DynamicTableDdlService {
             exist.setGroupTag(incoming.getGroupTag());
         }
 
+        if (incoming.getDescription() != null || incoming.getDescription() == null) {
+            exist.setDescription(incoming.getDescription());
+        }
+
         // 1.7 [新增/修改逻辑]: 处理字段变更（支持新增列、修改中文名、重命名列、修改物理类型）
         if (incoming.getForms() != null) {
             try {
@@ -894,7 +898,7 @@ public class DynamicTableDdlService {
 
             Integer cycleDays = form.getCycleDays();
             String mode = form.getReminderMode();
-            int remDays = form.getReminderDays() != null ? form.getReminderDays() : 3;
+            double remDays = form.getReminderDays() != null ? form.getReminderDays() : 3.0;
             
             // 解析提醒时间 (HH:mm)
             java.time.LocalTime rt = java.time.LocalTime.of(9, 0);
@@ -916,8 +920,9 @@ public class DynamicTableDdlService {
                 completedCurrentCycle = now.isBefore(nextFillTime);
             } else if (deadline != null && ("WEEKLY".equalsIgnoreCase(mode) || "MONTHLY".equalsIgnoreCase(mode))) {
                 // 周期性任务（按周/按月）核心逻辑
-                // 1. 本期开始时间 = 截止日期 - 填报窗口天数，且对齐到提醒时点
-                startTimeOfCycle = deadline.minusDays(remDays).with(rt).withNano(0);
+                // 1. 本期开始时间 = 截止日期 - 提前天数，并对齐到提醒时点
+                // 使用 hours 转换以支持小数天数 (如 0.5天 = 12小时)
+                startTimeOfCycle = deadline.minusHours((long)(remDays * 24)).with(rt).withNano(0);
                 
                 // 2. 判定本期是否已完成：只要在【本期开始】之后填报过就算
                 if (lastSubmitTime != null && lastSubmitTime.isAfter(startTimeOfCycle)) {
