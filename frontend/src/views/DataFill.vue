@@ -338,10 +338,13 @@ const timeLeftMessage = computed(() => {
   
   if (diff <= 0) return '任务已截止，当前可能无法提交'
   
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-  if (days > 0) return `剩余 ${days} 天截止，请及时完成`
-  
-  const hours = Math.floor(diff / (1000 * 60 * 60))
+  const totalHours = Math.floor(diff / (1000 * 60 * 60))
+  const days = Math.floor(totalHours / 24)
+  const hours = totalHours % 24
+
+  if (days > 0) {
+    return `剩余 ${days} 天 ${hours} 小时截止，请及时完成`
+  }
   return `剩余最后 ${hours} 小时，请尽快填报`
 })
 

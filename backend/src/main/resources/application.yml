@@ -58,7 +58,6 @@ data-fill:
   cors:
     allowed-origins: "*"
   import:
-    max-rows: 10000
     max-file-size-mb: 20
 mybatis-plus:
   configuration:

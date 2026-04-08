@@ -87,8 +87,6 @@ public class ExcelService {
     @org.springframework.beans.factory.annotation.Value("${data-fill.import.max-file-size-mb:20}")
     private int maxFileSizeMb;
 
-    @org.springframework.beans.factory.annotation.Value("${data-fill.import.max-rows:10000}")
-    private int maxRows;
 
     static {
         // 针对 50MB 压缩文件，解压后的单个 Record 块可能超过默认的 100MB 限制
@@ -1062,9 +1060,6 @@ public class ExcelService {
                 if (creator != null && !creator.trim().isEmpty())
                     rowData.put("creator", creator);
                 buffer.add(rowData);
-                if (totalCount + buffer.size() > maxRows) {
-                    throw new RuntimeException("导入数据行数超过限制（最多允许 " + maxRows + " 行），请分批次拆分 Excel 文件进行导入。");
-                }
 
                 if (buffer.size() >= BATCH_SIZE) {
                     flushImportBuffer(formId, buffer);

@@ -213,8 +213,7 @@ public class NotificationService {
             notification.setNotificationType("DEADLINE_WARNING");
 
             notification.setSubject("数据填报截止警告 - " + form.getName());
-
-            notification.setContent("数据填报已截止，如需继续填报请申请管理员批准。");
+            notification.setContent("数据填报即将截止，请尽快完成。");
 
             notification.setStatus("PENDING");
 
@@ -385,35 +384,23 @@ public class NotificationService {
         switch (notification.getNotificationType()) {
 
             case "REMINDER" -> {
-
-                int daysLeft = calculateDaysLeft(form.getDeadline(), notification.getScheduledTime());
-
+                int hoursLeft = calculateHoursLeft(form.getDeadline(), notification.getScheduledTime());
                 return emailService.sendReminderEmail(
-
                     notification.getRecipientEmail(),
-
                     form.getName(),
-
                     form.getDeadline(),
-
-                    daysLeft
-
+                    hoursLeft
                 );
-
             }
 
             case "DEADLINE_WARNING" -> {
-
+                int hoursLeft = calculateHoursLeft(form.getDeadline(), notification.getScheduledTime());
                 return emailService.sendDeadlineWarningEmail(
-
                     notification.getRecipientEmail(),
-
                     form.getName(),
-
-                    form.getDeadline()
-
+                    form.getDeadline(),
+                    hoursLeft
                 );
-
             }
 
             case "APPROVAL_REQUEST" -> {
@@ -507,21 +494,13 @@ public class NotificationService {
     }
 
     /**
-
-     * 计算剩余天数
-
+     * 计算剩余小时数
      */
-
-    private int calculateDaysLeft(LocalDateTime deadline, LocalDateTime referenceTime) {
-
+    private int calculateHoursLeft(LocalDateTime deadline, LocalDateTime referenceTime) {
         if (deadline == null || referenceTime == null) {
-
             return 0;
-
         }
-
         return (int) java.time.Duration.between(referenceTime, deadline).toHours();
-
     }
 
     /**

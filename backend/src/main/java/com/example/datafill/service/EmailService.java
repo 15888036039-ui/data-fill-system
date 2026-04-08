@@ -63,19 +63,12 @@ public class EmailService {
     }
 
     /**
-
      * 发送截止警告邮件
-
      */
-
-    public boolean sendDeadlineWarningEmail(String to, String formName, LocalDateTime deadline) {
-
+    public boolean sendDeadlineWarningEmail(String to, String formName, LocalDateTime deadline, int daysLeft) {
         String subject = subjectPrefix + "数据填报截止警告";
-
-        String content = buildDeadlineWarningContent(formName, deadline);
-
+        String content = buildDeadlineWarningContent(formName, deadline, daysLeft);
         return sendHtmlEmail(to, subject, content);
-
     }
 
     /**
@@ -154,9 +147,19 @@ public class EmailService {
 
      */
 
-    private String buildReminderContent(String formName, LocalDateTime deadline, int daysLeft) {
+    private String buildReminderContent(String formName, LocalDateTime deadline, long totalHours) {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
         String deadlineStr = deadline.format(formatter);
+        
+        long days = totalHours / 24;
+        long hours = totalHours % 24;
+        String timeRemaining;
+        if (days > 0) {
+            timeRemaining = String.format("%d 天 %d 小时", days, hours);
+        } else {
+            timeRemaining = String.format("%d 小时", hours);
+        }
+
         return """
             <html>
             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
@@ -167,7 +170,7 @@ public class EmailService {
                     <div style="background-color: #f8fafc; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #2563eb;">
                         <p><strong>表单名称：</strong>%s</p>
                         <p><strong>截止时间：</strong>%s</p>
-                        <p><strong>剩余小时：</strong><span style="color: #ef4444; font-weight: bold;">%h 小时</span></p>
+                        <p><strong>剩余时间：</strong><span style="color: #ef4444; font-weight: bold;">%s</span></p>
                     </div>
                     <div style="margin: 20px 0; text-align: center;">
                         <a href="%s" style="background-color: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">立即前往填报</a>
@@ -181,7 +184,7 @@ public class EmailService {
                 </div>
             </body>
             </html>
-            """.formatted(formName, deadlineStr, daysLeft, systemUrl, systemUrl, systemUrl);
+            """.formatted(formName, deadlineStr, timeRemaining, systemUrl, systemUrl, systemUrl);
     }
 
     /**
@@ -190,9 +193,22 @@ public class EmailService {
 
      */
 
-    private String buildDeadlineWarningContent(String formName, LocalDateTime deadline) {
+    /**
+     * 构建截止警告邮件内容
+     */
+    private String buildDeadlineWarningContent(String formName, LocalDateTime deadline, long totalHours) {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
         String deadlineStr = deadline.format(formatter);
+
+        long days = totalHours / 24;
+        long hours = totalHours % 24;
+        String timeRemaining;
+        if (days > 0) {
+            timeRemaining = String.format("%d 天 %d 小时", days, hours);
+        } else {
+            timeRemaining = String.format("%d 小时", hours);
+        }
+
         return """
             <html>
             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
@@ -203,7 +219,8 @@ public class EmailService {
                     <div style="background-color: #fef2f2; border: 1px solid #fecaca; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #ef4444;">
                         <p><strong>表单名称：</strong>%s</p>
                         <p><strong>截止时间：</strong>%s</p>
-                        <p style="color: #ef4444; font-weight: bold;">该表单已停止接受新的填报数据！</p>
+                        <p><strong>剩余时间：</strong><span style="color: #ef4444; font-weight: bold;">%s</span></p>
+                        <p style="color: #ef4444; font-weight: bold;">该表单即将停止接受新的填报数据，请尽快完成！</p>
                     </div>
                     <div style="margin: 20px 0; text-align: center;">
                         <a href="%s" style="background-color: #ef4444; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">立即前往系统</a>
@@ -217,7 +234,7 @@ public class EmailService {
                 </div>
             </body>
             </html>
-            """.formatted(formName, deadlineStr, systemUrl, systemUrl, systemUrl);
+            """.formatted(formName, deadlineStr, timeRemaining, systemUrl, systemUrl, systemUrl);
     }
 
     /**

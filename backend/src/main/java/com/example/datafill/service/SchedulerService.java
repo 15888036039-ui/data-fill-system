@@ -499,11 +499,6 @@ public class SchedulerService {
         return null;
     }
 
-    /**
-
-     * 计算剩余天数
-
-     */
 
 
 
