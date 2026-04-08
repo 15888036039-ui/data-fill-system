@@ -167,7 +167,7 @@ public class EmailService {
                     <div style="background-color: #f8fafc; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #2563eb;">
                         <p><strong>表单名称：</strong>%s</p>
                         <p><strong>截止时间：</strong>%s</p>
-                        <p><strong>剩余天数：</strong><span style="color: #ef4444; font-weight: bold;">%d 天</span></p>
+                        <p><strong>剩余小时：</strong><span style="color: #ef4444; font-weight: bold;">%h 小时</span></p>
                     </div>
                     <div style="margin: 20px 0; text-align: center;">
                         <a href="%s" style="background-color: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; font-weight: bold;">立即前往填报</a>

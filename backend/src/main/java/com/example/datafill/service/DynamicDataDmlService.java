@@ -36,7 +36,7 @@ public class DynamicDataDmlService {
 
     private static final java.util.Set<String> SYSTEM_FIELDS = new java.util.HashSet<>(Arrays.asList(
         "id", "load_user", "creator", "w_insert_dt", "w_update_dt", 
-        "create_time", "update_time", "is_deleted", "delete_flag", "extra_data", "job_instance",
+        "create_time", "update_time", "delete_flag", "extra_data", "job_instance",
         "applicantemail", "applicantname", "applicant_email", "applicant_name",
         "ctime", "mtime", "created_at", "updated_at"
     ));
@@ -142,7 +142,11 @@ public class DynamicDataDmlService {
                      throw new RuntimeException("字段「" + field.getName() + "」需为数字类型");
                 }
                 if ((dbType.contains("timestamp") || dbType.contains("date")) && converted instanceof String) {
-                     throw new RuntimeException("字段「" + field.getName() + "」日期格式不正确");
+                    String strVal = (String) converted;
+                    if (strVal.contains("(纯数字，缺少日期分隔符)")) {
+                        throw new RuntimeException("数据格式不匹配：存在格式问题 (异常内容：\"" + strVal + "\")。请检查对应列是否为正确的日期格式，切勿混用。");
+                    }
+                    throw new RuntimeException("数据格式不匹配：字段「" + field.getName() + "」日期格式不正确 (异常内容：\"" + strVal + "\")。请检查对应列是否为正确的日期格式，切勿混用。");
                 }
                 
                 if (converted instanceof java.math.BigDecimal || converted instanceof Number) {
@@ -195,10 +199,13 @@ public class DynamicDataDmlService {
                     }
                     if (field.getPattern() != null && !field.getPattern().trim().isEmpty()) {
                         if (!strVal.matches(field.getPattern())) {
-                            String msg = (field.getPatternMsg() != null && !field.getPatternMsg().trim().isEmpty()) 
-                                        ? field.getPatternMsg() 
-                                        : "字段「" + field.getName() + "」校验未通过";
-                            throw new RuntimeException(msg);
+                            String msg;
+                            if (field.getPatternMsg() != null && !field.getPatternMsg().trim().isEmpty()) {
+                                msg = field.getPatternMsg();
+                            } else {
+                                msg = "字段「" + field.getName() + "」校验未通过，请按照标准格式填写（" + translatePatternToHint(field.getPattern()) + "）";
+                            }
+                            throw new RuntimeException(msg + " (该行读到的异常内容：\"" + strVal + "\")");
                         }
                     }
                 }
@@ -208,6 +215,56 @@ public class DynamicDataDmlService {
                 throw new RuntimeException("字段「" + field.getName() + "」格式错误");
             }
         }
+    }
+
+    /**
+     * 将开发人员写的正则表达式翻译成普通用户看得懂的格式提示。
+     * 使用简单字符串操作，避免"用正则匹配正则"导致的转义灾难。
+     */
+    private String translatePatternToHint(String pattern) {
+        if (pattern == null || pattern.trim().isEmpty()) return "格式不符合要求";
+        String p = pattern.trim();
+
+        // 去掉首尾锚点 ^ 和 $
+        String core = p;
+        if (core.startsWith("^")) core = core.substring(1);
+        if (core.endsWith("$")) core = core.substring(0, core.length() - 1);
+
+        // 固定位数纯数字: \d{8} → "要求为8位纯数字，如 20260301"
+        // 注意：数据库里存的正则原文如 ^\d{8}$，Java 读出来 core = "\d{8}"，其中 \ 是一个反斜杠字符，d 是字母
+        if ((core.startsWith("\\d{") || core.startsWith("\\D{")) && core.endsWith("}")) {
+            String numStr = core.substring(3, core.length() - 1);
+            try {
+                int len = Integer.parseInt(numStr);
+                String example = "";
+                if (len == 8) example = "，如 20260301";
+                else if (len == 11) example = "，如手机号";
+                else if (len == 6) example = "，如 202603";
+                else if (len == 4) example = "，如 2026";
+                return "要求为" + len + "位纯数字" + example;
+            } catch (Exception ignored) {}
+        }
+
+        // 纯数字不限位数: \d+
+        if (core.equals("\\d+") || core.equals("\\d*") || core.equals("[0-9]+")) {
+            return "要求为纯数字";
+        }
+
+        // 日期格式: 含 \d{4} 和 - 或 /
+        if (p.contains("\\d{4}") && (p.contains("-") || p.contains("/"))) {
+            if (p.contains(":")) {
+                return "要求为日期时间格式，如 2026-03-01 08:30:00";
+            }
+            return "要求为日期格式，如 2026-03-01";
+        }
+
+        // 邮箱
+        if (p.contains("@") && (p.contains("\\.") || p.contains("."))) {
+            return "要求为邮箱格式，如 user@example.com";
+        }
+
+        // 兜底：不暴露正则原文，不提联系管理员
+        return "格式不符合要求";
     }
 
     private Object convertValueForDb(Object val, String dbType) {
@@ -223,10 +280,13 @@ public class DynamicDataDmlService {
         if (type.contains("timestamp") || type.contains("date")) {
             if (val instanceof String && !isStringEmpty) {
                 String s = ((String) val).trim();
-                // Handle common date formats like 20260315 or 2026-03-15
-                if (s.matches("\\d{8}")) {
-                    s = s.substring(0, 4) + "-" + s.substring(4, 6) + "-" + s.substring(6, 8);
+                
+                // 强制阻截：为了规范填报，如果用户输入的是纯阿拉伯数字（例如 20260312），
+                // 直接追加非法字符，故意让底层数据库阻截以抛出精确行号和报错，倒逼用户使用带横杠/斜杠的标准日期格式
+                if (s.matches("^-?\\d+(\\.\\d+)?$")) {
+                    return s + " (纯数字，缺少日期分隔符)";
                 }
+                
                 try {
                     if (s.contains(" ") || s.contains("T")) {
                         return java.sql.Timestamp.valueOf(s.replace("T", " "));
@@ -593,7 +653,9 @@ public class DynamicDataDmlService {
 
         StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         List<Object> args = new ArrayList<>();
-        if (hasColumn(physicalColumns, "is_deleted")) where.append(" AND (is_deleted IS NULL OR is_deleted = 0) ");
+        if (hasColumn(physicalColumns, "delete_flag")) {
+            where.append(" AND (delete_flag IS NULL OR delete_flag = FALSE) ");
+        }
         if (!isAdmin && userEmail != null && hasColumn(physicalColumns, "load_user")) {
             where.append(" AND (\"load_user\" = ? OR \"load_user\" IS NULL) ");
             args.add(userEmail);
@@ -726,8 +788,6 @@ public class DynamicDataDmlService {
                     List<Object> args = new ArrayList<>();
                     if (hasColumn(physicalColumns, "delete_flag")) {
                         sql.append(" AND (delete_flag IS NULL OR delete_flag = FALSE) ");
-                    } else if (hasColumn(physicalColumns, "is_deleted")) {
-                        sql.append(" AND (is_deleted IS NULL OR is_deleted = 0) ");
                     }
                     if (!isAdmin && operatorEmail != null && hasColumn(physicalColumns, "load_user")) {
                         sql.append(" AND (\"load_user\" = ? OR \"load_user\" IS NULL) ");
@@ -759,8 +819,6 @@ public class DynamicDataDmlService {
         
         if (hasColumn(physicalColumns, "delete_flag") && !isHardDeleteMode) {
             jdbcTemplate.update(String.format("UPDATE %s SET delete_flag=TRUE WHERE id IN (%s)", SqlUtil.quoteTable(fullTableName), ps), dataIds.toArray());
-        } else if (hasColumn(physicalColumns, "is_deleted") && !isHardDeleteMode) {
-            jdbcTemplate.update(String.format("UPDATE %s SET is_deleted=1 WHERE id IN (%s)", SqlUtil.quoteTable(fullTableName), ps), dataIds.toArray());
         } else {
             jdbcTemplate.update(String.format("DELETE FROM %s WHERE id IN (%s)", SqlUtil.quoteTable(fullTableName), ps), dataIds.toArray());
         }
@@ -784,8 +842,6 @@ public class DynamicDataDmlService {
 
         if (hasColumn(physicalColumns, "delete_flag") && !isHardDeleteMode) {
             jdbcTemplate.update(String.format("UPDATE %s SET delete_flag=TRUE %s", SqlUtil.quoteTable(fullTableName), where), args.toArray());
-        } else if (hasColumn(physicalColumns, "is_deleted") && !isHardDeleteMode) {
-            jdbcTemplate.update(String.format("UPDATE %s SET is_deleted=1 %s", SqlUtil.quoteTable(fullTableName), where), args.toArray());
         } else {
             jdbcTemplate.update(String.format("DELETE FROM %s %s", SqlUtil.quoteTable(fullTableName), where), args.toArray());
         }

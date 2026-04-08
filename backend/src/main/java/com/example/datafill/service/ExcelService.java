@@ -65,10 +65,12 @@ import net.sourceforge.pinyin4j.format.HanyuPinyinToneType;
 public class ExcelService {
     private static final Logger log = LoggerFactory.getLogger(ExcelService.class);
     private static final String EXCEL_ROW_META_KEY = "__excel_row_num__";
-    private static final java.util.regex.Pattern NUMBER_PATTERN = java.util.regex.Pattern.compile("^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$");
+    private static final java.util.regex.Pattern NUMBER_PATTERN = java.util.regex.Pattern
+            .compile("^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$");
 
-    private static final java.util.Set<String> EXISTING_TABLE_SYSTEM_COLUMNS = new java.util.HashSet<>(java.util.Arrays.asList(
-            "id", "load_user", "w_insert_dt", "w_update_dt", "is_deleted", "extra_data", "job_instance"));
+    private static final java.util.Set<String> EXISTING_TABLE_SYSTEM_COLUMNS = new java.util.HashSet<>(
+            java.util.Arrays.asList(
+                    "id", "load_user", "w_insert_dt", "w_update_dt", "delete_flag", "extra_data", "job_instance"));
 
     private final DataFillFormMapper formMapper;
 
@@ -209,12 +211,14 @@ public class ExcelService {
             return "BOOLEAN";
         }
         if (normalizedType.contains("char") || normalizedType.contains("text") || normalizedType.contains("string")) {
-            if (normalizedPrecision != null && !normalizedPrecision.trim().isEmpty() && normalizedPrecision.matches("\\d+")) {
+            if (normalizedPrecision != null && !normalizedPrecision.trim().isEmpty()
+                    && normalizedPrecision.matches("\\d+")) {
                 return "VARCHAR(" + normalizedPrecision + ")";
             }
             return normalizedType.contains("text") ? "TEXT" : "VARCHAR(255)";
         }
-        if (normalizedPrecision != null && !normalizedPrecision.trim().isEmpty() && normalizedPrecision.matches("\\d+")) {
+        if (normalizedPrecision != null && !normalizedPrecision.trim().isEmpty()
+                && normalizedPrecision.matches("\\d+")) {
             return normalizedType.toUpperCase() + "(" + normalizedPrecision + ")";
         }
         return normalizedType.toUpperCase();
@@ -489,7 +493,8 @@ public class ExcelService {
      * 优化：元数据计算外提，分片分批入库
      */
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
-    public Map<String, Object> importData(String formId, MultipartFile file, String mode, String creator) throws IOException {
+    public Map<String, Object> importData(String formId, MultipartFile file, String mode, String creator)
+            throws IOException {
         if (file.getSize() > (long) maxFileSizeMb * 1024 * 1024) {
             throw new RuntimeException("上传文件过大（超过 " + maxFileSizeMb + "MB），为了确保系统稳定性，请将数据分批进行导入。");
         }
@@ -691,9 +696,11 @@ public class ExcelService {
             // Build Json lookup set first
             Set<String> jsonColumnNames = new HashSet<>();
             for (FieldDef f : fields) {
-                if (f.getColumnName() == null) continue;
+                if (f.getColumnName() == null)
+                    continue;
                 String col = f.getColumnName().trim().toLowerCase();
-                if (col.endsWith("_json") || "JSONB".equalsIgnoreCase(f.getDbType()) || "JSON".equalsIgnoreCase(f.getDbType())) {
+                if (col.endsWith("_json") || "JSONB".equalsIgnoreCase(f.getDbType())
+                        || "JSON".equalsIgnoreCase(f.getDbType())) {
                     jsonColumnNames.add(col);
                 }
             }
@@ -707,7 +714,7 @@ public class ExcelService {
                     if (dbCol == null)
                         dbCol = normalizedHeaderMap.get(normalizeHeaderKey(headers[c]));
                     cachedDbCols[c] = dbCol;
-                    
+
                     if (dbCol != null) {
                         String lowerDbCol = dbCol.toLowerCase();
                         cachedIsBusinessCol[c] = businessFieldColumns.contains(lowerDbCol);
@@ -724,7 +731,8 @@ public class ExcelService {
                 }
             }
             if (hasReferenceMappings && !unresolvedHeaders.isEmpty()) {
-                java.util.List<String> unresolvedSamples = unresolvedHeaders.stream().limit(12).collect(java.util.stream.Collectors.toList());
+                java.util.List<String> unresolvedSamples = unresolvedHeaders.stream().limit(12)
+                        .collect(java.util.stream.Collectors.toList());
                 log.warn("参考模板导入存在未映射表头, formId={}, unresolvedCount={}, samples={}",
                         formId, unresolvedHeaders.size(), unresolvedSamples);
             }
@@ -759,7 +767,8 @@ public class ExcelService {
                                 if (mappedCol != null && !jsonColumnNames.contains(mappedCol.toLowerCase()))
                                     continue;
 
-                                String source = (h == null || h.trim().isEmpty() || "...".equals(h.trim())) ? mappedCol : h;
+                                String source = (h == null || h.trim().isEmpty() || "...".equals(h.trim())) ? mappedCol
+                                        : h;
                                 if (source == null || source.trim().isEmpty())
                                     continue;
                                 String name = source.toLowerCase().trim().replaceAll("\\d+$", "").replaceAll("[_\\s]+$",
@@ -887,7 +896,11 @@ public class ExcelService {
                             String s = dataFormatter.formatCellValue(vc).trim();
                             // Handle formatted numbers like "1,875.00"
                             if (s.contains(",") && s.replace(",", "").matches("-?\\d*\\.?\\d+")) {
-                                try { vvObj = new java.math.BigDecimal(s.replace(",", "")); } catch (Exception e) { vvObj = s; }
+                                try {
+                                    vvObj = new java.math.BigDecimal(s.replace(",", ""));
+                                } catch (Exception e) {
+                                    vvObj = s;
+                                }
                             } else {
                                 vvObj = s;
                             }
@@ -909,23 +922,46 @@ public class ExcelService {
                         continue;
                     Object val = null;
                     org.apache.poi.ss.usermodel.CellType type = cell.getCellType();
+
                     if (type == org.apache.poi.ss.usermodel.CellType.STRING) {
                         val = cell.getStringCellValue();
                     } else if (type == org.apache.poi.ss.usermodel.CellType.NUMERIC) {
+                        double dVal = cell.getNumericCellValue();
                         if (!dateColumnChecked[c]) {
                             isDateColumn[c] = org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell);
                             dateColumnChecked[c] = true;
                         }
-                        val = isDateColumn[c] ? cell.getDateCellValue() : cell.getNumericCellValue();
+                        // 动态复查：Excel 允许同一列不同单元格有不同格式，不能只依赖第一行的缓存
+                        boolean isDate = isDateColumn[c]
+                                || org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell);
+
+                        if (isDate && dVal > 0 && dVal < 3000000) {
+                            // 对于在合法范围内的正常 Excel 日期（如 46082），直接获取原生的 java.util.Date 对象。
+                            // 避免使用 DataFormatter，因为它极易受到服务器或 Excel locale 的影响而输出如 "3/1/26 5:45"
+                            // 的奇葩文本导致后端入库截断报错，
+                            // 返回原生 Date 可以保证系统底层使用统一的 "yyyy-MM-dd HH:mm:ss" 进行高质量落表。
+                            val = cell.getDateCellValue();
+                        } else {
+                            // 对于超出合法范围的数字（如直接填在日期栏的 20260312），当做纯阿拉伯数字字符串处理并拦截
+                            val = new java.math.BigDecimal(dVal).stripTrailingZeros().toPlainString();
+                        }
                     } else if (type == org.apache.poi.ss.usermodel.CellType.BOOLEAN) {
                         val = cell.getBooleanCellValue();
                     } else if (type == org.apache.poi.ss.usermodel.CellType.FORMULA) {
-                        try { val = cell.getStringCellValue(); } catch(Exception e) { val = cell.getNumericCellValue(); }
+                        try {
+                            val = cell.getStringCellValue();
+                        } catch (Exception e) {
+                            val = cell.getNumericCellValue();
+                        }
                     } else {
                         String s = dataFormatter.formatCellValue(cell).trim();
                         // Handle formatted numbers like "1,875.00"
                         if (s.contains(",") && s.replace(",", "").matches("-?\\d*\\.?\\d+")) {
-                            try { val = new java.math.BigDecimal(s.replace(",", "")); } catch (Exception e) { val = s; }
+                            try {
+                                val = new java.math.BigDecimal(s.replace(",", ""));
+                            } catch (Exception e) {
+                                val = s;
+                            }
                         } else {
                             val = s;
                         }
@@ -935,10 +971,12 @@ public class ExcelService {
                         String dbCol = cachedDbCols[c];
                         if (dbCol != null) {
                             if (cachedIsJsonCol[c]) {
-                                dynamicExtras.computeIfAbsent(dbCol, k -> new LinkedHashMap<>()).put(cachedJsonKeys[c], val);
+                                dynamicExtras.computeIfAbsent(dbCol, k -> new LinkedHashMap<>()).put(cachedJsonKeys[c],
+                                        val);
                             } else {
                                 rowData.put(dbCol, val);
-                                if (cachedIsBusinessCol[c]) hasMappedBusinessValue = true;
+                                if (cachedIsBusinessCol[c])
+                                    hasMappedBusinessValue = true;
                             }
                         } else
                             defaultExtra.put(cachedPinyinHeaders[c], val);
@@ -967,18 +1005,23 @@ public class ExcelService {
                     jsonSb.append("{");
                     boolean first = true;
                     for (Map.Entry<String, Object> entry : extraMap.entrySet()) {
-                        if (!first) jsonSb.append(",");
+                        if (!first)
+                            jsonSb.append(",");
                         first = false;
                         jsonSb.append("\"").append(entry.getKey().replace("\"", "\\\"")).append("\":");
                         Object v = entry.getValue();
-                        if (v == null) jsonSb.append("null");
-                        else if (v instanceof Number || v instanceof Boolean) jsonSb.append(v.toString());
+                        if (v == null)
+                            jsonSb.append("null");
+                        else if (v instanceof Number || v instanceof Boolean)
+                            jsonSb.append(v.toString());
                         else {
                             String s = v.toString();
                             if (NUMBER_PATTERN.matcher(s).matches()) {
                                 jsonSb.append(s);
                             } else {
-                                jsonSb.append("\"").append(s.replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")).append("\"");
+                                jsonSb.append("\"")
+                                        .append(s.replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r"))
+                                        .append("\"");
                             }
                         }
                     }
@@ -1039,7 +1082,8 @@ public class ExcelService {
             if (totalCount == 0 && skippedUnmappedRowCount > 0) {
                 String unresolvedHint = unresolvedHeaders.isEmpty()
                         ? ""
-                        : ("；未匹配表头示例: " + String.join(", ", unresolvedHeaders.stream().limit(8).collect(java.util.stream.Collectors.toList())));
+                        : ("；未匹配表头示例: " + String.join(", ",
+                                unresolvedHeaders.stream().limit(8).collect(java.util.stream.Collectors.toList())));
                 throw new RuntimeException("导入失败：检测到 " + skippedUnmappedRowCount
                         + " 行数据未映射到业务字段（首行: 第 " + firstSkippedUnmappedRowNum + " 行）"
                         + "，请确认上传文件表头与模板一致" + unresolvedHint);
@@ -1494,7 +1538,8 @@ public class ExcelService {
             for (int i = 0; i < sameSuffixMappings.size(); i++) {
                 com.example.datafill.dto.ReferenceFieldMapping left = sameSuffixMappings.get(i);
                 String leftSource = left.getExcelHeader();
-                if (leftSource == null || (leftSource != null && leftSource.trim().isEmpty()) || "...".equals(leftSource.trim())) {
+                if (leftSource == null || (leftSource != null && leftSource.trim().isEmpty())
+                        || "...".equals(leftSource.trim())) {
                     leftSource = left.getColumnName();
                 }
                 leftSource = leftSource == null ? "" : leftSource.trim();
@@ -1510,7 +1555,8 @@ public class ExcelService {
                     }
                     com.example.datafill.dto.ReferenceFieldMapping right = sameSuffixMappings.get(j);
                     String rightSource = right.getExcelHeader();
-                    if (rightSource == null || (rightSource != null && rightSource.trim().isEmpty()) || "...".equals(rightSource.trim())) {
+                    if (rightSource == null || (rightSource != null && rightSource.trim().isEmpty())
+                            || "...".equals(rightSource.trim())) {
                         rightSource = right.getColumnName();
                     }
                     rightSource = rightSource == null ? "" : rightSource.trim();
@@ -1521,7 +1567,7 @@ public class ExcelService {
                     for (Map.Entry<String, String> pairRule : kwPairs.entrySet()) {
                         String keyBase = pairRule.getKey().toLowerCase().trim();
                         String valueBase = pairRule.getValue().toLowerCase().trim();
-                        
+
                         boolean isMatch = false;
                         if (leftBase.equals(keyBase) && rightBase.equals(valueBase)) {
                             isMatch = true;
@@ -1532,7 +1578,7 @@ public class ExcelService {
                                 isMatch = true;
                             }
                         }
-                        
+
                         if (!isMatch) {
                             continue;
                         }
@@ -1607,9 +1653,11 @@ public class ExcelService {
 
                 // 推断 key 的步长：通常 key_i 与 key_{i+1} 间隔固定（例如相邻 key/value 成对时 step=2）
                 List<Integer> keyIdxSorted = pair.getKeyIndices().stream()
-                        .filter(java.util.Objects::nonNull).distinct().sorted().collect(java.util.stream.Collectors.toList());
+                        .filter(java.util.Objects::nonNull).distinct().sorted()
+                        .collect(java.util.stream.Collectors.toList());
                 List<Integer> valIdxSorted = pair.getValueIndices().stream()
-                        .filter(java.util.Objects::nonNull).distinct().sorted().collect(java.util.stream.Collectors.toList());
+                        .filter(java.util.Objects::nonNull).distinct().sorted()
+                        .collect(java.util.stream.Collectors.toList());
                 if (keyIdxSorted.size() < 2 || valIdxSorted.size() < 2)
                     continue;
 
@@ -1765,7 +1813,7 @@ public class ExcelService {
                 result.setTruncated(true);
             }
 
-            Set<String> usedColNames = new HashSet<>(java.util.Arrays.asList("id", "create_time", "is_deleted",
+            Set<String> usedColNames = new HashSet<>(java.util.Arrays.asList("id", "create_time", "delete_flag",
                     "extra_data", "w_insert_dt", "w_update_dt", "load_user", "job_instance"));
 
             Map<String, String> kwPairs = new HashMap<>();
@@ -1919,7 +1967,8 @@ public class ExcelService {
                 "FROM information_schema.columns c " +
                 "LEFT JOIN pg_catalog.pg_class cls ON cls.relname = c.table_name " +
                 "LEFT JOIN pg_catalog.pg_namespace ns ON ns.oid = cls.relnamespace AND ns.nspname = c.table_schema " +
-                "LEFT JOIN pg_catalog.pg_description pgd ON pgd.objoid = cls.oid AND pgd.objsubid = c.ordinal_position " +
+                "LEFT JOIN pg_catalog.pg_description pgd ON pgd.objoid = cls.oid AND pgd.objsubid = c.ordinal_position "
+                +
                 "WHERE c.table_schema = ? AND c.table_name = ? " +
                 "ORDER BY c.ordinal_position";
 

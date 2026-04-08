@@ -143,29 +143,30 @@ public class SchedulerService {
                 }
 
                 LocalTime rt = parseReminderTime(form.getReminderTime());
+                LocalDateTime scheduledTime = null;
 
-                LocalDateTime scheduledTime;
-
-                if ("DEADLINE".equalsIgnoreCase(mode) || "MONTHLY".equalsIgnoreCase(mode) || "WEEKLY".equalsIgnoreCase(mode)) {
-
+                if (form.getReminderDateTime() != null) {
+                    // 优先使用精确指定的提醒时间 (无论是手动设置的 DEADLINE 还是自动生成的周期任务)
+                    scheduledTime = form.getReminderDateTime().withNano(0);
+                } else if ("DEADLINE".equalsIgnoreCase(mode)) {
+                    // 保留旧逻辑：如果没有 reminderDateTime，则按天数回溯
                     double rDays = form.getReminderDays() != null ? form.getReminderDays() : 3.0;
-
-                    // 计算理论提醒时间 (以截止日期向前偏移)
                     scheduledTime = deadline.minusHours((long)(rDays * 24)).with(rt).withNano(0);
-
-                    // 仅在提醒时间当天且已到达时点时发送
-                    if (!now.toLocalDate().equals(scheduledTime.toLocalDate()) || now.isBefore(scheduledTime)) {
-                        continue;
-                    }
-
                 } else {
+                    // 对于周期任务，如果 reminderDateTime 为空，尝试实时计算本周期的提醒时间
+                    scheduledTime = calculateCurrentCycleReminderTime(form);
+                }
 
+                if (scheduledTime == null) {
                     continue;
+                }
 
+                // 仅在提醒时间当天且已到达时点时发送
+                if (!now.toLocalDate().equals(scheduledTime.toLocalDate()) || now.isBefore(scheduledTime)) {
+                    continue;
                 }
 
                 log.info("表单 {} 触发提醒检查，计划发送时间 {}", form.getName(), scheduledTime);
-
                 notificationService.createReminderNotification(form.getId(), scheduledTime);
 
             } catch (Exception e) {
@@ -220,38 +221,63 @@ public class SchedulerService {
 
     private void checkAndSendDeadlineWarnings(LocalDateTime now) {
 
-        // 查询即将到期的表单（剩余1天）
-
         QueryWrapper<DataFillForm> queryWrapper = new QueryWrapper<>();
-
         queryWrapper.eq("status", "ACTIVE")
-
                    .isNotNull("deadline")
-
-                   .isNotNull("recipient_emails");
+                   .isNotNull("recipient_emails")
+                   .gt("deadline", now); // 只查还没过期的
 
         List<DataFillForm> forms = formMapper.selectList(queryWrapper);
 
         for (DataFillForm form : forms) {
-
             try {
+                LocalDateTime warningTime = calculateWarningTime(form);
+                if (warningTime == null) continue;
 
-                int daysLeft = calculateDaysLeft(form.getDeadline(), now);
-
-                // 如果剩余1天，且尚未过截止时间，发送截止警告 (每天只在9点触发，由 NotificationService 负责去重)
-                if (daysLeft <= 1 && now.isBefore(form.getDeadline()) && now.getHour() == 9 && now.getMinute() == 0) {
-                    log.info("表单 {} 即将到期（剩余 {} 天），发送截止警告", form.getName(), daysLeft);
-                    notificationService.createDeadlineWarningNotification(form.getId(), now);
+                // 仅在预警时间当天、已到达预警时点、且尚未过截止时间时触发
+                if (now.toLocalDate().equals(warningTime.toLocalDate())
+                        && !now.isBefore(warningTime)
+                        && now.isBefore(form.getDeadline())) {
+                    log.info("表单 {} 进入预警期，预警时间 {}，截止时间 {}",
+                            form.getName(), warningTime, form.getDeadline());
+                    notificationService.createDeadlineWarningNotification(form.getId(), warningTime);
                 }
-
             } catch (Exception e) {
-
                 log.error("处理表单截止警告失败: {}", form.getId(), e);
-
             }
+        }
+    }
 
+    /**
+     * 根据周期类型计算预警时间点
+     * - MONTHLY：截止前 3 天（~30 天周期的 10%）
+     * - WEEKLY ：截止前 17 小时（7 天周期的 10%）
+     * - DEADLINE：截止前 1 天（兜底）
+     */
+    private LocalDateTime calculateWarningTime(DataFillForm form) {
+        LocalDateTime deadline = form.getDeadline();
+        if (deadline == null) return null;
+
+        String mode = form.getReminderMode();
+        if (mode == null || mode.trim().isEmpty()) mode = "DEADLINE";
+
+        // 使用用户配置的截止时点，没有则退回提醒时点，再没有则默认 09:00
+        LocalTime warningTimeOfDay = parseReminderTime(
+                form.getDeadlineTime() != null ? form.getDeadlineTime() : form.getReminderTime());
+
+        LocalDateTime warningTime;
+        if ("MONTHLY".equalsIgnoreCase(mode)) {
+            // 月任务：~30 天周期，10% ≈ 3 天
+            warningTime = deadline.minusDays(3).with(warningTimeOfDay);
+        } else if ("WEEKLY".equalsIgnoreCase(mode)) {
+            // 周任务：7 天周期，10% ≈ 17 小时（直接按小时偏移，不强制时点）
+            warningTime = deadline.minusHours(17);
+        } else {
+            // 固定截止 / 兜底：截止前 1 天
+            warningTime = deadline.minusDays(1).with(warningTimeOfDay);
         }
 
+        return warningTime.withSecond(0).withNano(0);
     }
 
     /**
@@ -350,94 +376,127 @@ public class SchedulerService {
 
      */
 
+    /**
+     * 初始化或刷新表单的下一次截止时间，用于建表或定时任务
+     */
     public void initOrRefreshDeadline(DataFillForm form, LocalDateTime now) {
-
         String mode = form.getReminderMode();
-
         LocalDateTime deadline = form.getDeadline();
 
         if (mode == null || "DEADLINE".equalsIgnoreCase(mode)) {
-
             return;
-
         }
 
-        // 如果还没过期，什么都不做
-
+        // 如果还没过期，且提醒还没发送，或者已经在当前周期内，什么都不做
         if (deadline != null && now.isBefore(deadline)) {
-
             return;
-
         }
 
         java.time.LocalDate today = now.toLocalDate();
-
-        double rDays = form.getReminderDays() != null ? form.getReminderDays() : 3.0;
-
         java.time.LocalDate calculatedReminderDate = null;
+        java.time.LocalDate calculatedDeadlineDate = null;
 
         if ("MONTHLY".equalsIgnoreCase(mode)) {
+            Integer rDay = form.getMonthlyDay();
+            if (rDay == null || rDay < 1) rDay = 10;
+            
+            Integer dDay = form.getDeadlineMonthlyDay();
+            // 如果没设置截止日，则按旧逻辑设置（默认提醒后3天）
+            if (dDay == null) dDay = rDay + 3;
 
-            Integer day = form.getMonthlyDay();
-
-            if (day == null || day < 1) day = 10;
-
-            // 当前月的发信日
-
-            java.time.LocalDate targetDate = today.withDayOfMonth(Math.min(day, today.lengthOfMonth()));
-
-            java.time.LocalDate cycleDeadline = targetDate.plusDays((long) rDays);
-
-            // 如果连"当前月的截止日"都已经过了，就安排到下个月
-
-            if (today.isAfter(cycleDeadline)) {
-
+            // 1. 确定提醒日期
+            calculatedReminderDate = today.withDayOfMonth(Math.min(rDay, today.lengthOfMonth()));
+            // 如果这个月的提醒日期已经过了，且对应的截止日期也已经过了，则推到下个月
+            LocalDateTime currentCycleDeadline = calculateSpecificDeadline(calculatedReminderDate, rDay, dDay, form.getReminderTime(), form.getDeadlineTime());
+            if (now.isAfter(currentCycleDeadline)) {
                 java.time.LocalDate nextMonth = today.plusMonths(1);
-
-                calculatedReminderDate = nextMonth.withDayOfMonth(Math.min(day, nextMonth.lengthOfMonth()));
-
-            } else {
-
-                calculatedReminderDate = targetDate;
-
+                calculatedReminderDate = nextMonth.withDayOfMonth(Math.min(rDay, nextMonth.lengthOfMonth()));
             }
+            
+            // 2. 确定截止日期（在提醒日期之后）
+            calculatedDeadlineDate = calculateNextOccurrence(calculatedReminderDate, dDay, "MONTHLY");
 
         } else if ("WEEKLY".equalsIgnoreCase(mode)) {
+            Integer rDow = form.getWeeklyDayOfWeek();
+            if (rDow == null || rDow < 1 || rDow > 7) rDow = 1;
 
-            Integer dow = form.getWeeklyDayOfWeek();
+            Integer dDow = form.getDeadlineWeeklyDayOfWeek();
+            if (dDow == null) dDow = rDow + 3;
+            if (dDow > 7) dDow -= 7;
 
-            if (dow == null || dow < 1 || dow > 7) dow = 1;
-
+            // 1. 确定提醒日期 (最近的一个配置好的周几)
             int todayDow = today.getDayOfWeek().getValue();
-
-            // 先找出"这周"的那个发信日
-
-            java.time.LocalDate thisWeekTarget = today.minusDays(todayDow - 1).plusDays(dow - 1);
-
-            java.time.LocalDate cycleDeadline = thisWeekTarget.plusDays((long) rDays);
-
-            // 如果连"这周的发信截止日"都已经过了，就安排到下周
-
-            if (today.isAfter(cycleDeadline)) {
-
-                calculatedReminderDate = thisWeekTarget.plusDays(7);
-
-            } else {
-
-                calculatedReminderDate = thisWeekTarget;
-
+            calculatedReminderDate = today.minusDays(todayDow - 1).plusDays(rDow - 1);
+            
+            LocalDateTime currentCycleDeadline = calculateSpecificDeadline(calculatedReminderDate, rDow, dDow, form.getReminderTime(), form.getDeadlineTime());
+            if (now.isAfter(currentCycleDeadline)) {
+                calculatedReminderDate = calculatedReminderDate.plusDays(7);
             }
 
+            // 2. 确定截止日期
+            calculatedDeadlineDate = calculateNextOccurrence(calculatedReminderDate, dDow, "WEEKLY");
         }
 
-        if (calculatedReminderDate != null) {
+        if (calculatedReminderDate != null && calculatedDeadlineDate != null) {
+            LocalTime rt = parseReminderTime(form.getReminderTime());
+            LocalTime dt = parseReminderTime(form.getDeadlineTime()); // 复用解析函数，虽然名字叫 reminderTime
 
-            LocalDateTime newDeadline = calculatedReminderDate.atTime(parseReminderTime(form.getReminderTime())).plusHours((long)(rDays * 24));
-
-            form.setDeadline(newDeadline);
-
+            form.setReminderDateTime(calculatedReminderDate.atTime(rt));
+            form.setDeadline(calculatedDeadlineDate.atTime(dt));
         }
+    }
 
+    /**
+     * 计算特定配置下的截止时间点
+     */
+    private LocalDateTime calculateSpecificDeadline(java.time.LocalDate reminderDate, int rVal, int dVal, String rTime, String dTime) {
+        java.time.LocalDate deadlineDate;
+        if (rVal == dVal) {
+            deadlineDate = reminderDate;
+        } else {
+            // 这里简单处理：如果截止日数值小于提醒日，视为下周期
+            // 但在 initOrRefreshDeadline 中已通过 calculateNextOccurrence 处理更精准的逻辑
+            // 为简化，这里先计算出暂时的截止时间用于判断是否过期
+            deadlineDate = reminderDate.plusDays(3); // 兜底
+        }
+        return deadlineDate.atTime(parseReminderTime(dTime));
+    }
+
+    /**
+     * 从起始日期开始，找下一个（或当日）目标日期（周几或几号）
+     */
+    private java.time.LocalDate calculateNextOccurrence(java.time.LocalDate startDate, int targetVal, String mode) {
+        if ("WEEKLY".equalsIgnoreCase(mode)) {
+            int currentDow = startDate.getDayOfWeek().getValue();
+            int daysToAdd = (targetVal - currentDow + 7) % 7;
+            return startDate.plusDays(daysToAdd);
+        } else {
+            // MONTHLY
+            if (targetVal >= startDate.getDayOfMonth()) {
+                return startDate.withDayOfMonth(Math.min(targetVal, startDate.lengthOfMonth()));
+            } else {
+                java.time.LocalDate next = startDate.plusMonths(1);
+                return next.withDayOfMonth(Math.min(targetVal, next.lengthOfMonth()));
+            }
+        }
+    }
+
+    /**
+     * 计算当前表单截止时间对应的提醒时间点（兜底逻辑）
+     */
+    private LocalDateTime calculateCurrentCycleReminderTime(DataFillForm form) {
+        if (form.getDeadline() == null) return null;
+        if ("WEEKLY".equalsIgnoreCase(form.getReminderMode())) {
+            Integer rDow = form.getWeeklyDayOfWeek();
+            if (rDow == null) return null;
+            LocalDateTime reminder = form.getDeadline();
+            while (reminder.getDayOfWeek().getValue() != rDow) {
+                reminder = reminder.minusDays(1);
+            }
+            return reminder.with(parseReminderTime(form.getReminderTime()));
+        }
+        // Monthly 等逻辑同理...
+        return null;
     }
 
     /**
@@ -446,17 +505,8 @@ public class SchedulerService {
 
      */
 
-    private int calculateDaysLeft(LocalDateTime deadline, LocalDateTime referenceTime) {
 
-        if (deadline == null || referenceTime == null) {
 
-            return 0;
-
-        }
-
-        return (int) java.time.Duration.between(referenceTime, deadline).toDays();
-
-    }
 
     /**
 

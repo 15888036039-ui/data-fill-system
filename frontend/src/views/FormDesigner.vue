@@ -123,53 +123,103 @@
               </el-radio-group>
             </el-form-item>
 
-            <el-form-item v-if="formMeta.reminderMode === 'DEADLINE'" label="截止时间" required>
-              <el-date-picker
-                v-model="formMeta.deadline"
-                type="datetime"
-                placeholder="选择截止日期"
-                value-format="YYYY-MM-DD HH:mm:ss"
-                style="width: 100%"
-              />
-            </el-form-item>
-
-            <el-form-item 
-              v-if="formMeta.reminderMode === 'MONTHLY'" 
-              label="每月几号触发提醒" 
-              required
-            >
-              <el-input-number v-model="formMeta.monthlyDay" :min="1" :max="31" style="width: 100%" />
-            </el-form-item>
-
-            <el-form-item 
-              v-if="formMeta.reminderMode === 'WEEKLY'" 
-              label="每周几触发提醒" 
-              required
-            >
-              <el-select v-model="formMeta.weeklyDayOfWeek" style="width: 100%">
-                <el-option label="星期一" :value="1" />
-                <el-option label="星期二" :value="2" />
-                <el-option label="星期三" :value="3" />
-                <el-option label="星期四" :value="4" />
-                <el-option label="星期五" :value="5" />
-                <el-option label="星期六" :value="6" />
-                <el-option label="星期日" :value="7" />
-              </el-select>
-            </el-form-item>
-
-            <div class="form-row">
-              <el-form-item :label="formMeta.reminderMode === 'DEADLINE' ? '提前提醒天数' : '提醒后要求完成天数'" style="flex: 1">
-                <el-input-number v-model="formMeta.reminderDays" :min="0.1" :max="30" :step="0.1" style="width: 100%" />
-              </el-form-item>
-              <el-form-item label="具体提醒时点" style="flex: 1">
-                <el-time-picker
-                  v-model="formMeta.reminderTime"
-                  format="HH:mm"
-                  value-format="HH:mm"
-                  placeholder="选择时间"
+            <div v-if="formMeta.reminderMode === 'DEADLINE'">
+              <el-form-item label="提醒时间" required>
+                <el-date-picker
+                  v-model="formMeta.reminderDateTime"
+                  type="datetime"
+                  placeholder="请选择"
+                  value-format="YYYY-MM-DD HH:mm:ss"
                   style="width: 100%"
                 />
               </el-form-item>
+              <el-form-item label="截止时间" required>
+                <el-date-picker
+                  v-model="formMeta.deadline"
+                  type="datetime"
+                  placeholder="请选择"
+                  value-format="YYYY-MM-DD HH:mm:ss"
+                  style="width: 100%"
+                />
+              </el-form-item>
+            </div>
+
+            <div v-if="formMeta.reminderMode === 'MONTHLY'">
+              <div class="form-row">
+                <el-form-item label="提醒日 (每月几号)" style="flex: 1" required>
+                  <el-input-number v-model="formMeta.monthlyDay" :min="1" :max="31" style="width: 100%" />
+                </el-form-item>
+                <el-form-item label="提醒时点" style="flex: 1" required>
+                  <el-time-picker
+                    v-model="formMeta.reminderTime"
+                    format="HH:mm"
+                    value-format="HH:mm"
+                    placeholder="请选择"
+                    style="width: 100%"
+                  />
+                </el-form-item>
+              </div>
+              <div class="form-row">
+                <el-form-item label="截止日 (每月几号)" style="flex: 1" required>
+                  <el-input-number v-model="formMeta.deadlineMonthlyDay" :min="1" :max="31" style="width: 100%" />
+                </el-form-item>
+                <el-form-item label="截止时点" style="flex: 1" required>
+                  <el-time-picker
+                    v-model="formMeta.deadlineTime"
+                    format="HH:mm"
+                    value-format="HH:mm"
+                    placeholder="请选择"
+                    style="width: 100%"
+                  />
+                </el-form-item>
+              </div>
+            </div>
+
+            <div v-if="formMeta.reminderMode === 'WEEKLY'">
+              <div class="form-row">
+                <el-form-item label="提醒日 (每周几)" style="flex: 1" required>
+                  <el-select v-model="formMeta.weeklyDayOfWeek" style="width: 100%">
+                    <el-option label="星期一" :value="1" />
+                    <el-option label="星期二" :value="2" />
+                    <el-option label="星期三" :value="3" />
+                    <el-option label="星期四" :value="4" />
+                    <el-option label="星期五" :value="5" />
+                    <el-option label="星期六" :value="6" />
+                    <el-option label="星期日" :value="7" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="提醒时点" style="flex: 1" required>
+                  <el-time-picker
+                    v-model="formMeta.reminderTime"
+                    format="HH:mm"
+                    value-format="HH:mm"
+                    placeholder="请选择"
+                    style="width: 100%"
+                  />
+                </el-form-item>
+              </div>
+              <div class="form-row">
+                <el-form-item label="截止日 (每周几)" style="flex: 1" required>
+                  <el-select v-model="formMeta.deadlineWeeklyDayOfWeek" style="width: 100%">
+                    <el-option label="星期一" :value="1" />
+                    <el-option label="星期二" :value="2" />
+                    <el-option label="星期三" :value="3" />
+                    <el-option label="星期四" :value="4" />
+                    <el-option label="星期五" :value="5" />
+                    <el-option label="星期六" :value="6" />
+                    <el-option label="星期日" :value="7" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="截止时点" style="flex: 1" required>
+                  <el-time-picker
+                    v-model="formMeta.deadlineTime"
+                    format="HH:mm"
+                    value-format="HH:mm"
+                    placeholder="请选择"
+                    style="width: 100%"
+                  />
+                </el-form-item>
+              </div>
             </div>
 
             <el-form-item label="填报人邮箱 (发送提醒邮件)">
@@ -575,12 +625,16 @@ const formMeta = reactive({
   folderId: '',
   status: 'ACTIVE',
   deadline: '',
-  reminderDays: 3,
-  reminderTime: '09:00',
+  reminderDays: null, // 已废弃: 保留用于兼容旧数据，新表单不再使用
+  reminderTime: '',
   recipientEmails: '',
   reminderMode: 'DEADLINE',
-  monthlyDay: 10,
-  weeklyDayOfWeek: 1,
+  monthlyDay: null,
+  weeklyDayOfWeek: null,
+  reminderDateTime: '',
+  deadlineMonthlyDay: null,
+  deadlineWeeklyDayOfWeek: null,
+  deadlineTime: '',
   cycleDays: 0,
   fillUserEmails: '',
   kvConfig: '',
@@ -973,7 +1027,7 @@ const finalizeFields = () => {
 }
 
 const isSystemManagedField = (field) => {
-  const reserved = ['id', 'is_deleted', 'w_insert_dt', 'w_update_dt', 'load_user', 'job_instance', 'extra_data']
+  const reserved = ['id', 'delete_flag', 'w_insert_dt', 'w_update_dt', 'load_user', 'job_instance', 'extra_data']
   return reserved.includes((field?.columnName || '').toLowerCase())
 }
 

@@ -55,6 +55,20 @@ public class DataFillForm {
     /** 提醒时间（HH:mm），例如 09:00；为空时默认 09:00 */
     private String reminderTime;
 
+    /** 固定期限模式下的提醒发送时间*/
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
+    @TableField("reminder_date_time")
+    private LocalDateTime reminderDateTime;
+
+    @TableField("deadline_monthly_day")
+    private Integer deadlineMonthlyDay;
+
+    @TableField("deadline_weekly_day_of_week")
+    private Integer deadlineWeeklyDayOfWeek;
+
+    @TableField("deadline_time")
+    private String deadlineTime;
+
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
     private LocalDateTime createTime;
     

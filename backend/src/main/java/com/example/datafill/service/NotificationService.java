@@ -520,7 +520,7 @@ public class NotificationService {
 
         }
 
-        return (int) java.time.Duration.between(referenceTime, deadline).toDays();
+        return (int) java.time.Duration.between(referenceTime, deadline).toHours();
 
     }
 

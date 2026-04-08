@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS data_fill_form (
     monthly_day     INTEGER,
     weekly_day_of_week INTEGER,
     reminder_time   VARCHAR(8),
+    reminder_date_time TIMESTAMP,
+    deadline_monthly_day INTEGER,
+    deadline_weekly_day_of_week INTEGER,
+    deadline_time   VARCHAR(10),
     recipient_emails  TEXT,
     cycle_days        INTEGER,
     fill_user_emails  TEXT,
@@ -58,6 +62,18 @@ ALTER TABLE data_fill_form
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS reminder_time VARCHAR(8);
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS reminder_date_time TIMESTAMP;
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS deadline_monthly_day INTEGER;
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS deadline_weekly_day_of_week INTEGER;
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS deadline_time VARCHAR(10);
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS recipient_emails TEXT;
