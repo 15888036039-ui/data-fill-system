@@ -336,6 +336,46 @@ public class DynamicDataDmlService {
                 String s = ((String) val).toLowerCase().trim();
                 return "true".equals(s) || "1".equals(s) || "yes".equals(s) || "t".equals(s) || "on".equals(s);
             }
+        } else if (type.contains("json")) {
+            if (val instanceof String && !isStringEmpty) {
+                String s = ((String) val).trim();
+                try {
+                    // 验证是否为合法 JSON
+                    objectMapper.readTree(s);
+                    return s;
+                } catch (Exception e) {
+                    // 如果解析失败，不再直接返回原始字符串（导致DB报错），而是尝试将其包装为 JSON 字符串
+                    log.warn("JSON 解析失败，尝试包装处理: {}, columnName={}", s, dbType);
+                    try {
+                        return objectMapper.writeValueAsString(s);
+                    } catch (Exception ignored) {
+                        return s;
+                    }
+                }
+            } else if (val != null && !(val instanceof String)) {
+                try {
+                    return objectMapper.writeValueAsString(val);
+                } catch (Exception e) {
+                    return String.valueOf(val);
+                }
+            }
+        } else if (type.endsWith("[]")) {
+            // 数组类型支持储备 (如 text[], int4[])
+            if (val instanceof String && !isStringEmpty) {
+                String s = ((String) val).trim();
+                if (s.startsWith("{") && s.endsWith("}")) return s; // 已是 PG 数组格式
+                if (s.startsWith("[") && s.endsWith("]")) {
+                    try {
+                        objectMapper.readValue(s, new TypeReference<List<Object>>() {});
+                        return s;
+                    } catch (Exception ignored) {}
+                }
+            }
+        } else if (type.contains("geometry") || type.contains("geography")) {
+            // PostGIS 空间类型支持储备 (WKT 格式或 GeoJSON)
+            if (val instanceof String && !isStringEmpty) {
+                return ((String) val).trim();
+            }
         }
         return val;
     }
@@ -465,18 +505,16 @@ public class DynamicDataDmlService {
             fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
         } catch (Exception e) { throw new RuntimeException(e); }
 
-        for (Map<String, Object> row : rows) {
+        // 优化：引入并行流 (Parallel Stream) 进行校验，提升大批量导入性能
+        rows.parallelStream().forEach(row -> {
             try {
                 validateRecord(form, row, physicalColumns);
             } catch (Exception e) {
                 Object excelRowObj = row.get("__excel_row_num__");
-                if (excelRowObj != null) {
-                    throw new RuntimeException("数据格式错误（第 " + excelRowObj + " 行）：" + e.getMessage(), e);
-                } else {
-                    throw e;
-                }
+                String prefix = (excelRowObj != null) ? "数据格式错误（第 " + excelRowObj + " 行）：" : "";
+                throw new RuntimeException(prefix + e.getMessage(), e);
             }
-        }
+        });
 
         List<String> columns = new ArrayList<>();
         if (hasColumn(physicalColumns, "id")) columns.add("\"id\"");
@@ -769,9 +807,17 @@ public class DynamicDataDmlService {
                 .filter(f -> Boolean.TRUE.equals(f.getFilterable()))
                 .collect(java.util.stream.Collectors.toList());
             
-            // 兼容前端 fallback 逻辑：如果没配置，默认取前三个
+            // 策略控制：根据 defaultFilterPolicy 决定默认筛选行为
             if (filterableFields.isEmpty()) {
-                filterableFields = fields.stream().limit(3).collect(java.util.stream.Collectors.toList());
+                String policy = form.getDefaultFilterPolicy();
+                if ("FIRST_THREE".equalsIgnoreCase(policy)) {
+                    filterableFields = fields.stream().limit(3).collect(java.util.stream.Collectors.toList());
+                } else if ("NONE".equalsIgnoreCase(policy)) {
+                    filterableFields = Collections.emptyList();
+                } else {
+                    // 默认兼容逻辑：若未配置策略，仍取前三个（或可以根据需求改为 NONE）
+                    filterableFields = fields.stream().limit(3).collect(java.util.stream.Collectors.toList());
+                }
             }
 
             for (FieldDef f : filterableFields) {

@@ -102,4 +102,16 @@ public class DataFillForm {
 
     @TableField("is_external")
     private Boolean isExternal;
+
+    /** 默认筛选策略：NONE(不展示任何筛选项)、FIRST_THREE(默认展示前三个字段) */
+    @TableField("default_filter_policy")
+    private String defaultFilterPolicy;
+
+    public String getDefaultFilterPolicy() {
+        return defaultFilterPolicy;
+    }
+
+    public void setDefaultFilterPolicy(String defaultFilterPolicy) {
+        this.defaultFilterPolicy = defaultFilterPolicy;
+    }
 }

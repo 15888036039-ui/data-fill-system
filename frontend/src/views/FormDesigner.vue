@@ -91,6 +91,13 @@
                 placeholder="用于不同链接的展示过滤"
               />
             </el-form-item>
+            <el-form-item label="默认筛选器策略" required>
+              <el-select v-model="formMeta.defaultFilterPolicy" style="width: 100%">
+                <el-option label="不展示默认筛选器 (NONE)" value="NONE" />
+                <el-option label="展示前三个字段 (FIRST_THREE)" value="FIRST_THREE" />
+              </el-select>
+              <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">当没有手动指定任何字段为“筛选器”时，系统将采取此兜底策略。</div>
+            </el-form-item>
             
             <div class="form-row">
               <el-form-item label="运营状态" style="flex: 1">
@@ -641,7 +648,8 @@ const formMeta = reactive({
   referenceTemplateConfig: '',
   hardDelete: false,
   groupTag: '',
-  description: ''
+  description: '',
+  defaultFilterPolicy: 'FIRST_THREE'
 })
 
 let _fieldUidCounter = 1

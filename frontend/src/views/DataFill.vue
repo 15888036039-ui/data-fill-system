@@ -53,51 +53,22 @@
       />
 
       <!-- 填报区域 (新增/编辑) -->
-      <el-dialog 
-        v-model="isFilling" 
-        :title="editingRowId ? '修改数据' : '单行录入'"
-        width="650px"
-        destroy-on-close
-      >
-        <DynamicForm 
-          v-if="isFilling"
-          :schema="schemaFields" 
-          :initial-data="editingData"
-          @submit="submitData"
-          @cancel="isFilling = false" 
-        />
-      </el-dialog>
+      <DataEditor
+        v-model="isFilling"
+        :editing-row-id="editingRowId"
+        :editing-data="editingData"
+        :schema-fields="schemaFields"
+        :form-id="formId"
+        :user-email="userEmail"
+        :is-admin="isAdmin"
+        @success="loadTableData(); loadFilterOptions()"
+      />
 
       <!-- 操作日志弹窗 -->
-      <el-dialog
+      <OperationLogs
         v-model="logVisible"
-        title="数据操作日志"
-        width="600px"
-        custom-class="log-dialog"
-      >
-        <div v-loading="logLoading" style="min-height: 200px; max-height: 500px; overflow-y: auto; padding: 10px;">
-          <el-empty v-if="!operationLogs.length && !logLoading" description="暂无操作记录" />
-          <el-timeline v-else>
-            <el-timeline-item
-              v-for="(log, index) in operationLogs"
-              :key="log.id"
-              :timestamp="log.createTime"
-              :type="getLogType(log.operationType)"
-              :hollow="index !== 0"
-            >
-              <div class="log-item-content">
-                <div class="log-header">
-                  <span class="log-user">{{ log.userEmail }}</span>
-                  <el-tag size="small" :type="getLogType(log.operationType)" effect="plain" class="log-tag">
-                    {{ getLogTypeText(log.operationType) }}
-                  </el-tag>
-                </div>
-                <div class="log-desc">{{ log.operationDesc }}</div>
-              </div>
-            </el-timeline-item>
-          </el-timeline>
-        </div>
-      </el-dialog>
+        :form-id="formId"
+      />
 
       <!-- 全新扁平工具栏 -->
       <div class="flat-toolbar">
@@ -114,7 +85,7 @@
             >
               <el-button icon="Upload" :loading="isUploading" :disabled="isLocked" class="action-btn">上传数据</el-button>
             </el-upload>
-            <el-button icon="Memo" @click="showOperationLogs" class="action-btn">操作日志</el-button>
+            <el-button icon="Memo" @click="logVisible = true" class="action-btn">操作日志</el-button>
           </div>
           
           <div class="right-group">
@@ -139,34 +110,13 @@
           </div>
         </div>
 
-        <div class="toolbar-row filter-line">
-          <div class="filter-inputs-group">
-            <template v-for="field in filterFields" :key="'filter_'+field.columnName">
-              <div class="filter-item">
-                <span class="filter-label">{{ field.name }}</span>
-                <el-select
-                  v-model="searchParams[field.columnName]"
-                  :placeholder="'请选择' + field.name"
-                  size="default"
-                  clearable
-                  filterable
-                  class="filter-select"
-                >
-                  <el-option
-                    v-for="opt in getFilterValues(field)"
-                    :key="opt"
-                    :label="opt"
-                    :value="opt"
-                  />
-                </el-select>
-              </div>
-            </template>
-            <div class="filter-actions-inline">
-              <el-button type="primary" size="default" icon="Search" @click="handleSearch">查询</el-button>
-              <el-button size="default" icon="RefreshRight" @click="resetSearch">重置</el-button>
-            </div>
-          </div>
-        </div>
+        <FilterBar
+          :filter-fields="filterFields"
+          :filter-options="filterOptions"
+          :initial-params="searchParams"
+          @search="handleSearch"
+          @reset="resetSearch"
+        />
       </div>
 
         <!-- 批量操作扩展提示 -->
@@ -262,7 +212,9 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { AlarmClock, CircleCheck } from '@element-plus/icons-vue'
 import axios from 'axios'
-import DynamicForm from '../components/DynamicForm.vue'
+import FilterBar from '../components/FilterBar.vue'
+import DataEditor from '../components/DataEditor.vue'
+import OperationLogs from '../components/OperationLogs.vue'
 
 const route = useRoute()
 const formId = route.params.id
@@ -286,41 +238,6 @@ const isUploading = ref(false)
 
 // 操作日志相关
 const logVisible = ref(false)
-const logLoading = ref(false)
-const operationLogs = ref([])
-
-const showOperationLogs = async () => {
-  logVisible.value = true
-  logLoading.value = true
-  try {
-    const res = await axios.get(`/api/fill/data/${formId}/logs`)
-    operationLogs.value = res.data || []
-  } catch (e) {
-    ElMessage.error('加载操作日志失败')
-  } finally {
-    logLoading.value = false
-  }
-}
-
-const getLogType = (type) => {
-  switch (type) {
-    case 'ADD': return 'success'
-    case 'UPDATE': return 'warning'
-    case 'DELETE': return 'danger'
-    case 'UPLOAD': return 'primary'
-    default: return 'info'
-  }
-}
-
-const getLogTypeText = (type) => {
-  switch (type) {
-    case 'ADD': return '新增'
-    case 'UPDATE': return '修改'
-    case 'DELETE': return '删除'
-    case 'UPLOAD': return '导入'
-    default: return type
-  }
-}
 
 const searchParams = ref({})
 const filterOptions = ref({})
@@ -447,7 +364,8 @@ const handleSelectionChange = (selection) => {
   }
 }
 
-const handleSearch = () => {
+const handleSearch = (params) => {
+  searchParams.value = params || {}
   currentPage.value = 1
   loadTableData()
 }
@@ -526,24 +444,13 @@ const schemaFields = computed(() => {
 
 const filterFields = computed(() => {
   const filterable = schemaFields.value.filter(f => f.filterable)
-  return filterable.length > 0 ? filterable : schemaFields.value.slice(0, 3)
+  if (filterable.length > 0) return filterable
+  
+  const policy = formMeta.value?.defaultFilterPolicy
+  if (policy === 'NONE') return []
+  // 默认策略或 FIRST_THREE：取前三个
+  return schemaFields.value.slice(0, 3)
 })
-
-const getFilterValues = (field) => {
-  const key = field?.columnName
-  if (!key) return []
-  const options = filterOptions.value || {}
-  const variants = [
-    key,
-    key.trim(),
-    key.trim().toLowerCase()
-  ]
-  for (const variant of variants) {
-    const values = options[variant]
-    if (Array.isArray(values)) return values
-  }
-  return []
-}
 
 const loadFilterOptions = async () => {
   try {
@@ -608,36 +515,6 @@ const handleEdit = (row) => {
   isFilling.value = true
 }
 
-const submitData = async (formDataVal) => {
-  try {
-    const payload = { ...formDataVal }
-    // 统一注入用户与申请人信息（用于权限与审批流）
-    if (userEmail.value) {
-      payload.load_user = userEmail.value
-      payload.applicantEmail = userEmail.value
-    }
-    
-    if (editingRowId.value) {
-      // 更新操作
-      await axios.put(`/api/fill/data/${formId}/${editingRowId.value}`, payload, {
-        params: { userEmail: userEmail.value, isAdmin: isAdmin.value }
-      })
-      ElMessage.success('数据已成功修改')
-    } else {
-      // 新增操作
-      await axios.post(`/api/fill/data/${formId}`, payload, {
-        params: { userEmail: userEmail.value }
-      })
-      ElMessage.success('填报成功！')
-    }
-    
-    isFilling.value = false
-    await loadTableData()
-    loadFilterOptions()
-  } catch (e) {
-    ElMessage.error(e.response?.data?.message || '操作失败，请重试')
-  }
-}
 
 const handleBatchDelete = async () => {
   if (selectedIds.value.length === 0) return
@@ -882,22 +759,6 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   gap: 12px;
 }
 
-.filter-inputs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-}
-
-.filter-actions-inline {
-  display: flex;
-  gap: 8px;
-}
-
-.filter-select {
-  width: 120px;
-}
-
 .divider {
   width: 1px;
   height: 14px;
@@ -945,55 +806,6 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
-.log-item-content {
-  padding: 2px 0;
-}
-
-.log-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 4px;
-}
-
-.log-user {
-  font-weight: 600;
-  font-size: 14px;
-  color: #1e293b;
-}
-
-.log-tag {
-  font-weight: 500;
-}
-
-.log-desc {
-  font-size: 13px;
-  color: #64748b;
-  line-height: 1.5;
-}
-
-:deep(.el-timeline-item__timestamp) {
-  font-size: 12px;
-  color: #94a3b8;
-  margin-bottom: 8px;
-}
-
-:deep(.el-dialog.log-dialog) {
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-:deep(.el-dialog.log-dialog .el-dialog__header) {
-  margin-right: 0;
-  padding: 20px;
-  border-bottom: 1px solid #f1f5f9;
-}
-
-:deep(.el-dialog.log-dialog .el-dialog__title) {
-  font-size: 18px;
-  font-weight: 700;
-  color: #0f172a;
-}
 
 .description-banner {
   margin-bottom: 20px;
@@ -1013,29 +825,5 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   line-height: 1.6;
   color: #0c4a6e;
   margin-top: 4px;
-}
-
-.filter-inputs-group {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 16px;
-}
-
-.filter-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.filter-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #475569;
-  white-space: nowrap;
-}
-
-.filter-select {
-  width: 180px;
 }
 </style>
