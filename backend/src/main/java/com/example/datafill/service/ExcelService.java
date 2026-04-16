@@ -168,6 +168,9 @@ public class ExcelService {
         if (normalizedType == null || normalizedType.trim().isEmpty()) {
             return "VARCHAR(255)";
         }
+        if ("json".equals(normalizedType)) {
+            return "JSON";
+        }
         if (normalizedType.contains("json")) {
             return "JSONB";
         }

@@ -41,6 +41,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 
 import java.util.Map;
+import java.util.HashMap;
 
 @Slf4j
 @Service
@@ -62,8 +63,7 @@ public class DynamicTableDdlService {
     private final DataFillFolderService folderService;
 
     private static final java.util.Set<String> RESERVED_COLUMN_NAMES = new java.util.HashSet<>(java.util.Arrays.asList(
-            "id", "delete_flag", "w_insert_dt", "w_update_dt", "load_user", "job_instance",
-            "extra_data"));
+            "id", "delete_flag"));
 
     private boolean isReservedColumnName(String columnName) {
         return columnName != null && RESERVED_COLUMN_NAMES.contains(columnName.toLowerCase());
@@ -199,6 +199,20 @@ public class DynamicTableDdlService {
         res.put("physicalExists", physicalExists);
         res.put("schemaName", schema);
         res.put("tableName", table);
+
+        if (physicalExists) {
+            java.util.Set<String> physicalColumns = loadPhysicalColumns(schema, table);
+            List<String> missing = new ArrayList<>();
+            // 核心：仅检查 id 和 delete_flag
+            if (!physicalColumns.contains("id")) {
+                // 如果没有显式 id，检查是否已有其他潜在主键列（后续通过元数据配置）
+                missing.add("id");
+            }
+            if (!physicalColumns.contains("delete_flag")) {
+                missing.add("delete_flag");
+            }
+            res.put("missingColumns", missing);
+        }
         return res;
     }
 
@@ -496,6 +510,16 @@ public class DynamicTableDdlService {
         }
 
         form.setForms(writeFieldsJson(fields));
+        
+        // [后端强校验] 检查主键
+        String pk = (form.getPkColumn() != null && !form.getPkColumn().isEmpty()) ? form.getPkColumn() : "id";
+        if (!physicalColumns.contains(pk.toLowerCase())) {
+            throw new RuntimeException("绑定失败：物理表缺少主键标识列 '" + pk + "'。请检查业务表主键配置。");
+        }
+        if (!Boolean.TRUE.equals(form.getHardDelete()) && !physicalColumns.contains("delete_flag")) {
+            throw new RuntimeException("绑定失败：已启用软删除但物理表缺少 'delete_flag' 列。请先在识别界面执行‘一键补足’或切换为硬删除模式。");
+        }
+
         applyFormDefaultsForMetadata(form);
         form.setIsExternal(true); // 外部绑定表
         formMapper.insert(form);
@@ -1026,8 +1050,65 @@ public class DynamicTableDdlService {
 
         result.put("completed", completed);
 
+
         return result;
 
     }
 
+    @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
+    public Map<String, Object> repairTable(String formId, List<String> columnsToAdd) {
+        DataFillForm form = formMapper.selectById(formId);
+        if (form == null) throw new RuntimeException("表单不存在");
+        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
+        return repairTableByName(schema, form.getTableName(), columnsToAdd);
+    }
+
+    @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
+    public Map<String, Object> repairTableByName(String schema, String tableName, List<String> columnsToAdd) {
+        String fullTableName = (schema == null || schema.isEmpty() ? "public" : schema) + "." + tableName;
+        
+        java.util.Set<String> physicalColumns = loadPhysicalColumns(schema, tableName);
+        List<String> success = new ArrayList<>();
+        List<String> failed = new ArrayList<>();
+
+        for (String col : columnsToAdd) {
+            String lowerCol = col.toLowerCase();
+            if (physicalColumns.contains(lowerCol)) continue;
+            
+            try {
+                String fullTable = SqlUtil.quoteTable(fullTableName);
+                StringBuilder sql = new StringBuilder("ALTER TABLE " + fullTable + " ADD COLUMN \"" + lowerCol + "\" ");
+                if ("id".equals(lowerCol)) {
+                    sql.append("VARCHAR(50)");
+                    jdbcTemplate.execute(sql.toString());
+                    jdbcTemplate.execute("UPDATE " + fullTable + " SET \"id\" = MD5(RANDOM()::TEXT) WHERE \"id\" IS NULL");
+                    jdbcTemplate.execute("ALTER TABLE " + fullTable + " ADD PRIMARY KEY (\"id\")");
+                    success.add(col);
+                    continue;
+                } else if ("delete_flag".equals(lowerCol)) {
+                    sql.append("BOOLEAN DEFAULT FALSE");
+                } else if ("w_insert_dt".equals(lowerCol) || "w_update_dt".equals(lowerCol)) {
+                    sql.append("TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
+                } else if ("load_user".equals(lowerCol)) {
+                    sql.append("VARCHAR(100)");
+                } else if ("job_instance".equals(lowerCol)) {
+                    sql.append("VARCHAR(80)");
+                } else if ("extra_data".equals(lowerCol)) {
+                    sql.append("JSONB DEFAULT '{}'");
+                } else {
+                    sql.append("VARCHAR(255)");
+                }
+                jdbcTemplate.execute(sql.toString());
+                success.add(col);
+            } catch (Exception e) {
+                log.error("补齐列 {} 失败", col, e);
+                failed.add(col + ": " + e.getMessage());
+            }
+        }
+        
+        Map<String, Object> res = new HashMap<>();
+        res.put("success", success);
+        res.put("failed", failed);
+        return res;
+    }
 }

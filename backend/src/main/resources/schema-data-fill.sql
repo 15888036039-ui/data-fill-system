@@ -114,6 +114,9 @@ ALTER TABLE data_fill_form
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS description TEXT;
 
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS pk_column VARCHAR(100) DEFAULT 'id';
+
 -- 修正唯一性约束：从单一 table_name 改为 (schema_name, table_name) 复合约束
 -- 1. 移除旧的单列唯一约束
 ALTER TABLE data_fill_form DROP CONSTRAINT IF EXISTS data_fill_form_table_name_key;

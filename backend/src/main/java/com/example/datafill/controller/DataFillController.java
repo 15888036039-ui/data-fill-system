@@ -434,4 +434,23 @@ public class DataFillController {
                 .eq("form_id", formId)
                 .orderByDesc("create_time"));
     }
+
+    @PostMapping("/forms/{id}/repairTable")
+    public Map<String, Object> repairTable(
+            @PathVariable String id,
+            @RequestParam String userEmail,
+            @RequestBody List<String> columns) {
+        assertAdmin(userEmail);
+        return tableDdlService.repairTable(id, columns);
+    }
+
+    @PostMapping("/forms/repairTableByName")
+    public Map<String, Object> repairTableByName(
+            @RequestParam(required = false, defaultValue = "public") String schemaName,
+            @RequestParam String tableName,
+            @RequestParam String userEmail,
+            @RequestBody List<String> columns) {
+        assertAdmin(userEmail);
+        return tableDdlService.repairTableByName(schemaName, tableName, columns);
+    }
 }

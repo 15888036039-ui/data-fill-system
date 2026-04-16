@@ -37,7 +37,6 @@ public class DynamicDataDmlService {
     private static final java.util.Set<String> SYSTEM_FIELDS = new java.util.HashSet<>(Arrays.asList(
         "id", "load_user", "creator", "w_insert_dt", "w_update_dt", 
         "create_time", "update_time", "delete_flag", "extra_data", "job_instance",
-        "applicantemail", "applicantname", "applicant_email", "applicant_name",
         "ctime", "mtime", "created_at", "updated_at"
     ));
 
@@ -324,12 +323,21 @@ public class DynamicDataDmlService {
             if (val instanceof String && !isStringEmpty) {
                 try {
                     String s = ((String) val).trim();
-                    // Remove currency symbols, common thousand separators (comma, non-breaking space), percent signs, and all spaces
                     s = s.replace(",", "").replace("$", "").replace("¥", "").replace("%", "").replaceAll("\\s+", "");
-                    
                     if (s.isEmpty() || s.equals("-") || s.equalsIgnoreCase("N/A") || s.equalsIgnoreCase("NA")) return val;
-                    return new java.math.BigDecimal(s);
+                    
+                    // 消除浮点数偏差逻辑：
+                    // 如果值看起来像 JS 产生的长精度浮点数 (如 6.60000000000001)，进行格式化。
+                    // 此处使用 BigDecimal 的 stripTrailingZeros 处理。
+                    java.math.BigDecimal bd = new java.math.BigDecimal(s);
+                    if (bd.scale() > 10) { // 怀疑是浮点偏差
+                        bd = bd.setScale(10, java.math.RoundingMode.HALF_UP).stripTrailingZeros();
+                    }
+                    return bd;
                 } catch (Exception ignored) {}
+            } else if (val instanceof Number) {
+                // 如果是直接传入的 Number 类型 (Double/Float)，也进行同样处理
+                return new java.math.BigDecimal(val.toString()).stripTrailingZeros();
             }
         } else if (type.contains("boolean") || type.contains("bool")) {
             if (val instanceof String) {
@@ -425,8 +433,9 @@ public class DynamicDataDmlService {
         List<Object> args = new ArrayList<>();
         String rowId = java.util.UUID.randomUUID().toString().replace("-", "");
 
-        if (hasColumn(physicalColumns, "id")) {
-            columns.add("\"id\"");
+        String pk = (form.getPkColumn() != null && !form.getPkColumn().isEmpty()) ? form.getPkColumn() : "id";
+        if (hasColumn(physicalColumns, pk)) {
+            columns.add("\"" + pk + "\"");
             placeholders.add("?");
             args.add(rowId);
         }
@@ -455,9 +464,11 @@ public class DynamicDataDmlService {
 
         for (Map.Entry<String, Object> entry : rowData.entrySet()) {
             String key = entry.getKey();
-            if (SYSTEM_FIELDS.contains(key.toLowerCase()) || !hasColumn(physicalColumns, key)) continue;
+            String lowerKey = key.toLowerCase();
+            // 核心修复：如果该列是主键(pk)或者系统审计列(SYSTEM_FIELDS)，则跳过，避免重复出现在 INSERT 语句中
+            if (lowerKey.equals(pk.toLowerCase()) || SYSTEM_FIELDS.contains(lowerKey) || !hasColumn(physicalColumns, key)) continue;
             
-            String colType = physicalColumns.get(key.toLowerCase());
+            String colType = physicalColumns.get(lowerKey);
             columns.add("\"" + key + "\"");
             Object val = entry.getValue();
             val = convertValueForDb(val, colType);
@@ -505,8 +516,8 @@ public class DynamicDataDmlService {
             fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
         } catch (Exception e) { throw new RuntimeException(e); }
 
-        // 优化：引入并行流 (Parallel Stream) 进行校验，提升大批量导入性能
-        rows.parallelStream().forEach(row -> {
+        // 修正：在大批量导入场景下，parallelStream 可能导致 ForkJoinPool 任务堆积及对象大量产生，改为普通 stream 以获取更平稳的内存表现
+        rows.stream().forEach(row -> {
             try {
                 validateRecord(form, row, physicalColumns);
             } catch (Exception e) {
@@ -517,7 +528,8 @@ public class DynamicDataDmlService {
         });
 
         List<String> columns = new ArrayList<>();
-        if (hasColumn(physicalColumns, "id")) columns.add("\"id\"");
+        String pk = (form.getPkColumn() != null && !form.getPkColumn().isEmpty()) ? form.getPkColumn() : "id";
+        if (hasColumn(physicalColumns, pk)) columns.add("\"" + pk + "\"");
         for (String col : CREATION_FIELDS) {
             if (hasColumn(physicalColumns, col)) columns.add("\"" + col + "\"");
         }
@@ -529,10 +541,15 @@ public class DynamicDataDmlService {
         List<String> dataColumns = new ArrayList<>();
         List<String> dataColumnTypes = new ArrayList<>();
         for (FieldDef f : fields) {
-            if (f.getColumnName() != null && !SYSTEM_FIELDS.contains(f.getColumnName().toLowerCase())) {
-                dataColumns.add(f.getColumnName());
-                columns.add("\"" + f.getColumnName() + "\"");
-                dataColumnTypes.add(physicalColumns.get(f.getColumnName().toLowerCase()));
+            String colName = f.getColumnName();
+            if (colName != null) {
+                String lowerCol = colName.toLowerCase();
+                // 核心修复：跳过主键与系统审计列，避免 COPY 语句表头重复
+                if (lowerCol.equals(pk.toLowerCase()) || SYSTEM_FIELDS.contains(lowerCol)) continue;
+                
+                dataColumns.add(colName);
+                columns.add("\"" + colName + "\"");
+                dataColumnTypes.add(physicalColumns.get(lowerCol));
             }
         }
         if (hasColumn(physicalColumns, "extra_data")) columns.add("\"extra_data\"");
@@ -549,7 +566,7 @@ public class DynamicDataDmlService {
                     StringBuilder tsv = new StringBuilder(1024 * 1024 * 2);
                     int batchCount = 0;
                     for (Map<String, Object> row : rows) {
-                        if (hasColumn(physicalColumns, "id")) appendTsv(tsv, java.util.UUID.randomUUID().toString().replace("-", ""));
+                        if (hasColumn(physicalColumns, pk)) appendTsv(tsv, java.util.UUID.randomUUID().toString().replace("-", ""));
                         for (String col : CREATION_FIELDS) {
                             if (hasColumn(physicalColumns, col)) appendTsv(tsv, now);
                         }
@@ -650,11 +667,15 @@ public class DynamicDataDmlService {
         StringJoiner sets = new StringJoiner(",");
         List<Object> args = new ArrayList<>();
 
+        String pk = (form.getPkColumn() != null && !form.getPkColumn().isEmpty()) ? form.getPkColumn() : "id";
+
         for (Map.Entry<String, Object> entry : rowData.entrySet()) {
             String key = entry.getKey();
-            if (SYSTEM_FIELDS.contains(key.toLowerCase()) || !hasColumn(physicalColumns, key)) continue;
+            String lowerKey = key.toLowerCase();
+            // 核心修复：过滤系统审计列与物理主键标识列，防止重复更新主键或导致 SQL 语法错误
+            if (lowerKey.equals(pk.toLowerCase()) || SYSTEM_FIELDS.contains(lowerKey) || !hasColumn(physicalColumns, key)) continue;
             
-            String colType = physicalColumns.get(key.toLowerCase());
+            String colType = physicalColumns.get(lowerKey);
             Object val = entry.getValue();
             val = convertValueForDb(val, colType);
             
@@ -678,8 +699,11 @@ public class DynamicDataDmlService {
         }
 
         if (sets.length() > 0) {
+            if (!hasColumn(physicalColumns, pk)) {
+                throw new RuntimeException("物理表中缺少主键标识列 '" + pk + "'，无法进行更新。请检查主键配置或在设计器中补齐标识列。");
+            }
             args.add(dataId);
-            jdbcTemplate.update(String.format("UPDATE %s SET %s WHERE \"id\" = ?", SqlUtil.quoteTable(fullTableName), sets.toString()), args.toArray());
+            jdbcTemplate.update(String.format("UPDATE %s SET %s WHERE \"%s\" = ?", SqlUtil.quoteTable(fullTableName), sets.toString(), pk), args.toArray());
         }
     }
 
@@ -804,13 +828,25 @@ public class DynamicDataDmlService {
         
         boolean isHardDeleteMode = Boolean.TRUE.equals(form.getHardDelete());
 
+        boolean hasDeleteFlag = hasColumn(physicalColumns, "delete_flag");
+        
+        if (!isHardDeleteMode && !hasDeleteFlag) {
+            throw new RuntimeException("该表未配置 'delete_flag' 字段，无法执行软删除。请在设计器中补齐审计列或切换为‘硬删除’模式。");
+        }
+
+        // 优先使用元数据中配置的 pk_column
+        String pk = (form.getPkColumn() != null && !form.getPkColumn().isEmpty()) ? form.getPkColumn() : "id";
+        if (!hasColumn(physicalColumns, pk)) {
+            throw new RuntimeException("物理表中缺少主键标识列 '" + pk + "'，无法定位记录。请检查业务表主键配置。");
+        }
+
         StringJoiner ps = new StringJoiner(",");
         for (int i = 0; i < dataIds.size(); i++) ps.add("?");
         
-        if (hasColumn(physicalColumns, "delete_flag") && !isHardDeleteMode) {
-            jdbcTemplate.update(String.format("UPDATE %s SET delete_flag=TRUE WHERE id IN (%s)", SqlUtil.quoteTable(fullTableName), ps), dataIds.toArray());
+        if (hasDeleteFlag && !isHardDeleteMode) {
+            jdbcTemplate.update(String.format("UPDATE %s SET delete_flag=TRUE WHERE \"%s\" IN (%s)", SqlUtil.quoteTable(fullTableName), pk, ps), dataIds.toArray());
         } else {
-            jdbcTemplate.update(String.format("DELETE FROM %s WHERE id IN (%s)", SqlUtil.quoteTable(fullTableName), ps), dataIds.toArray());
+            jdbcTemplate.update(String.format("DELETE FROM %s WHERE \"%s\" IN (%s)", SqlUtil.quoteTable(fullTableName), pk, ps), dataIds.toArray());
         }
     }
 

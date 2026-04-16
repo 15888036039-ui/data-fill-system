@@ -31,7 +31,7 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser
 
 # Standard Environment Variables
-ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom -Duser.timezone=GMT+8"
+ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=50.0 -Djava.security.egd=file:/dev/./urandom -Duser.timezone=GMT+8"
 
 # Copy layers from extractor
 COPY --from=extractor /app/dependencies/ ./
@@ -45,6 +45,8 @@ COPY --from=frontend-builder /app/frontend/dist ./static
 # Ensure upload directory exists and has correct permissions
 USER root
 RUN mkdir -p /data/upload && chown -R appuser:appgroup /data/upload
+# Support external config location
+RUN mkdir -p /datafill && chown -R appuser:appgroup /datafill
 USER appuser
 
 # Metadata Labels
@@ -58,5 +60,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
   CMD wget -qO- http://localhost:8080/actuator/health | grep UP || exit 1
 
-# Entrypoint using JarLauncher for layered builds
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS org.springframework.boot.loader.JarLauncher --spring.web.resources.static-locations=file:./static/,classpath:/static/"]
+# Entrypoint using JarLauncher for layered builds. 
+# Added --spring.config.additional-location to support the mounted application.yml
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS org.springframework.boot.loader.JarLauncher --spring.config.additional-location=file:/datafill/application.yml --spring.web.resources.static-locations=file:./static/,classpath:/static/"]

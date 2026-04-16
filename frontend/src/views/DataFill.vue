@@ -491,7 +491,7 @@ const handleAddNew = () => {
 }
 
 const handleEdit = (row) => {
-  editingRowId.value = row.id
+  editingRowId.value = row.id || row.ID || null // 强制获取 ID 标识
   editingData.value = { ...row }
   isFilling.value = true
 }

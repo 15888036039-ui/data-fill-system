@@ -102,4 +102,7 @@ public class DataFillForm {
 
     @TableField("is_external")
     private Boolean isExternal;
+
+    @TableField("pk_column")
+    private String pkColumn;
 }

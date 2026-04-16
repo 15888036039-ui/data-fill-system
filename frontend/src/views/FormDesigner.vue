@@ -279,6 +279,21 @@
             :closable="false"
           />
           <el-alert
+            v-if="displayMissingColumns.length > 0"
+            title="检测到物理表缺少系统必要的审计字段，部分功能（删除、更新、填报记录）将受限。"
+            type="error"
+            show-icon
+            style="margin-bottom: 24px;"
+            cross-origin
+          >
+            <template #default>
+              <div>缺失列：<el-tag size="small" type="danger" v-for="c in displayMissingColumns" :key="c" style="margin-right: 4px">{{ c }}</el-tag></div>
+              <div style="margin-top: 8px">
+                <el-button type="primary" size="small" @click="repairTableColumns" :loading="isRepairing">一键补齐缺失审计列</el-button>
+              </div>
+            </template>
+          </el-alert>
+          <el-alert
             v-if="isEditMode"
             title="当前处于元数据编辑模式。管理员可以修改业务字段；系统内置保留列将保持锁定或由内核自动管理。"
             type="success"
@@ -374,6 +389,11 @@
                       <el-option label="date" value="date" />
                       <el-option label="bool" value="bool" />
                     </el-select>
+                  </template>
+                </el-table-column>
+                <el-table-column label="主键" width="70" align="center">
+                  <template #default="scope">
+                    <el-radio v-model="formMeta.pkColumn" :label="scope.row.columnName"> &nbsp; </el-radio>
                   </template>
                 </el-table-column>
                 <el-table-column label="必填" width="80" align="center">
@@ -647,6 +667,7 @@ const formMeta = reactive({
   kvConfig: '',
   referenceTemplateConfig: '',
   hardDelete: false,
+  pkColumn: 'id',
   groupTag: '',
   description: '',
   defaultFilterPolicy: 'FIRST_THREE'
@@ -679,6 +700,20 @@ const lastFileName = ref('')
 const headerMappings = ref([])
 const referenceRows = ref([])
 const referenceParserProfile = ref('')
+const missingColumns = ref([])
+const isRepairing = ref(false)
+
+const displayMissingColumns = computed(() => {
+  let list = [...missingColumns.value]
+  // 如果当前指定的主键不是 'id'，且该主键确实存在于识别出的字段中，则不再提示缺失 id
+  const pk = formMeta.pkColumn || 'id'
+  if (list.includes('id') && pk !== 'id') {
+    if (fields.value.some(f => f.columnName === pk)) {
+      list = list.filter(c => c !== 'id')
+    }
+  }
+  return list
+})
 
 const parsedKvConfig = computed(() => {
   try {
@@ -973,7 +1008,24 @@ const inspectExistingTable = async () => {
       formMeta.schemaName = existingTableForm.schemaName
       bindExistingTableMode.value = true
       existingTableDialogVisible.value = false
-      ElMessage.success('已识别已有表结构，发布时将直接绑定该表')
+      missingColumns.value = res.data.missingColumns || []
+      
+      // 如果识别到的表中原来就有主键（后端返回或已存在于 fields），则自动选中
+      if (res.data.pkColumn) {
+          formMeta.pkColumn = res.data.pkColumn
+      } else if (fields.value.some(f => f.columnName === 'id')) {
+          formMeta.pkColumn = 'id'
+      }
+
+      if (missingColumns.value.length > 0) {
+        ElMessageBox.alert(
+          `已识别表结构，但检测到物理表缺少审计列：[${missingColumns.value.join(', ')}]。建议先补齐审计列，否则删除和更新功能将受限。`,
+          '配置风险提示',
+          { type: 'warning', confirmButtonText: '知道了' }
+        )
+      } else {
+        ElMessage.success('已识别已有表结构，发布时将直接绑定该表')
+      }
     } else {
       ElMessage.warning('未识别到该表的业务字段')
     }
@@ -981,6 +1033,43 @@ const inspectExistingTable = async () => {
     ElMessage.error(e.response?.data?.message || '读取已有表结构失败')
   } finally {
     isInspectingExistingTable.value = false
+  }
+}
+
+const repairTableColumns = async () => {
+  const isBindingNew = !route.params.id && bindExistingTableMode.value
+  if (!route.params.id && !isBindingNew) {
+    ElMessage.warning('请先成功保存模板后再执行补齐操作。')
+    return
+  }
+  
+  const targetCols = displayMissingColumns.value
+  if (targetCols.length === 0) {
+    ElMessage.success('字段均已齐备，无需补齐')
+    return
+  }
+
+  try {
+    isRepairing.value = true
+    let url = ''
+    if (route.params.id) {
+        url = `/api/fill/forms/${route.params.id}/repairTable?userEmail=${currentUser.value}`
+    } else {
+        url = `/api/fill/forms/repairTableByName?schemaName=${formMeta.schemaName}&tableName=${formMeta.tableName}&userEmail=${currentUser.value}`
+    }
+    
+    const res = await axios.post(url, targetCols)
+    if (res.data.success && res.data.success.length > 0) {
+      ElMessage.success(`成功补齐字段: ${res.data.success.join(', ')}`)
+      missingColumns.value = missingColumns.value.filter(c => !res.data.success.includes(c))
+    }
+    if (res.data.failed && res.data.failed.length > 0) {
+      ElMessage.error(`部分字段补齐失败: ${res.data.failed.join(', ')}`)
+    }
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || '操作失败')
+  } finally {
+    isRepairing.value = false
   }
 }
 
@@ -1141,6 +1230,30 @@ const submitFormAndCreateTable = async () => {
       return
     }
 
+    // [拦截逻辑] 如果是绑定已有表，强制检查审计列
+    const currentMissing = checkRes.data.missingColumns || []
+    if (checkRes.data.physicalExists && (bindExistingTableMode.value || currentMissing.length > 0)) {
+        // 更新全局状态以便列表展示
+        missingColumns.value = currentMissing
+        
+        // 核心拦截：如果缺少主键，或者设置了软删除但缺少 delete_flag
+        const pk = formMeta.pkColumn || 'id'
+        const isPkMissing = currentMissing.includes(pk) && !fields.value.some(f => f.columnName === pk)
+        
+        // 注意：即使 currentMissing 包含 id，但如果 pk 指向了另一个已存在的业务列，则不认为 NeedsId
+        const needsId = (pk === 'id') ? currentMissing.includes('id') : isPkMissing
+        const missingDeleteFlag = currentMissing.includes('delete_flag') && !formMeta.hardDelete
+        
+        if (needsId || missingDeleteFlag) {
+            const msg = needsId ? `物理表中缺少您指定的主键列 "${pk}"` : '物理表缺少 "delete_flag" 状态位'
+            await ElMessageBox.confirm(
+                `${msg}，直接发布将导致删除或更新功能不可用。建议先在字段列表上方点击「一键补齐」，是否仍要强行发布？`,
+                '发布拦截警告',
+                { confirmButtonText: '强行发布 (不建议)', cancelButtonText: '返回修改', type: 'error' }
+            )
+        }
+    }
+
     // 只有在非绑定模式下（即用户选择了“由系统创建新表”），如果发现物理表已存在，才弹出“转为绑定”的选择框
     if (!bindExistingTableMode.value && checkRes.data.physicalExists) {
       try {
@@ -1183,6 +1296,7 @@ const submitFormAndCreateTable = async () => {
     forms: JSON.stringify(formattedFields),
     folderId: formMeta.folderId || null,
     kvConfig: formMeta.kvConfig,
+    pkColumn: formMeta.pkColumn || 'id',
     referenceTemplateConfig: formMeta.referenceTemplateConfig || null,
     creator: currentUser.value
   }
@@ -1265,6 +1379,7 @@ const updateFormMeta = async () => {
       return rest
     })),
     kvConfig: formMeta.kvConfig,
+    pkColumn: formMeta.pkColumn || 'id',
     referenceTemplateConfig: formMeta.referenceTemplateConfig || null,
     creator: formMeta.creator || currentUser.value
   }
