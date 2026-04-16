@@ -61,7 +61,7 @@
         :form-id="formId"
         :user-email="userEmail"
         :is-admin="isAdmin"
-        @success="loadTableData(); loadFilterOptions()"
+        @success="loadTableData()"
       />
 
       <!-- 操作日志弹窗 -->
@@ -112,7 +112,6 @@
 
         <FilterBar
           :filter-fields="filterFields"
-          :filter-options="filterOptions"
           :initial-params="searchParams"
           @search="handleSearch"
           @reset="resetSearch"
@@ -240,7 +239,6 @@ const isUploading = ref(false)
 const logVisible = ref(false)
 
 const searchParams = ref({})
-const filterOptions = ref({})
 const selectedIds = ref([])
 const isSelectAllFiltered = ref(false)
 
@@ -452,22 +450,10 @@ const filterFields = computed(() => {
   return schemaFields.value.slice(0, 3)
 })
 
-const loadFilterOptions = async () => {
-  try {
-    const res = await axios.get(`/api/fill/data/${formId}/filters`, {
-      params: { userEmail: userEmail.value, isAdmin: isAdmin.value }
-    })
-    filterOptions.value = res.data || {}
-  } catch (e) {
-    console.warn('加载筛选项失败', e)
-  }
-}
-
 const loadFormMeta = async () => {
   try {
     const res = await axios.get(`/api/fill/forms/${formId}`)
     formMeta.value = res.data
-    await loadFilterOptions()
     await loadTableData()
   } catch (e) {
     ElMessage.error('加载任务配置失败')
@@ -622,7 +608,6 @@ const handleImportSuccess = (response) => {
   if (response.success) {
     ElMessage.success(`成功导入 ${response.count} 条记录`)
     loadTableData()
-    loadFilterOptions()
   } else {
     ElMessage.error(response.message || '导入失败，请检查文件格式')
   }

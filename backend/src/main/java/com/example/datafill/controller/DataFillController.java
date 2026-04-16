@@ -290,16 +290,7 @@ public class DataFillController {
         return dataDmlService.getTableDataPage(formId, page, size, null, userEmail, isAdmin);
     }
 
-    /**
-     * 获取某张动态物理表用于筛选的下拉选项（根据当前已有数据去重）
-     */
-    @GetMapping("/data/{formId}/filters")
-    public Map<String, java.util.List<String>> getFilterOptions(
-            @PathVariable String formId,
-            @RequestParam(required = false) String userEmail) {
-        boolean isAdmin = isUserAdmin(userEmail);
-        return dataDmlService.getFilterOptions(formId, userEmail, isAdmin);
-    }
+
 
     /**
      * 获取某个用户的任务列表（待填报 / 已过期）

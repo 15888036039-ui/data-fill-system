@@ -704,8 +704,8 @@ public class DynamicDataDmlService {
                 if (f.getValue() == null || f.getValue().trim().isEmpty()) continue;
                 String physicalCol = resolvePhysicalColumn(physicalColumns, f.getKey());
                 if (physicalCol != null) {
-                    where.append(" AND CAST(\"").append(physicalCol).append("\" AS TEXT) LIKE ?");
-                    args.add("%" + f.getValue() + "%");
+                    where.append(" AND CAST(\"").append(physicalCol).append("\" AS TEXT) = ?");
+                    args.add(f.getValue());
                 }
             }
         }
@@ -793,63 +793,7 @@ public class DynamicDataDmlService {
         return res;
     }
 
-    public Map<String, List<String>> getFilterOptions(String formId, String operatorEmail, boolean isAdmin) {
-        DataFillForm form = formMapper.selectById(formId);
-        if (form == null) return Collections.emptyMap();
-        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
-        String fullTableName = schema + "." + form.getTableName();
-        java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());
 
-        Map<String, List<String>> res = new LinkedHashMap<>();
-        try {
-            List<FieldDef> fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
-            List<FieldDef> filterableFields = fields.stream()
-                .filter(f -> Boolean.TRUE.equals(f.getFilterable()))
-                .collect(java.util.stream.Collectors.toList());
-            
-            // 策略控制：根据 defaultFilterPolicy 决定默认筛选行为
-            if (filterableFields.isEmpty()) {
-                String policy = form.getDefaultFilterPolicy();
-                if ("FIRST_THREE".equalsIgnoreCase(policy)) {
-                    filterableFields = fields.stream().limit(3).collect(java.util.stream.Collectors.toList());
-                } else if ("NONE".equalsIgnoreCase(policy)) {
-                    filterableFields = Collections.emptyList();
-                } else {
-                    // 默认兼容逻辑：若未配置策略，仍取前三个（或可以根据需求改为 NONE）
-                    filterableFields = fields.stream().limit(3).collect(java.util.stream.Collectors.toList());
-                }
-            }
-
-            for (FieldDef f : filterableFields) {
-                String physicalCol = resolvePhysicalColumn(physicalColumns, f.getColumnName());
-                if (physicalCol != null) {
-                    StringBuilder sql = new StringBuilder("SELECT DISTINCT CAST(\"")
-                        .append(physicalCol)
-                        .append("\" AS TEXT) FROM ")
-                        .append(SqlUtil.quoteTable(fullTableName))
-                        .append(" WHERE \"")
-                        .append(physicalCol)
-                        .append("\" IS NOT NULL ");
-                    
-                    List<Object> args = new ArrayList<>();
-                    if (hasColumn(physicalColumns, "delete_flag")) {
-                        sql.append(" AND (delete_flag IS NULL OR delete_flag = FALSE) ");
-                    }
-                    if (!isAdmin && operatorEmail != null && hasColumn(physicalColumns, "load_user")) {
-                        sql.append(" AND (\"load_user\" = ? OR \"load_user\" IS NULL) ");
-                        args.add(operatorEmail);
-                    }
-                    sql.append(" LIMIT 100");
-                    
-                    List<String> options = jdbcTemplate.queryForList(sql.toString(), String.class, args.toArray());
-                    res.put(f.getColumnName(), options);
-                }
-            }
-        } catch (Exception e) {
-            log.error("Failed to get filter options for form {}: {}", formId, e.getMessage());
-        }
-        return res;
-    }
 
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
     public void batchDeleteRowData(String formId, List<String> dataIds, String operatorEmail, boolean isAdmin) {
