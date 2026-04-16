@@ -160,12 +160,7 @@
               
             <el-table-column prop="load_user" label="填写人" width="150" sortable>
                <template #default="scope">
-                {{ getRowValue(scope.row, 'load_user') || getRowValue(scope.row, 'creator') || '-' }}
-              </template>
-            </el-table-column>
-            <el-table-column label="最后修改" width="180">
-              <template #default="scope">
-                {{ formatDateTime(getRowValue(scope.row, 'w_update_dt') || getRowValue(scope.row, 'w_insert_dt') || getRowValue(scope.row, 'update_time') || getRowValue(scope.row, 'create_time')) }}
+                {{ getRowValue(scope.row, 'load_user') || getRowValue(scope.row, 'creator') || getRowValue(scope.row, 'loadUser') || '-' }}
               </template>
             </el-table-column>
 
