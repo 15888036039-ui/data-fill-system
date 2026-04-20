@@ -5,13 +5,13 @@
     class="premium-dynamic-form"
   >
     <el-row :gutter="20">
-      <el-col 
-        v-for="field in schema" 
-        :key="field.columnName" 
-        :xs="24"
-        :sm="field.type === 'textarea' ? 24 : 12"
-        :md="field.type === 'textarea' ? 24 : 12"
-      >
+      <template v-for="field in schema" :key="field.columnName">
+        <el-col 
+          v-if="!field.hidden"
+          :xs="24"
+          :sm="field.type === 'textarea' ? 24 : 12"
+          :md="field.type === 'textarea' ? 24 : 12"
+        >
         <el-form-item 
           :label="field.name" 
           :required="field.required"
@@ -78,7 +78,8 @@
             inactive-text="否"
           />
         </el-form-item>
-      </el-col>
+        </el-col>
+      </template>
     </el-row>
 
     <div class="form-actions">

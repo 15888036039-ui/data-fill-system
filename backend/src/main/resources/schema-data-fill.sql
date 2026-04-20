@@ -35,6 +35,12 @@ CREATE TABLE IF NOT EXISTS data_fill_form (
     description     TEXT,
     create_time     TIMESTAMP,
     update_time     TIMESTAMP,
+    insert_dt_column VARCHAR(100),
+    update_dt_column VARCHAR(100),
+    delete_flag_column VARCHAR(100),
+    allow_add       BOOLEAN DEFAULT TRUE,
+    allow_edit      BOOLEAN DEFAULT TRUE,
+    allow_delete    BOOLEAN DEFAULT TRUE,
     UNIQUE (schema_name, table_name)
 );
 
@@ -116,6 +122,24 @@ ALTER TABLE data_fill_form
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS pk_column VARCHAR(100) DEFAULT 'id';
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS insert_dt_column VARCHAR(100);
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS update_dt_column VARCHAR(100);
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS delete_flag_column VARCHAR(100);
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS allow_add BOOLEAN DEFAULT TRUE;
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS allow_edit BOOLEAN DEFAULT TRUE;
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS allow_delete BOOLEAN DEFAULT TRUE;
 
 -- 修正唯一性约束：从单一 table_name 改为 (schema_name, table_name) 复合约束
 -- 1. 移除旧的单列唯一约束

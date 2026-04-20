@@ -20,7 +20,7 @@ public class DataFillForm {
     @TableField("table_comment")
     private String tableComment; // 数据库表注释
     @TableField("folder_id")
-    private String folderId;    // 所属目录ID，null 表示未分类
+    private String folderId;    // 所属目录ID，null 表示默认 (原未分类)
     private String forms;       // 字段定义的 JSON 字符串
 
     /** 表单状态：ACTIVE(可填报)、EXPIRED(已过期)、DISABLED(停用) */
@@ -105,4 +105,22 @@ public class DataFillForm {
 
     @TableField("pk_column")
     private String pkColumn;
+
+    @TableField("insert_dt_column")
+    private String insertDtColumn;
+
+    @TableField("update_dt_column")
+    private String updateDtColumn;
+
+    @TableField("delete_flag_column")
+    private String deleteFlagColumn;
+
+    @TableField("allow_add")
+    private Boolean allowAdd;   // 允许普通用户新增数据
+
+    @TableField("allow_edit")
+    private Boolean allowEdit;  // 允许普通用户修改现有数据
+
+    @TableField("allow_delete")
+    private Boolean allowDelete; // 允许普通用户删除现有数据
 }

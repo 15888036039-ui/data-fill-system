@@ -100,6 +100,27 @@ public class DynamicDataDmlService {
         return type.contains("int") || type.contains("numeric") || type.contains("decimal") || type.contains("real") || type.contains("double") || type.contains("float") || type.contains("serial") || type.equals("smallint") || type.equals("bigint");
     }
 
+    private void checkAddPermission(DataFillForm form, boolean isAdmin) {
+        if (isAdmin) return;
+        if (Boolean.FALSE.equals(form.getAllowAdd())) {
+            throw new RuntimeException("该表单当前已由管理员禁止新增填报。");
+        }
+    }
+
+    private void checkEditPermission(DataFillForm form, boolean isAdmin) {
+        if (isAdmin) return;
+        if (Boolean.FALSE.equals(form.getAllowEdit())) {
+            throw new RuntimeException("该表单当前已由管理员禁止修改现有数据。");
+        }
+    }
+
+    private void checkDeletePermission(DataFillForm form, boolean isAdmin) {
+        if (isAdmin) return;
+        if (Boolean.FALSE.equals(form.getAllowDelete())) {
+            throw new RuntimeException("该表单当前已由管理员禁止删除现有数据。");
+        }
+    }
+
     private void validateRecord(DataFillForm form, Map<String, Object> rowData, Map<String, String> physicalColumns) {
         List<FieldDef> fields;
         try {
@@ -403,12 +424,13 @@ public class DynamicDataDmlService {
     }
 
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
-    public void insertRowData(String formId, Map<String, Object> rowData) {
+    public void insertRowData(String formId, Map<String, Object> rowData, boolean isAdmin) {
         String userEmail = rowData.containsKey("load_user") ? rowData.get("load_user").toString() : (rowData.containsKey("creator") ? rowData.get("creator").toString() : null);
         checkFillLock(formId, userEmail, false);
 
         DataFillForm form = formMapper.selectById(formId);
         if (form == null) throw new RuntimeException("表单不存在");
+        checkAddPermission(form, isAdmin);
 
         LocalDateTime now = LocalDateTime.now();
         if (form.getDeadline() != null && "ACTIVE".equalsIgnoreCase(form.getStatus())) {
@@ -434,10 +456,17 @@ public class DynamicDataDmlService {
         String rowId = java.util.UUID.randomUUID().toString().replace("-", "");
 
         String pk = (form.getPkColumn() != null && !form.getPkColumn().isEmpty()) ? form.getPkColumn() : "id";
+        String pkType = physicalColumns.get(pk.toLowerCase());
+        boolean isNumericPk = isNumericType(pkType);
+        boolean pkInserted = false;
+
         if (hasColumn(physicalColumns, pk)) {
-            columns.add("\"" + pk + "\"");
-            placeholders.add("?");
-            args.add(rowId);
+            if (!isNumericPk) {
+                columns.add("\"" + pk + "\"");
+                placeholders.add("?");
+                args.add(rowId);
+                pkInserted = true;
+            }
         }
 
         String loadUser = rowData.containsKey("load_user") ? rowData.get("load_user").toString() : (rowData.containsKey("creator") ? rowData.get("creator").toString() : null);
@@ -489,18 +518,27 @@ public class DynamicDataDmlService {
         }
 
         String insertSql = String.format("INSERT INTO %s (%s) VALUES (%s)", SqlUtil.quoteTable(fullTableName), String.join(",", columns), String.join(",", placeholders));
-        jdbcTemplate.update(insertSql, args.toArray());
+        
+        String finalDataId = rowId;
+        if (hasColumn(physicalColumns, pk) && !pkInserted) {
+            // Numeric PK, assume auto-increment, use RETURNING to get the ID for logging
+            insertSql += " RETURNING \"" + pk + "\"";
+            Object generatedId = jdbcTemplate.queryForObject(insertSql, Object.class, args.toArray());
+            finalDataId = generatedId != null ? generatedId.toString() : rowId;
+        } else {
+            jdbcTemplate.update(insertSql, args.toArray());
+        }
 
         UserFillLog fillLog = new UserFillLog();
         fillLog.setFormId(formId);
-        fillLog.setDataId(rowId);
+        fillLog.setDataId(finalDataId);
         fillLog.setUserEmail(loadUser);
         fillLog.setSubmitTime(now);
         userFillLogMapper.insert(fillLog);
     }
 
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
-    public void batchInsertRowData(String formId, List<Map<String, Object>> rows) {
+    public void batchInsertRowData(String formId, List<Map<String, Object>> rows, boolean isAdmin) {
         if (rows == null || rows.isEmpty()) return;
         DataFillForm form = formMapper.selectById(formId);
         if (form == null) throw new RuntimeException("表单不存在");
@@ -529,7 +567,10 @@ public class DynamicDataDmlService {
 
         List<String> columns = new ArrayList<>();
         String pk = (form.getPkColumn() != null && !form.getPkColumn().isEmpty()) ? form.getPkColumn() : "id";
-        if (hasColumn(physicalColumns, pk)) columns.add("\"" + pk + "\"");
+        String pkType = physicalColumns.get(pk.toLowerCase());
+        boolean isNumericPk = isNumericType(pkType);
+
+        if (hasColumn(physicalColumns, pk) && !isNumericPk) columns.add("\"" + pk + "\"");
         for (String col : CREATION_FIELDS) {
             if (hasColumn(physicalColumns, col)) columns.add("\"" + col + "\"");
         }
@@ -566,7 +607,7 @@ public class DynamicDataDmlService {
                     StringBuilder tsv = new StringBuilder(1024 * 1024 * 2);
                     int batchCount = 0;
                     for (Map<String, Object> row : rows) {
-                        if (hasColumn(physicalColumns, pk)) appendTsv(tsv, java.util.UUID.randomUUID().toString().replace("-", ""));
+                        if (hasColumn(physicalColumns, pk) && !isNumericPk) appendTsv(tsv, java.util.UUID.randomUUID().toString().replace("-", ""));
                         for (String col : CREATION_FIELDS) {
                             if (hasColumn(physicalColumns, col)) appendTsv(tsv, now);
                         }
@@ -658,6 +699,7 @@ public class DynamicDataDmlService {
     public void updateRowData(String formId, String dataId, Map<String, Object> rowData, String operatorEmail, boolean isAdmin) {
         DataFillForm form = formMapper.selectById(formId);
         if (form == null) throw new RuntimeException("表单不存在");
+        checkEditPermission(form, isAdmin);
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         String tableName = form.getTableName();
         String fullTableName = schema + "." + tableName;
@@ -702,8 +744,17 @@ public class DynamicDataDmlService {
             if (!hasColumn(physicalColumns, pk)) {
                 throw new RuntimeException("物理表中缺少主键标识列 '" + pk + "'，无法进行更新。请检查主键配置或在设计器中补齐标识列。");
             }
-            args.add(dataId);
-            jdbcTemplate.update(String.format("UPDATE %s SET %s WHERE \"%s\" = ?", SqlUtil.quoteTable(fullTableName), sets.toString(), pk), args.toArray());
+            String pkType = physicalColumns.get(pk.toLowerCase());
+            Object convertedDataId = convertValueForDb(dataId, pkType);
+            args.add(convertedDataId);
+            
+            String updateSql;
+            if (pkType != null && !pkType.equals("text") && !pkType.equals("character varying")) {
+                updateSql = String.format("UPDATE %s SET %s WHERE \"%s\" = CAST(? AS %s)", SqlUtil.quoteTable(fullTableName), sets.toString(), pk, pkType);
+            } else {
+                updateSql = String.format("UPDATE %s SET %s WHERE \"%s\" = ?", SqlUtil.quoteTable(fullTableName), sets.toString(), pk);
+            }
+            jdbcTemplate.update(updateSql, args.toArray());
         }
     }
 
@@ -762,11 +813,14 @@ public class DynamicDataDmlService {
                 UserFillLog lastLog = userFillLogMapper.selectLastByFormAndUser(formId, userEmail);
                 lastSubmitTime = (lastLog != null && lastLog.getSubmitTime() != null) ? lastLog.getSubmitTime() : null;
 
-                // fallback: 从物理表直接探测
+                // fallback: 从物理表直接探测 (使用与 getUserTasks 一致的逻辑)
                 if (lastSubmitTime == null && form.getTableName() != null) {
                     try {
-                        String checkSql = String.format("SELECT MAX(w_insert_dt) FROM %s WHERE load_user = ?",
-                                SqlUtil.quoteTable(fullTableName));
+                        String col = (form.getInsertDtColumn() != null && !form.getInsertDtColumn().trim().isEmpty()) 
+                                     ? form.getInsertDtColumn().trim() : "w_insert_dt";
+                        
+                        String checkSql = String.format("SELECT MAX(\"%s\") FROM %s WHERE load_user = ?",
+                                col, SqlUtil.quoteTable(fullTableName));
                         lastSubmitTime = jdbcTemplate.queryForObject(checkSql, LocalDateTime.class, userEmail);
                     } catch (Exception ignored) {}
                 }
@@ -804,11 +858,69 @@ public class DynamicDataDmlService {
                 if (cycleDays != null && cycleDays > 0 && lastSubmitTime != null) {
                     nextFillTime = lastSubmitTime.plusDays(cycleDays);
                     completedCurrentCycle = now.isBefore(nextFillTime);
+                } else if (lastSubmitTime != null) {
+                    completedCurrentCycle = true;
                 }
             }
 
             lockStatusMap.put("hasSubmitted", completedCurrentCycle);
             lockStatusMap.put("nextFillTime", nextFillTime);
+            lockStatusMap.put("lastSubmitTime", lastSubmitTime != null ? lastSubmitTime : null);
+
+            // 3. 管理员额外汇总逻辑
+            if (isAdmin) {
+                try {
+                    Map<String, Object> adminStats = new HashMap<>();
+                    String fillUserEmails = form.getFillUserEmails();
+                    List<String> allowedUsers = new ArrayList<>();
+                    if (fillUserEmails != null && !fillUserEmails.trim().isEmpty() && !"[]".equals(fillUserEmails.trim())) {
+                        allowedUsers = objectMapper.readValue(fillUserEmails, new TypeReference<List<String>>() {});
+                    }
+                    
+                    int totalExpected = allowedUsers.size();
+                    adminStats.put("totalExpected", totalExpected);
+                    
+                    // 查询本期已提交的唯一用户列表
+                    String col = (form.getInsertDtColumn() != null && !form.getInsertDtColumn().trim().isEmpty()) 
+                                 ? form.getInsertDtColumn().trim() : "w_insert_dt";
+                    
+                    String sql = String.format("SELECT DISTINCT load_user FROM %s WHERE load_user IS NOT NULL ", SqlUtil.quoteTable(fullTableName));
+                    List<Object> sqlArgs = new ArrayList<>();
+                    if (deadline != null && ("WEEKLY".equalsIgnoreCase(mode) || "MONTHLY".equalsIgnoreCase(mode))) {
+                         // 计算本期开始时间
+                        java.time.LocalTime rt = java.time.LocalTime.of(9, 0);
+                        try {
+                            if (form.getReminderTime() != null && !form.getReminderTime().trim().isEmpty()) {
+                                String[] parts = form.getReminderTime().split(":");
+                                int h = Integer.parseInt(parts[0]);
+                                int m = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
+                                rt = java.time.LocalTime.of(h, m);
+                            }
+                        } catch (Exception ignored) {}
+                        LocalDateTime cycleStartTime = deadline.minusHours((long)(remDays * 24)).with(rt).withNano(0);
+                        sql += " AND \"" + col + "\" >= ? ";
+                        sqlArgs.add(cycleStartTime);
+                    }
+                    
+                    List<String> submittedUsers = jdbcTemplate.queryForList(sql, String.class, sqlArgs.toArray());
+                    adminStats.put("submittedCount", submittedUsers.size());
+                    adminStats.put("submittedUsers", submittedUsers);
+                    
+                    if (totalExpected > 0) {
+                        List<String> pendingUsers = new ArrayList<>();
+                        for (String u : allowedUsers) {
+                            if (u != null && !u.isEmpty() && submittedUsers.stream().noneMatch(s -> s.equalsIgnoreCase(u.trim()))) {
+                                pendingUsers.add(u);
+                            }
+                        }
+                        adminStats.put("pendingUsers", pendingUsers);
+                    }
+                    
+                    lockStatusMap.put("adminStats", adminStats);
+                } catch (Exception e) {
+                    log.warn("计算管理员汇总信息失败: {}", e.getMessage());
+                }
+            }
         } catch (Exception e) {
             log.warn("计算 lockStatus 出错: {}", e.getMessage());
         }
@@ -822,6 +934,8 @@ public class DynamicDataDmlService {
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
     public void batchDeleteRowData(String formId, List<String> dataIds, String operatorEmail, boolean isAdmin) {
         DataFillForm form = formMapper.selectById(formId);
+        if (form == null) throw new RuntimeException("表单不存在");
+        checkDeletePermission(form, isAdmin);
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         String fullTableName = schema + "." + form.getTableName();
         java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());
@@ -834,25 +948,42 @@ public class DynamicDataDmlService {
             throw new RuntimeException("该表未配置 'delete_flag' 字段，无法执行软删除。请在设计器中补齐审计列或切换为‘硬删除’模式。");
         }
 
+        if (dataIds == null || dataIds.isEmpty()) return;
+
         // 优先使用元数据中配置的 pk_column
         String pk = (form.getPkColumn() != null && !form.getPkColumn().isEmpty()) ? form.getPkColumn() : "id";
         if (!hasColumn(physicalColumns, pk)) {
             throw new RuntimeException("物理表中缺少主键标识列 '" + pk + "'，无法定位记录。请检查业务表主键配置。");
         }
 
+        String pkType = physicalColumns.get(pk.toLowerCase());
+        List<Object> convertedIds = new ArrayList<>();
+        for (String id : dataIds) {
+            convertedIds.add(convertValueForDb(id, pkType));
+        }
+
         StringJoiner ps = new StringJoiner(",");
-        for (int i = 0; i < dataIds.size(); i++) ps.add("?");
+        for (int i = 0; i < dataIds.size(); i++) {
+            if (pkType != null && !pkType.equals("text") && !pkType.equals("character varying")) {
+                ps.add(String.format("CAST(? AS %s)", pkType));
+            } else {
+                ps.add("?");
+            }
+        }
         
         if (hasDeleteFlag && !isHardDeleteMode) {
-            jdbcTemplate.update(String.format("UPDATE %s SET delete_flag=TRUE WHERE \"%s\" IN (%s)", SqlUtil.quoteTable(fullTableName), pk, ps), dataIds.toArray());
+            jdbcTemplate.update(String.format("UPDATE %s SET delete_flag=TRUE WHERE \"%s\" IN (%s)", SqlUtil.quoteTable(fullTableName), pk, ps), convertedIds.toArray());
         } else {
-            jdbcTemplate.update(String.format("DELETE FROM %s WHERE \"%s\" IN (%s)", SqlUtil.quoteTable(fullTableName), pk, ps), dataIds.toArray());
+            jdbcTemplate.update(String.format("DELETE FROM %s WHERE \"%s\" IN (%s)", SqlUtil.quoteTable(fullTableName), pk, ps), convertedIds.toArray());
         }
     }
 
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
     public void deleteAllFilteredData(String formId, Map<String, String> filters, String operatorEmail, boolean isAdmin) {
         DataFillForm form = formMapper.selectById(formId);
+        if (form == null) throw new RuntimeException("表单不存在");
+        checkDeletePermission(form, isAdmin);
+        checkFillLock(formId, operatorEmail, isAdmin);
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         String fullTableName = schema + "." + form.getTableName();
         java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());

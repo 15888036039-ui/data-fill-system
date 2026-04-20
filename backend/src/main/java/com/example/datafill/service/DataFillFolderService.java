@@ -132,7 +132,7 @@ public class DataFillFolderService {
         if (isAdmin || uncategorizedCount > 0) {
             DataFillFolderNode uncategorized = new DataFillFolderNode();
             uncategorized.setId(UNCATEGORIZED_FOLDER_ID);
-            uncategorized.setName("未分类");
+            uncategorized.setName("默认");
             uncategorized.setParentId(null);
             uncategorized.setSortOrder(Integer.MAX_VALUE);
             uncategorized.setTemplateCount(uncategorizedCount);

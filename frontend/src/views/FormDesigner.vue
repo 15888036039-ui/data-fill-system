@@ -37,84 +37,134 @@
               />
             </el-form-item>
             <el-divider border-style="dashed" style="margin: 12px 0" />
-            <el-form-item label="数据库物理模式 (Schema)" required>
-              <el-select
-                v-model="formMeta.schemaName"
-                filterable
-                placeholder="选择数据库模式"
-                style="width: 100%"
-                :loading="schemaLoading"
-                :disabled="isEditMode"
-              >
-                <el-option
-                  v-for="item in availableSchemas"
-                  :key="item"
-                  :label="item"
-                  :value="item"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="数据库物理表名" required>
-              <el-input
-                v-model="formMeta.tableName"
-                placeholder="请输入数据库物理表名"
-                :disabled="isEditMode"
-              />
-            </el-form-item>
-            <el-form-item label="数据库表注释">
-              <el-input
-                v-model="formMeta.tableComment"
-                placeholder="请输入物理表注释（可选）"
-              />
-            </el-form-item>
-            <el-form-item label="所属目录">
-              <el-select
-                v-model="formMeta.folderId"
-                clearable
-                filterable
-                placeholder="选择目录，不选则归入未分类"
-                style="width: 100%"
-                :loading="folderLoading"
-              >
-                <el-option label="未分类" value="" />
-                <el-option
-                  v-for="item in folderOptions"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="分组标识 (Group Tag)">
-              <el-input
-                v-model="formMeta.groupTag"
-                placeholder="用于不同链接的展示过滤"
-              />
-            </el-form-item>
-            <el-form-item label="默认筛选器策略" required>
-              <el-select v-model="formMeta.defaultFilterPolicy" style="width: 100%">
-                <el-option label="不展示默认筛选器 (NONE)" value="NONE" />
-                <el-option label="展示前三个字段 (FIRST_THREE)" value="FIRST_THREE" />
-              </el-select>
-              <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">当没有手动指定任何字段为“筛选器”时，系统将采取此兜底策略。</div>
-            </el-form-item>
+            <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form-item label="数据库物理模式 (Schema)" required>
+                  <el-select
+                    v-model="formMeta.schemaName"
+                    filterable
+                    placeholder="选择模式"
+                    style="width: 100%"
+                    :loading="schemaLoading"
+                    :disabled="isEditMode"
+                  >
+                    <el-option
+                      v-for="item in availableSchemas"
+                      :key="item"
+                      :label="item"
+                      :value="item"
+                    />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="数据库物理表名" required>
+                  <el-input
+                    v-model="formMeta.tableName"
+                    placeholder="请输入物理表名"
+                    :disabled="isEditMode"
+                  />
+                </el-form-item>
+              </el-col>
+            </el-row>
+
+            <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form-item label="数据库表注释">
+                  <el-input
+                    v-model="formMeta.tableComment"
+                    placeholder="请输入物理表注释"
+                  />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="所属目录">
+                  <el-select
+                    v-model="formMeta.folderId"
+                    clearable
+                    filterable
+                    placeholder="归入目录"
+                    style="width: 100%"
+                    :loading="folderLoading"
+                  >
+                    <el-option label="默认" value="" />
+                    <el-option
+                      v-for="item in folderOptions"
+                      :key="item.value"
+                      :label="item.label"
+                      :value="item.value"
+                    />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+            </el-row>
+
+            <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form-item label="分组标识 (Group Tag)">
+                  <el-input
+                    v-model="formMeta.groupTag"
+                    placeholder="用于页面过滤"
+                  />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="默认筛选器策略" required>
+                  <el-select v-model="formMeta.defaultFilterPolicy" style="width: 100%">
+                    <el-option label="不展示 (NONE)" value="NONE" />
+                    <el-option label="前三个字段 (FIRST_THREE)" value="FIRST_THREE" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <div style="font-size: 12px; color: #94a3b8; margin-top: -8px; margin-bottom: 16px;">策略说明：当未指定筛选字段时，系统将采取此兜底逻辑。</div>
             
-            <div class="form-row">
-              <el-form-item label="运营状态" style="flex: 1">
-                <el-select v-model="formMeta.status" style="width: 100%">
-                  <el-option label="运行中（可填报）" value="ACTIVE" />
-                  <el-option label="已过期（禁止填报）" value="EXPIRED" />
-                  <el-option label="停用（管理员可见）" value="DISABLED" />
-                </el-select>
-              </el-form-item>
-              
-              <el-form-item label="用户数据删除方式" style="flex: 1" required>
-                <el-select v-model="formMeta.hardDelete" style="width: 100%">
-                  <el-option label="软删除 (标记为已删除，管理员可查)" :value="false" />
-                  <el-option label="彻底硬删除 (直接从库中移除，谨慎)" :value="true" />
-                </el-select>
-              </el-form-item>
-            </div>
+            <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form-item label="运营状态">
+                  <el-select v-model="formMeta.status" style="width: 100%">
+                    <el-option label="运行中" value="ACTIVE" />
+                    <el-option label="已过期" value="EXPIRED" />
+                    <el-option label="停用" value="DISABLED" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="用户数据删除方式" required>
+                  <el-select v-model="formMeta.hardDelete" style="width: 100%">
+                    <el-option label="软删除 (标记)" :value="false" />
+                    <el-option label="硬删除 (移除)" :value="true" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+            </el-row>
+
+            <el-row :gutter="16">
+              <el-col :span="8">
+                <el-form-item label="允许普通用户新增">
+                   <el-select v-model="formMeta.allowAdd" style="width: 100%">
+                     <el-option label="允许" :value="true" />
+                     <el-option label="禁止" :value="false" />
+                   </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :span="8">
+                <el-form-item label="允许普通用户修改">
+                   <el-select v-model="formMeta.allowEdit" style="width: 100%">
+                     <el-option label="允许" :value="true" />
+                     <el-option label="禁止" :value="false" />
+                   </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :span="8">
+                <el-form-item label="允许普通用户删除">
+                   <el-select v-model="formMeta.allowDelete" style="width: 100%">
+                     <el-option label="允许" :value="true" />
+                     <el-option label="禁止" :value="false" />
+                   </el-select>
+                </el-form-item>
+              </el-col>
+            </el-row>
 
             <el-divider />
             
@@ -391,14 +441,37 @@
                     </el-select>
                   </template>
                 </el-table-column>
-                <el-table-column label="主键" width="70" align="center">
-                  <template #default="scope">
-                    <el-radio v-model="formMeta.pkColumn" :label="scope.row.columnName"> &nbsp; </el-radio>
-                  </template>
-                </el-table-column>
                 <el-table-column label="必填" width="80" align="center">
                   <template #default="scope">
                     <el-switch v-model="scope.row.required" />
+                  </template>
+                </el-table-column>
+                <el-table-column label="填报" width="80" align="center">
+                  <template #header>
+                    <el-tooltip content="开启后，该字段将出现在 Excel 模板和单行填报表单中" placement="top">
+                      <span>填报 <el-icon><InfoFilled /></el-icon></span>
+                    </el-tooltip>
+                  </template>
+                  <template #default="scope">
+                    <el-switch 
+                      v-model="scope.row.hideInForm" 
+                      :active-value="false" 
+                      :inactive-value="true"
+                    />
+                  </template>
+                </el-table-column>
+                <el-table-column label="列表" width="80" align="center">
+                  <template #header>
+                    <el-tooltip content="开启后，该字段将出现在查询结果展示列表中" placement="top">
+                      <span>查阅 <el-icon><InfoFilled /></el-icon></span>
+                    </el-tooltip>
+                  </template>
+                  <template #default="scope">
+                    <el-switch 
+                      v-model="scope.row.hideInList" 
+                      :active-value="false" 
+                      :inactive-value="true"
+                    />
                   </template>
                 </el-table-column>
                 <el-table-column label="筛选" width="80" align="center">
@@ -670,12 +743,15 @@ const formMeta = reactive({
   pkColumn: 'id',
   groupTag: '',
   description: '',
-  defaultFilterPolicy: 'FIRST_THREE'
+  defaultFilterPolicy: 'FIRST_THREE',
+  allowAdd: true,
+  allowEdit: true,
+  allowDelete: true
 })
 
 let _fieldUidCounter = 1
 const fields = ref([
-  { _uid: _fieldUidCounter++, name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, systemLocked: false, pattern: '', patternMsg: '', min: null, max: null, minLength: null, maxLength: null }
+  { _uid: _fieldUidCounter++, name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, hideInForm: false, hideInList: false, systemLocked: false, pattern: '', patternMsg: '', min: null, max: null, minLength: null, maxLength: null }
 ])
 
 const importDialogVisible = ref(false)
@@ -704,15 +780,7 @@ const missingColumns = ref([])
 const isRepairing = ref(false)
 
 const displayMissingColumns = computed(() => {
-  let list = [...missingColumns.value]
-  // 如果当前指定的主键不是 'id'，且该主键确实存在于识别出的字段中，则不再提示缺失 id
-  const pk = formMeta.pkColumn || 'id'
-  if (list.includes('id') && pk !== 'id') {
-    if (fields.value.some(f => f.columnName === pk)) {
-      list = list.filter(c => c !== 'id')
-    }
-  }
-  return list
+  return missingColumns.value
 })
 
 const parsedKvConfig = computed(() => {
@@ -867,7 +935,7 @@ const formatSuffixSummary = (suffixes = []) => {
 }
 
 const addField = () => {
-  fields.value.push({ _uid: _fieldUidCounter++, name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, systemLocked: false, pattern: '', patternMsg: '', min: null, max: null, minLength: null, maxLength: null })
+  fields.value.push({ _uid: _fieldUidCounter++, name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, hideInForm: false, hideInList: false, systemLocked: false, pattern: '', patternMsg: '', min: null, max: null, minLength: null, maxLength: null })
 }
 
 const handleDbTypeChange = (dbType, row) => {
@@ -1001,7 +1069,9 @@ const inspectExistingTable = async () => {
         ...f,
         required: f.required || false,
         filterable: f.filterable || false,
-        systemLocked: isSystemManagedField(f)
+        hideInForm: f.hideInForm || false,
+        hideInList: f.hideInList || false,
+        systemLocked: (f.columnName || '').toLowerCase() === 'id'
       }))
       
       formMeta.tableName = existingTableForm.tableName
@@ -1010,12 +1080,12 @@ const inspectExistingTable = async () => {
       existingTableDialogVisible.value = false
       missingColumns.value = res.data.missingColumns || []
       
-      // 如果识别到的表中原来就有主键（后端返回或已存在于 fields），则自动选中
-      if (res.data.pkColumn) {
-          formMeta.pkColumn = res.data.pkColumn
-      } else if (fields.value.some(f => f.columnName === 'id')) {
-          formMeta.pkColumn = 'id'
-      }
+      // 保存识别到的审计列角色
+      formMeta.insertDtColumn = res.data.detectedInsertDt
+      formMeta.updateDtColumn = res.data.detectedUpdateDt
+      formMeta.deleteFlagColumn = res.data.detectedDeleteFlag
+      
+      formMeta.pkColumn = 'id'
 
       if (missingColumns.value.length > 0) {
         ElMessageBox.alert(
@@ -1124,7 +1194,12 @@ const finalizeFields = () => {
 }
 
 const isSystemManagedField = (field) => {
-  const reserved = ['id', 'delete_flag', 'w_insert_dt', 'w_update_dt', 'load_user', 'job_instance', 'extra_data']
+  const reserved = [
+    'id', 'load_user', 'job_instance', 'extra_data',
+    'w_insert_dt', 'w_update_dt', 'delete_flag',
+    'ctime', 'mtime', 'create_time', 'update_time', 'created_at', 'updated_at',
+    'is_delete', 'deleted', 'del_flag', 'insert_time'
+  ]
   return reserved.includes((field?.columnName || '').toLowerCase())
 }
 
@@ -1171,7 +1246,9 @@ const applyParsedResults = (data) => {
       dbType: f.dbType || 'VARCHAR(255)',
       required: f.required || false,
       filterable: f.filterable || false,
-      systemLocked: isSystemManagedField(f)
+      hideInForm: f.hideInForm || false,
+      hideInList: f.hideInList || false,
+      systemLocked: (f.columnName || '').toLowerCase() === 'id'
     }
     if (!row.columnName) {
         row.columnName = generateColumnName(f.name)
@@ -1236,16 +1313,11 @@ const submitFormAndCreateTable = async () => {
         // 更新全局状态以便列表展示
         missingColumns.value = currentMissing
         
-        // 核心拦截：如果缺少主键，或者设置了软删除但缺少 delete_flag
-        const pk = formMeta.pkColumn || 'id'
-        const isPkMissing = currentMissing.includes(pk) && !fields.value.some(f => f.columnName === pk)
-        
-        // 注意：即使 currentMissing 包含 id，但如果 pk 指向了另一个已存在的业务列，则不认为 NeedsId
-        const needsId = (pk === 'id') ? currentMissing.includes('id') : isPkMissing
+        const needsId = currentMissing.includes('id')
         const missingDeleteFlag = currentMissing.includes('delete_flag') && !formMeta.hardDelete
         
         if (needsId || missingDeleteFlag) {
-            const msg = needsId ? `物理表中缺少您指定的主键列 "${pk}"` : '物理表缺少 "delete_flag" 状态位'
+            const msg = needsId ? '物理表缺少标准主键 "id"' : '物理表缺少 "delete_flag" 状态位'
             await ElMessageBox.confirm(
                 `${msg}，直接发布将导致删除或更新功能不可用。建议先在字段列表上方点击「一键补齐」，是否仍要强行发布？`,
                 '发布拦截警告',
@@ -1274,8 +1346,12 @@ const submitFormAndCreateTable = async () => {
       }
     }
   } catch (e) {
+    if (e === 'cancel' || e === 'close') {
+      // 用户主动取消发布，直接返回，不继续往下跑
+      return
+    }
     console.warn('校验物理表状态失败', e)
-    // 校验接口报错不阻断后续发布，交由后端最终校验兜底
+    // 接口本身报错（如 500）时不阻断后续发布，交由后端最终校验兜底
   }
 
   const formattedFields = fields.value.map(f => ({
@@ -1285,6 +1361,8 @@ const submitFormAndCreateTable = async () => {
     dbType: f.dbType,
     required: f.required,
     filterable: f.filterable,
+    hideInForm: f.hideInForm,
+    hideInList: f.hideInList,
     options: null
   }))
 
@@ -1298,6 +1376,9 @@ const submitFormAndCreateTable = async () => {
     kvConfig: formMeta.kvConfig,
     pkColumn: formMeta.pkColumn || 'id',
     referenceTemplateConfig: formMeta.referenceTemplateConfig || null,
+    allowAdd: formMeta.allowAdd !== false,
+    allowEdit: formMeta.allowEdit !== false,
+    allowDelete: formMeta.allowDelete !== false,
     creator: currentUser.value
   }
 
@@ -1381,6 +1462,9 @@ const updateFormMeta = async () => {
     kvConfig: formMeta.kvConfig,
     pkColumn: formMeta.pkColumn || 'id',
     referenceTemplateConfig: formMeta.referenceTemplateConfig || null,
+    allowAdd: formMeta.allowAdd !== false,
+    allowEdit: formMeta.allowEdit !== false,
+    allowDelete: formMeta.allowDelete !== false,
     creator: formMeta.creator || currentUser.value
   }
   try {
@@ -1480,7 +1564,7 @@ onMounted(() => {
 }
 
 .config-sidebar {
-  width: 400px;
+  width: 480px;
   flex-shrink: 0;
 }
 
@@ -1616,10 +1700,29 @@ onMounted(() => {
   color: #94a3b8;
 }
 
-.switches-grid {
+.permission-settings {
+  display: flex;
+  background: #f8fafc;
+  padding: 12px;
+  border-radius: 12px;
+  gap: 16px;
+  margin-top: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.permission-item {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
+}
+
+.p-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  white-space: nowrap;
 }
 
 .upload-area {

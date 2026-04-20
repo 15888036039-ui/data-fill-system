@@ -99,60 +99,66 @@
 
           <el-table-column prop="folderPath" label="所属目录" min-width="220">
             <template #default="scope">
-              <span class="folder-path-text">{{ scope.row.folderPath || '未分类' }}</span>
+              <span class="folder-path-text">{{ scope.row.folderPath || '默认' }}</span>
             </template>
           </el-table-column>
 
-          <el-table-column label="状态" min-width="140" align="left">
+          <el-table-column label="任务详情" min-width="320">
             <template #default="scope">
-              <el-tag
-                :type="scope.row.taskStatus === 'pending' ? 'warning' : (scope.row.taskStatus === 'upcoming' ? 'info' : (scope.row.taskStatus === 'completed' ? 'success' : 'danger'))"
-                effect="light"
-                round
-              >
-                {{ scope.row.taskStatus === 'pending' ? '待填报' : (scope.row.taskStatus === 'upcoming' ? '未开始' : (scope.row.taskStatus === 'completed' ? '已填报' : '已截止')) }}
-              </el-tag>
-            </template>
-          </el-table-column>
-
-          <el-table-column label="填报倒计时 / 填报记录" min-width="280">
-            <template #default="scope">
-              <div class="time-cell">
-                <template v-if="scope.row.taskStatus === 'pending'">
-                  <el-icon><AlarmClock /></el-icon>
-                  <span style="color: #d97706; font-weight: 600;">
-                    {{ formatTimeLeft(scope.row.secondsLeft) }}
-                  </span>
-                  <span class="sub-text">(截止: {{ scope.row.deadline ? new Date(scope.row.deadline).toLocaleString() : '长期有效' }})</span>
-                </template>
-
-                <template v-else-if="scope.row.taskStatus === 'upcoming'">
-                  <el-icon><Calendar /></el-icon>
-                  <span style="color: #64748b;">
-                    预计开始: {{ formatTimeLeft(scope.row.secondsUntilStart) }} 后
-                  </span>
-                  <span class="sub-text">(开启: {{ scope.row.startTimeOfCycle ? new Date(scope.row.startTimeOfCycle).toLocaleString() : '' }})</span>
-                </template>
-
-                <template v-else-if="scope.row.taskStatus === 'completed'">
-                  <el-icon v-if="scope.row.nextFillTime"><Calendar /></el-icon>
-                  <el-icon v-else><Check /></el-icon>
-                  <div class="completed-time-info">
-                    <span v-if="scope.row.nextFillTime" style="color: #059669;">
-                      下次填报: {{ new Date(scope.row.nextFillTime).toLocaleString() }}
-                    </span>
-                    <span v-else style="color: #64748b;">已填报</span>
-                    <span v-if="scope.row.lastSubmitTime" class="sub-text">
-                      (已于 {{ new Date(scope.row.lastSubmitTime).toLocaleString() }} 完成)
-                    </span>
-                  </div>
-                </template>
+              <div class="task-info-cell">
+                <div class="status-tag-wrapper">
+                  <el-tag
+                    :type="scope.row.taskStatus === 'pending' ? 'warning' : (scope.row.taskStatus === 'upcoming' ? 'info' : (scope.row.taskStatus === 'completed' ? 'success' : 'danger'))"
+                    effect="light"
+                    round
+                    size="small"
+                  >
+                    {{ scope.row.taskStatus === 'pending' ? '待填报' : (scope.row.taskStatus === 'upcoming' ? '未开始' : (scope.row.taskStatus === 'completed' ? '已填报' : '已截止')) }}
+                  </el-tag>
+                </div>
                 
-                <template v-else>
-                  <el-icon><CircleClose /></el-icon>
-                  <span style="color: #ef4444;">已逾期</span>
-                  <span class="sub-text">(截止于: {{ new Date(scope.row.deadline).toLocaleString() }})</span>
-                </template>
+                <div class="detail-info">
+                  <template v-if="scope.row.taskStatus === 'pending'">
+                    <span class="main-info countdown">
+                      <el-icon><AlarmClock /></el-icon>
+                      剩余: {{ formatTimeLeft(scope.row.secondsLeft) }}
+                    </span>
+                    <span class="sub-text">截止日期: {{ scope.row.deadline ? new Date(scope.row.deadline).toLocaleString() : '长期有效' }}</span>
+                  </template>
+
+                  <template v-else-if="scope.row.taskStatus === 'upcoming'">
+                    <span class="main-info">
+                      <el-icon><Calendar /></el-icon>
+                      预计开始: {{ formatTimeLeft(scope.row.secondsUntilStart) }} 后
+                    </span>
+                    <span class="sub-text">开启时间: {{ scope.row.startTimeOfCycle ? new Date(scope.row.startTimeOfCycle).toLocaleString() : '' }}</span>
+                  </template>
+
+                  <template v-else-if="scope.row.taskStatus === 'completed'">
+                    <template v-if="scope.row.nextFillTime">
+                      <span class="main-info" style="color: #059669;">
+                        <el-icon><Calendar /></el-icon>
+                        下次填报: {{ new Date(scope.row.nextFillTime).toLocaleString() }}
+                      </span>
+                      <span v-if="scope.row.lastSubmitTime" class="sub-text">
+                        最近提交: {{ new Date(scope.row.lastSubmitTime).toLocaleString() }}
+                      </span>
+                    </template>
+                    <template v-else>
+                      <span class="main-info">
+                        <el-icon><Check /></el-icon>
+                        完成于: {{ scope.row.lastSubmitTime ? new Date(scope.row.lastSubmitTime).toLocaleString() : '---' }}
+                      </span>
+                    </template>
+                  </template>
+                  
+                  <template v-else>
+                    <span class="main-info expired">
+                      <el-icon><CircleClose /></el-icon>
+                      截止于: {{ new Date(scope.row.deadline).toLocaleString() }}
+                    </span>
+                  </template>
+                </div>
               </div>
             </template>
           </el-table-column>
@@ -228,7 +234,7 @@ const folderPathMap = computed(() => {
 })
 const selectedFolderCrumbs = computed(() => {
   if (!selectedFolderId.value) return []
-  const segments = folderPathMap.value[selectedFolderId.value] || ['未分类']
+  const segments = folderPathMap.value[selectedFolderId.value] || ['默认']
   return segments.map((name, index) => ({
     id: index === segments.length - 1 ? selectedFolderId.value : findFolderIdByPath(segments.slice(0, index + 1)),
     name
@@ -236,7 +242,7 @@ const selectedFolderCrumbs = computed(() => {
 })
 const selectedFolderLabel = computed(() => {
   if (!selectedFolderId.value) return ''
-  if (selectedFolderId.value === '__uncategorized__') return '未分类'
+  if (selectedFolderId.value === '__uncategorized__') return '默认'
   return (folderPathMap.value[selectedFolderId.value] || []).join(' / ')
 })
 
@@ -298,7 +304,7 @@ const handleFilter = () => {
   filteredTasks.value = allTasks.value.filter(task => {
     const matchesSearch = !searchQuery.value || 
       task.name.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
-      (task.folderPath || '未分类').toLowerCase().includes(searchQuery.value.toLowerCase())
+      (task.folderPath || '默认').toLowerCase().includes(searchQuery.value.toLowerCase())
       
     const matchesStatus = !statusFilter.value || task.taskStatus === statusFilter.value
     const matchesFolder = !selectedFolderId.value ||
@@ -554,24 +560,47 @@ const formatTimeLeft = (seconds) => {
   color: #475569;
 }
 
-.time-cell {
+.task-info-cell {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: #64748b;
+  gap: 12px;
+}
+
+.status-tag-wrapper {
+  flex-shrink: 0;
+  width: 70px;
+}
+
+.detail-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.main-info {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #334155;
+}
+
+.main-info.countdown {
+  color: #d97706;
+}
+
+.main-info.expired {
+  color: #ef4444;
 }
 
 .sub-text {
-  font-size: 12px;
+  font-size: 11px;
   color: #94a3b8;
-  margin-left: 4px;
-}
-
-.completed-time-info {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .pagination-container {

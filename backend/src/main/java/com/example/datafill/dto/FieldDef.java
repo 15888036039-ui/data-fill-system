@@ -22,4 +22,6 @@ public class FieldDef {
     private Double max;          // 最大值 (仅数字)
     private Integer minLength;   // 最小长度 (仅文本)
     private Integer maxLength;   // 最大长度 (仅文本与字段定义一致)
+    private Boolean hideInForm;  // 是否在填报模版/表单中隐藏
+    private Boolean hideInList;  // 是否在列表展示中隐藏
 }

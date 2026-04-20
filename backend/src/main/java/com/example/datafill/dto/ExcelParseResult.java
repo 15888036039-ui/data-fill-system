@@ -16,6 +16,12 @@ public class ExcelParseResult {
     private boolean truncated;
     private int totalColumns;
 
+    // 审计列检测结果
+    private List<String> missingColumns;
+    private String detectedInsertDt;
+    private String detectedUpdateDt;
+    private String detectedDeleteFlag;
+
     @Data
     @NoArgsConstructor
     @AllArgsConstructor

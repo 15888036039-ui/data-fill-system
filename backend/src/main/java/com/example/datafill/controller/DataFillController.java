@@ -108,6 +108,12 @@ public class DataFillController {
             @RequestParam(required = false) String groupTag) {
         boolean isAdmin = isUserAdmin(userEmail);
         com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DataFillForm> qw = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DataFillForm>().orderByDesc("create_time");
+        
+        // 性能优化：在列表查询中排除大字段 (forms, kvConfig, referenceTemplateConfig)
+        qw.select(DataFillForm.class, i -> !i.getColumn().equals("forms") 
+                && !i.getColumn().equals("kv_config") 
+                && !i.getColumn().equals("reference_template_config"));
+
         if (groupTag != null && !groupTag.trim().isEmpty()) {
             qw.eq("group_tag", groupTag.trim());
         }
@@ -146,6 +152,12 @@ public class DataFillController {
             @RequestParam(required = false) String groupTag) {
         boolean isAdmin = isUserAdmin(userEmail);
         com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DataFillForm> qw = new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<DataFillForm>().orderByDesc("create_time");
+        
+        // 性能优化：列表查询排除大字段
+        qw.select(DataFillForm.class, i -> !i.getColumn().equals("forms") 
+                && !i.getColumn().equals("kv_config") 
+                && !i.getColumn().equals("reference_template_config"));
+
         if (groupTag != null && !groupTag.trim().isEmpty()) {
             qw.eq("group_tag", groupTag.trim());
         }
@@ -155,6 +167,7 @@ public class DataFillController {
                 .collect(java.util.stream.Collectors.toList());
         return folderService.buildFolderTree(visibleForms, isAdmin);
     }
+
 
     @PostMapping("/folders")
     public DataFillFolder createFolder(
@@ -271,10 +284,10 @@ public class DataFillController {
         return "success";
     }
 
-    // [用户端核心]: 向动态生成的物理表中插入一行数据
     @PostMapping("/data/{formId}")
     public String insertData(@PathVariable String formId, @RequestBody Map<String, Object> rowData, @RequestParam(required = false) String userEmail) {
-        dataDmlService.insertRowData(formId, rowData);
+        boolean isAdmin = isUserAdmin(userEmail);
+        dataDmlService.insertRowData(formId, rowData, isAdmin);
         recordLog(formId, userEmail, "ADD", "新增了1条数据");
         return "success";
     }
@@ -396,8 +409,9 @@ public class DataFillController {
             @RequestParam(value = "creator", required = false) String creator,
             @RequestParam(value = "load_user", required = false) String loadUser) throws IOException {
         String finalCreator = (loadUser != null && !loadUser.trim().isEmpty()) ? loadUser : creator;
+        boolean isAdmin = isUserAdmin(finalCreator);
         recordLog(formId, finalCreator, "UPLOAD", "通过 Excel 导入了 " + (finalCreator == null ? "未知用户" : finalCreator) + " 的数据");
-        return excelService.importData(formId, file, mode, finalCreator);
+        return excelService.importData(formId, file, mode, finalCreator, isAdmin);
     }
 
     /**
@@ -429,10 +443,20 @@ public class DataFillController {
      * 获取某张表单的操作日志
      */
     @GetMapping("/data/{formId}/logs")
-    public List<com.example.datafill.entity.OperationLog> getLogs(@PathVariable String formId) {
-        return operationLogMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.example.datafill.entity.OperationLog>()
+    public List<com.example.datafill.entity.OperationLog> getLogs(
+            @PathVariable String formId,
+            @RequestParam(required = false) String userEmail) {
+        boolean isAdmin = isUserAdmin(userEmail);
+        com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.example.datafill.entity.OperationLog> qw = 
+                new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<com.example.datafill.entity.OperationLog>()
                 .eq("form_id", formId)
-                .orderByDesc("create_time"));
+                .orderByDesc("create_time");
+        
+        if (!isAdmin && userEmail != null && !userEmail.trim().isEmpty()) {
+            qw.eq("user_email", userEmail.trim());
+        }
+        
+        return operationLogMapper.selectList(qw);
     }
 
     @PostMapping("/forms/{id}/repairTable")

@@ -110,9 +110,11 @@ public class EmailService {
      */
 
     private boolean sendHtmlEmail(String to, String subject, String htmlContent) {
-
+        if (to == null || to.trim().isEmpty() || !to.contains("@")) {
+            log.warn("跳过发送邮件，收件人地址非法或不是标准邮箱（可能是内置管理账号）: {}", to);
+            return true; // 视为处理成功，防止在通知队列中反复重试
+        }
         try {
-
             MimeMessage message = mailSender.createMimeMessage();
 
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");

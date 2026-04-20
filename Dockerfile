@@ -1,20 +1,31 @@
+# syntax=docker/dockerfile:1
 # Stage 1: Frontend Build
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
-# Use mirror for faster install
+
+# Cache NPM dependencies
 COPY frontend/package*.json ./
-RUN npm install --registry=https://registry.npmmirror.com
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --registry=https://registry.npmmirror.com
+
 COPY frontend/ .
 RUN npm run build
 
 # Stage 2: Backend Build
 FROM maven:3.9-eclipse-temurin-17-alpine AS backend-builder
 WORKDIR /app/backend
-# Cache dependencies separately
+
+# Use Aliyun Maven Mirror and Cache dependencies
 COPY backend/pom.xml .
-RUN mvn dependency:go-offline
+COPY backend/maven-settings.xml ./settings.xml
+
+# Mount .m2 directory to persist cache between builds
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -s settings.xml dependency:go-offline
+
 COPY backend/src ./src
-RUN mvn clean package -DskipTests
+RUN --mount=type=cache,target=/root/.m2 \
+    mvn -s settings.xml clean package -DskipTests
 
 # Stage 3: Extract Layers
 FROM eclipse-temurin:17-jre-alpine AS extractor
@@ -56,10 +67,10 @@ LABEL org.opencontainers.image.title="Data Fill System" \
 
 EXPOSE 8080
 
-# Healthcheck (requires spring-boot-starter-actuator)
+# Healthcheck
 HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
   CMD wget -qO- http://localhost:8080/actuator/health | grep UP || exit 1
 
-# Entrypoint using JarLauncher for layered builds. 
-# Added --spring.config.additional-location to support the mounted application.yml
+# Entrypoint
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS org.springframework.boot.loader.JarLauncher --spring.config.additional-location=file:/datafill/application.yml --spring.web.resources.static-locations=file:./static/,classpath:/static/"]
+

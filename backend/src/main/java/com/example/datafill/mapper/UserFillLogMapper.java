@@ -11,5 +11,8 @@ public interface UserFillLogMapper extends BaseMapper<UserFillLog> {
 
     @Select("SELECT * FROM user_fill_log WHERE form_id = #{formId} AND user_email = #{userEmail} ORDER BY submit_time DESC LIMIT 1")
     UserFillLog selectLastByFormAndUser(@Param("formId") String formId, @Param("userEmail") String userEmail);
+
+    @Select("SELECT DISTINCT ON (form_id) * FROM user_fill_log WHERE user_email = #{userEmail} ORDER BY form_id, submit_time DESC")
+    java.util.List<UserFillLog> selectLastUploadsByUser(@Param("userEmail") String userEmail);
 }
 

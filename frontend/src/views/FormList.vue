@@ -44,15 +44,15 @@
                   <el-tag size="small" round>{{ data.templateCount || 0 }}</el-tag>
                 </div>
                 <div v-if="isAdmin && !data.systemNode" class="folder-node-actions">
-                  <el-button link type="primary" @click.stop="createFolder(data)">新增</el-button>
-                  <el-button link type="primary" @click.stop="renameFolder(data)">重命名</el-button>
-                  <el-button link type="danger" @click.stop="deleteFolder(data)">删除</el-button>
+                  <el-tooltip content="新增子目录" placement="top"><el-button link type="primary" icon="Plus" @click.stop="createFolder(data)" /></el-tooltip>
+                  <el-tooltip content="重命名" placement="top"><el-button link type="primary" icon="Edit" @click.stop="renameFolder(data)" /></el-tooltip>
+                  <el-tooltip content="删除目录" placement="top"><el-button link type="danger" icon="Delete" @click.stop="deleteFolder(data)" /></el-tooltip>
                 </div>
               </div>
             </template>
           </el-tree>
 
-          <el-empty v-else-if="!folderLoading" description="暂无目录，模板将归入未分类" :image-size="72" />
+          <el-empty v-else-if="!folderLoading" description="暂无目录，模板将归入默认" :image-size="72" />
         </div>
 
         <div
@@ -121,7 +121,7 @@
             @selection-change="handleSelectionChange"
           >
             <el-table-column v-if="isAdmin" type="selection" width="48" align="center" />
-            <el-table-column prop="name" label="模板名称" min-width="250" show-overflow-tooltip>
+            <el-table-column prop="name" label="模板名称" min-width="300" show-overflow-tooltip>
               <template #default="scope">
                 <div class="form-name-cell">
                   <el-icon class="form-icon"><Document /></el-icon>
@@ -130,19 +130,19 @@
               </template>
             </el-table-column>
             
-            <el-table-column prop="folderId" label="所属目录" width="160" show-overflow-tooltip>
+            <el-table-column prop="folderId" label="所属目录" width="150" show-overflow-tooltip>
               <template #default="scope">
                 <span class="folder-path-text">{{ resolveFolderPath(scope.row.folderId) }}</span>
               </template>
             </el-table-column>
             
-            <el-table-column prop="tableName" label="物理表名" width="200" show-overflow-tooltip>
+            <el-table-column prop="tableName" label="物理表名" width="180" show-overflow-tooltip>
               <template #default="scope">
                 <code class="table-code">{{ scope.row.tableName }}</code>
               </template>
             </el-table-column>
  
-            <el-table-column prop="status" label="状态" width="100" align="center">
+            <el-table-column prop="status" label="状态" width="90" align="center">
               <template #default="scope">
                 <el-tag
                   :type="scope.row.status === 'ACTIVE' ? 'success' : (scope.row.status === 'EXPIRED' ? 'danger' : 'info')"
@@ -155,7 +155,7 @@
               </template>
             </el-table-column>
  
-            <el-table-column prop="deadline" label="截止时间" width="150">
+            <el-table-column prop="deadline" label="截止时间" width="120">
               <template #default="scope">
                 <div class="time-cell">
                   <span>{{ scope.row.deadline ? new Date(scope.row.deadline).toLocaleDateString() : '长期有效' }}</span>
@@ -163,13 +163,13 @@
               </template>
             </el-table-column>
  
-            <el-table-column prop="creator" label="创建人" width="150" show-overflow-tooltip>
+            <el-table-column prop="creator" label="创建人" width="130" show-overflow-tooltip>
               <template #default="scope">
                 <span class="time-muted">{{ scope.row.creator || 'admin' }}</span>
               </template>
             </el-table-column>
  
-            <el-table-column label="操作" width="180" align="right" fixed="right">
+            <el-table-column label="操作" width="190" align="right" fixed="right">
               <template #default="scope">
                 <div class="action-cell">
                   <el-button link type="primary" size="small" @click="$router.push(`/fill/${scope.row.id}?admin=true`)">数据</el-button>
@@ -212,10 +212,10 @@
           v-model="moveTargetFolderId"
           clearable
           filterable
-          placeholder="选择目标目录，不选则归入未分类"
+          placeholder="选择目标目录，不选则归入默认"
           style="width: 100%"
         >
-          <el-option label="未分类" value="" />
+          <el-option label="默认" value="" />
           <el-option
             v-for="item in folderOptions"
             :key="item.value"
@@ -237,10 +237,10 @@
           v-model="batchMoveTargetFolderId"
           clearable
           filterable
-          placeholder="选择目标目录，不选则归入未分类"
+          placeholder="选择目标目录，不选则归入默认"
           style="width: 100%"
         >
-          <el-option label="未分类" value="" />
+          <el-option label="默认" value="" />
           <el-option
             v-for="item in folderOptions"
             :key="item.value"
@@ -287,7 +287,7 @@
 import { ref, onMounted, onBeforeUnmount, inject, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Document, Folder, Timer, User, WarningFilled, InfoFilled } from '@element-plus/icons-vue'
+import { Document, Folder, Timer, User, WarningFilled, InfoFilled, Menu, Box, Plus, Edit, Delete } from '@element-plus/icons-vue'
 import axios from 'axios'
 
 const route = useRoute()
@@ -365,7 +365,7 @@ const folderOptions = computed(() => {
 
 const selectedFolderCrumbs = computed(() => {
   if (!selectedFolderId.value) return []
-  const segments = folderPathMap.value[selectedFolderId.value] || ['未分类']
+  const segments = folderPathMap.value[selectedFolderId.value] || ['默认']
   return segments.map((name, index) => ({
     id: index === segments.length - 1 ? selectedFolderId.value : findFolderIdByPath(segments.slice(0, index + 1)),
     name
@@ -374,7 +374,7 @@ const selectedFolderCrumbs = computed(() => {
 
 const selectedFolderLabel = computed(() => {
   if (!selectedFolderId.value) return ''
-  if (selectedFolderId.value === '__uncategorized__') return '未分类'
+  if (selectedFolderId.value === '__uncategorized__') return '默认'
   return (folderPathMap.value[selectedFolderId.value] || []).join(' / ')
 })
 
@@ -399,9 +399,9 @@ const findFolderIdByPath = (segments) => {
 }
 
 const resolveFolderPath = (folderId) => {
-  if (!folderId) return '未分类'
+  if (!folderId) return '默认'
   const segments = folderPathMap.value[folderId]
-  return segments && segments.length > 0 ? segments.join(' / ') : '未分类'
+  return segments && segments.length > 0 ? segments.join(' / ') : '默认'
 }
 
 const handlePaginationChange = () => {}
@@ -791,6 +791,26 @@ onBeforeUnmount(() => {
   background: rgba(64, 158, 255, 0.08);
 }
 
+.folder-all-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #334155;
+  background: #f8fafc;
+  margin-bottom: 8px;
+  transition: all 0.2s ease;
+  font-size: 13px;
+}
+
+
+.folder-all-item.active {
+  color: var(--primary-color);
+  background: rgba(64, 158, 255, 0.08);
+}
+
 .folder-node {
   width: 100%;
   display: flex;
@@ -825,14 +845,20 @@ onBeforeUnmount(() => {
 }
 
 .folder-node-actions {
-  display: none;
+  opacity: 0;
+  display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   flex-shrink: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  background: linear-gradient(to left, #eff6ff 70%, transparent);
+  padding-left: 12px;
 }
 
 .folder-node:hover .folder-node-actions {
-  display: flex;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .folder-context-menu {
@@ -921,16 +947,18 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+  font-weight: 500;
 }
 
 .form-icon {
-  font-size: 20px;
-  color: #94a3b8;
+  font-size: 18px;
+  color: #64748b;
+  flex-shrink: 0;
 }
 
 .name-text {
-  font-weight: 600;
-  color: #334155;
+  color: #1e293b;
+  font-size: 14px;
 }
 
 .folder-path-text {
@@ -967,8 +995,12 @@ onBeforeUnmount(() => {
   gap: 4px;
 }
 
-:deep(.el-table .el-table__cell) {
-  padding: 8px 0;
+.table-card :deep(.el-table__row) {
+  height: 64px;
+}
+
+.table-card :deep(.el-table__cell) {
+  padding: 12px 0;
 }
 
 .move-dialog-body {

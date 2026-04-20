@@ -72,6 +72,20 @@ public class ExcelService {
             java.util.Arrays.asList(
                     "id", "load_user", "w_insert_dt", "w_update_dt", "delete_flag", "extra_data", "job_instance"));
 
+    private static final String[] INSERT_AUDIT_LEXICON = { "w_insert_dt", "ctime", "create_time", "created_at",
+            "insert_time" };
+    private static final String[] UPDATE_AUDIT_LEXICON = { "w_update_dt", "mtime", "update_time", "updated_at" };
+    private static final String[] DELETE_FLAG_LEXICON = { "delete_flag", "is_delete", "deleted", "del_flag" };
+
+    private String detectRole(java.util.Set<String> columns, String[] lexicon) {
+        for (String candidate : lexicon) {
+            if (columns.contains(candidate.toLowerCase())) {
+                return candidate.toLowerCase();
+            }
+        }
+        return null;
+    }
+
     private final DataFillFormMapper formMapper;
 
     private final DynamicDataDmlService dataDmlService;
@@ -372,10 +386,11 @@ public class ExcelService {
             });
 
         } catch (JsonProcessingException e) {
-
             throw new RuntimeException("表单解析错误", e);
-
         }
+
+        // 核心变更：下载模板时，排除掉被管理员标记为“在表单中隐藏”的业务字段
+        fields.removeIf(f -> Boolean.TRUE.equals(f.getHideInForm()));
 
         List<String> templateHeaders = new ArrayList<>();
         Map<String, String> displayNameByHeader = new LinkedHashMap<>();
@@ -423,14 +438,20 @@ public class ExcelService {
                     for (Map<String, Object> row : mappingRows) {
                         String excelHeader = String.valueOf(row.get("excelHeader"));
                         String columnName = String.valueOf(row.get("columnName"));
-                        templateHeaders.add(excelHeader);
-                        String displayName = fields.stream()
+                        
+                        // 校验该列是否在业务字段列表中（且未被隐藏）
+                        FieldDef targetField = fields.stream()
                                 .filter(f -> f.getColumnName() != null
                                         && f.getColumnName().equalsIgnoreCase(columnName))
-                                .map(FieldDef::getName)
                                 .findFirst()
-                                .orElse(excelHeader);
-                        displayNameByHeader.put(excelHeader, displayName);
+                                .orElse(null);
+                        
+                        if (targetField != null) {
+                            templateHeaders.add(excelHeader);
+                            displayNameByHeader.put(excelHeader, 
+                                targetField.getName() == null || targetField.getName().trim().isEmpty() 
+                                ? excelHeader : targetField.getName());
+                        }
                     }
                 }
             } catch (Exception e) {
@@ -494,7 +515,7 @@ public class ExcelService {
      * 优化：元数据计算外提，分片分批入库
      */
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
-    public Map<String, Object> importData(String formId, MultipartFile file, String mode, String creator)
+    public Map<String, Object> importData(String formId, MultipartFile file, String mode, String creator, boolean isAdmin)
             throws IOException {
         if (file.getSize() > (long) maxFileSizeMb * 1024 * 1024) {
             throw new RuntimeException("上传文件过大（超过 " + maxFileSizeMb + "MB），为了确保系统稳定性，请将数据分批进行导入。");
@@ -679,7 +700,7 @@ public class ExcelService {
                 if (importSystemColumns.contains(col))
                     continue;
                 businessFieldColumns.add(col);
-                if (Boolean.TRUE.equals(f.getRequired())) {
+                if (Boolean.TRUE.equals(f.getRequired()) && !Boolean.TRUE.equals(f.getHideInForm())) {
                     String display = (f.getName() == null || f.getName().trim().isEmpty()) ? origCol : f.getName();
                     requiredFieldDisplayByColumn.put(origCol, display);
                 }
@@ -1065,14 +1086,14 @@ public class ExcelService {
                 buffer.add(rowData);
 
                 if (buffer.size() >= BATCH_SIZE) {
-                    flushImportBuffer(formId, buffer);
+                    flushImportBuffer(formId, buffer, isAdmin);
                     totalCount += buffer.size();
                     buffer.clear();
                 }
             }
 
             if (!buffer.isEmpty()) {
-                flushImportBuffer(formId, buffer);
+                flushImportBuffer(formId, buffer, isAdmin);
                 totalCount += buffer.size();
                 buffer.clear();
             }
@@ -1097,9 +1118,9 @@ public class ExcelService {
         return result;
     }
 
-    private void flushImportBuffer(String formId, List<Map<String, Object>> rows) {
+    private void flushImportBuffer(String formId, List<Map<String, Object>> rows, boolean isAdmin) {
         try {
-            dataDmlService.batchInsertRowData(formId, rows);
+            dataDmlService.batchInsertRowData(formId, rows, isAdmin);
         } catch (RuntimeException e) {
             String msg = e.getMessage() == null ? "" : e.getMessage();
             java.util.regex.Matcher matcher = java.util.regex.Pattern
@@ -1963,10 +1984,9 @@ public class ExcelService {
                 "c.character_maximum_length, c.numeric_precision, c.numeric_scale, c.is_nullable, " +
                 "COALESCE(pgd.description, '') AS column_comment " +
                 "FROM information_schema.columns c " +
-                "LEFT JOIN pg_catalog.pg_class cls ON cls.relname = c.table_name " +
-                "LEFT JOIN pg_catalog.pg_namespace ns ON ns.oid = cls.relnamespace AND ns.nspname = c.table_schema " +
-                "LEFT JOIN pg_catalog.pg_description pgd ON pgd.objoid = cls.oid AND pgd.objsubid = c.ordinal_position "
-                +
+                "INNER JOIN pg_catalog.pg_namespace ns ON ns.nspname = c.table_schema " +
+                "INNER JOIN pg_catalog.pg_class cls ON cls.relname = c.table_name AND cls.relnamespace = ns.oid " +
+                "LEFT JOIN pg_catalog.pg_description pgd ON pgd.objoid = cls.oid AND pgd.objsubid = c.ordinal_position " +
                 "WHERE c.table_schema = ? AND c.table_name = ? " +
                 "ORDER BY c.ordinal_position";
 
@@ -2015,6 +2035,42 @@ public class ExcelService {
         result.setOriginalHeaders(originalHeaders);
         result.setTotalColumns(rows.size());
         result.setTruncated(false);
+
+        // 审计列检测逻辑
+        java.util.Set<String> physicalColumns = new java.util.HashSet<>();
+        for (String h : originalHeaders) {
+            if (h != null) physicalColumns.add(h.toLowerCase());
+        }
+
+        List<String> missing = new ArrayList<>();
+        if (!physicalColumns.contains("id")) {
+            missing.add("id");
+        } else {
+            // 检查 id 类型，如果是 bigint 则标记为缺失/需修复 (int8 = bigint)
+            for (Map<String, Object> r : rows) {
+                if ("id".equalsIgnoreCase(asText(r.get("column_name")))) {
+                    String udt = lower(asText(r.get("udt_name")));
+                    if ("int8".equals(udt) || "bigint".equals(udt)) {
+                        if (!missing.contains("id")) missing.add("id");
+                        break;
+                    }
+                }
+            }
+        }
+
+        String dInsert = detectRole(physicalColumns, INSERT_AUDIT_LEXICON);
+        String dUpdate = detectRole(physicalColumns, UPDATE_AUDIT_LEXICON);
+        String dDelete = detectRole(physicalColumns, DELETE_FLAG_LEXICON);
+
+        if (dInsert == null) missing.add("w_insert_dt");
+        if (dUpdate == null) missing.add("w_update_dt");
+        if (dDelete == null) missing.add("delete_flag");
+
+        result.setMissingColumns(missing);
+        result.setDetectedInsertDt(dInsert);
+        result.setDetectedUpdateDt(dUpdate);
+        result.setDetectedDeleteFlag(dDelete);
+
         return result;
     }
 

@@ -1,7 +1,7 @@
 <template>
   <div class="data-fill-page">
     <div class="header-nav flat-header">
-      <el-page-header @back="$router.push('/tasks')">
+      <el-page-header @back="isAdmin ? $router.push('/forms') : $router.push('/tasks')">
         <template #content>
           <div class="header-content-box">
             <span class="nav-form-name">{{ formMeta?.name }}</span>
@@ -24,21 +24,47 @@
       <div v-if="timeLeftMessage || lockStatus.hasSubmitted" 
            class="slim-banner" 
            :class="{ 
-             'warning': !lockStatus.hasSubmitted && isNearDeadline, 
-             'expired': isExpired || lockStatus.isLocked, 
-             'success': lockStatus.hasSubmitted 
+             'warning': !isAdmin && !lockStatus.hasSubmitted && isNearDeadline && !isExpired && !lockStatus.isLocked, 
+             'expired': !isAdmin && (isExpired || lockStatus.isLocked) && !lockStatus.hasSubmitted, 
+             'success': !isAdmin && lockStatus.hasSubmitted,
+             'admin': isAdmin && lockStatus.adminStats
            }">
         <el-icon v-if="lockStatus.isLocked"><CircleCheck /></el-icon>
         <el-icon v-else-if="lockStatus.hasSubmitted"><CircleCheck /></el-icon>
         <el-icon v-else><AlarmClock /></el-icon>
         
-        <span v-if="lockStatus.hasSubmitted">
-          本期填报任务已完成！<span v-if="nextFillTime" style="margin-left: 10px; font-weight: 500;">下次填报时间：{{ nextFillTime }}</span>
+        <span v-if="isAdmin && lockStatus.adminStats" class="banner-text">
+          当前任务进度：
+          <span class="sub-info">已填报: {{ lockStatus.adminStats.submittedCount }} 人</span>
+          <span v-if="lockStatus.adminStats.totalExpected > 0" class="sub-info">未填报: {{ lockStatus.adminStats.pendingUsers?.length || 0 }} 人</span>
+          <el-tooltip v-if="lockStatus.adminStats.totalExpected > 0" placement="top">
+            <template #content>
+              <div style="max-height: 200px; overflow-y: auto;">
+                <div v-if="lockStatus.adminStats.submittedUsers?.length > 0">
+                  <b style="color: #67c23a;">● 已提交：</b><br/>
+                  {{ lockStatus.adminStats.submittedUsers.join(', ') }}
+                </div>
+                <div v-if="lockStatus.adminStats.pendingUsers?.length > 0" style="margin-top: 8px;">
+                  <b style="color: #e6a23c;">● 未提交：</b><br/>
+                  {{ lockStatus.adminStats.pendingUsers.join(', ') }}
+                </div>
+                <div v-if="lockStatus.adminStats.submittedUsers?.length === 0 && lockStatus.adminStats.pendingUsers?.length === 0">
+                  暂无名单信息
+                </div>
+              </div>
+            </template>
+            <el-icon class="info-icon" style="color: #0369a1; cursor: pointer; margin-left: 4px;"><InfoFilled /></el-icon>
+          </el-tooltip>
+        </span>
+        <span v-else-if="lockStatus.hasSubmitted" class="banner-text">
+          本期填报任务已完成！
+          <span v-if="lastSubmitTimeFormatted" class="sub-info">最近提交: {{ lastSubmitTimeFormatted }}</span>
+          <span v-if="nextFillTime" class="sub-info">下次填报时间：{{ nextFillTime }}</span>
         </span>
         <span v-else-if="lockStatus.isLocked">
           填报锁定 {{ isAdmin ? '(管理员模式)' : '' }}
         </span>
-        <span v-else>{{ timeLeftMessage }}</span>
+        <span v-else-if="!isAdmin">{{ timeLeftMessage }}</span>
       </div>
 
       <!-- 填报指引/注释框 (新增需求 #3) -->
@@ -57,7 +83,7 @@
         v-model="isFilling"
         :editing-row-id="editingRowId"
         :editing-data="editingData"
-        :schema-fields="schemaFields"
+        :schema-fields="formFields"
         :form-id="formId"
         :user-email="userEmail"
         :is-admin="isAdmin"
@@ -74,7 +100,7 @@
       <div class="flat-toolbar">
         <div class="toolbar-row main-actions">
           <div class="left-group">
-            <el-button type="primary" icon="Plus" @click="handleAddNew" :disabled="isLocked">新增数据</el-button>
+            <el-button type="primary" icon="Plus" @click="handleAddNew" :disabled="!canAdd">新增数据</el-button>
             <el-button icon="Download" @click="downloadTemplate" class="action-btn">下载模板</el-button>
             <el-upload
               :show-file-list="false"
@@ -83,7 +109,7 @@
               :disabled="isUploading || isLocked"
               class="inline-upload"
             >
-              <el-button icon="Upload" :loading="isUploading" :disabled="isLocked" class="action-btn">上传数据</el-button>
+              <el-button icon="Upload" :loading="isUploading" :disabled="!canUpload" class="action-btn">上传数据</el-button>
             </el-upload>
             <el-button icon="Memo" @click="logVisible = true" class="action-btn">操作日志</el-button>
           </div>
@@ -97,7 +123,7 @@
               type="danger" 
               link 
               icon="Delete" 
-              :disabled="selectedIds.length === 0 || isLocked" 
+              :disabled="selectedIds.length === 0 || !canDelete" 
               @click="handleBatchDelete"
             >
               <span v-if="selectedIds.length > 0">
@@ -146,7 +172,7 @@
             <el-table-column type="index" label="序号" width="70" align="center" />
             
             <el-table-column 
-              v-for="field in schemaFields" 
+              v-for="field in tableFields" 
               :key="field.columnName" 
               :prop="field.columnName" 
               :label="field.name"
@@ -171,14 +197,14 @@
                   size="small" 
                   link 
                   @click="handleEdit(scope.row)" 
-                  :disabled="isLocked || isRowLocked(scope.row)"
+                  :disabled="!canEdit || isRowLocked(scope.row)"
                 >编辑</el-button>
                 <el-button 
                   type="danger" 
                   size="small" 
                   link 
                   @click="confirmDelete(scope.row)" 
-                  :disabled="isLocked || isRowLocked(scope.row)"
+                  :disabled="!canDelete || isRowLocked(scope.row)"
                 >删除</el-button>
               </template>
             </el-table-column>
@@ -201,10 +227,10 @@
   </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed, reactive, inject } from 'vue'
+import { ref, onMounted, onUnmounted, computed, reactive, inject, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
-import { AlarmClock, CircleCheck } from '@element-plus/icons-vue'
+import { AlarmClock, CircleCheck, InfoFilled } from '@element-plus/icons-vue'
 import axios from 'axios'
 import FilterBar from '../components/FilterBar.vue'
 import DataEditor from '../components/DataEditor.vue'
@@ -279,6 +305,29 @@ const isLocked = computed(() => {
   return lockStatus.value.isLocked && !isAdmin.value
 })
 
+const canAdd = computed(() => {
+  if (isAdmin.value) return true
+  // 如果任务全局锁定，则任何操作都不允许；否则检查表单单独的“允许新增”开关
+  return !isLocked.value && formMeta.value?.allowAdd !== false
+})
+
+const canUpload = computed(() => {
+  if (isAdmin.value) return true
+  // 上传数据不单独受 allowAdd 限制（管理员可能只想通过模板规范化填报），仅受任务全局锁定限制
+  return !isLocked.value
+})
+
+const canEdit = computed(() => {
+  if (isAdmin.value) return true
+  // 检查表单单独的“允许修改”开关
+  return !isLocked.value && formMeta.value?.allowEdit !== false
+})
+
+const canDelete = computed(() => {
+  if (isAdmin.value) return true
+  return !isLocked.value && formMeta.value?.allowDelete !== false
+})
+
 const nextFillTime = computed(() => {
   // 优先使用后端返回的权威值（与 UserTasks 列表完全一致）
   if (lockStatus.value.nextFillTime) {
@@ -320,6 +369,20 @@ const nextFillTime = computed(() => {
   return `${year}/${month}/${day} ${hours}:${minutes}:00`
 })
 
+const lastSubmitTimeFormatted = computed(() => {
+  if (!lockStatus.value.lastSubmitTime) return null
+  const d = new Date(lockStatus.value.lastSubmitTime)
+  if (isNaN(d.getTime())) return null
+  
+  const year = d.getFullYear()
+  const month = d.getMonth() + 1
+  const day = d.getDate()
+  const hours = String(d.getHours()).padStart(2, '0')
+  const minutes = String(d.getMinutes()).padStart(2, '0')
+  const seconds = String(d.getSeconds()).padStart(2, '0')
+  return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`
+})
+
 const graceTimeLeft = ref('')
 let timer = null
 
@@ -350,7 +413,8 @@ const updateGraceCountdown = () => {
 }
 
 const handleSelectionChange = (selection) => {
-  selectedIds.value = selection.map(row => row.id)
+  const pk = formMeta.value?.pkColumn || 'id'
+  selectedIds.value = selection.map(row => getRowValue(row, pk))
   // 如果不是全选本页，则取消“全选所有过滤数据”的状态
   if (selection.length < tableData.value.length) {
     isSelectAllFiltered.value = false
@@ -426,23 +490,39 @@ const getRowValue = (row, key) => {
   return foundKey ? row[foundKey] : undefined
 }
 
-const schemaFields = computed(() => {
+const tableFields = computed(() => {
   if (!formMeta.value || !formMeta.value.forms) return []
   try {
-    return JSON.parse(formMeta.value.forms)
+    const allFields = JSON.parse(formMeta.value.forms)
+    // 列表模式：过滤掉勾选了“列表隐藏”的字段
+    return allFields.filter(f => !f.hideInList)
   } catch (e) {
     return []
   }
 })
 
+const formFields = computed(() => {
+  if (!formMeta.value || !formMeta.value.forms) return []
+  try {
+    const allFields = JSON.parse(formMeta.value.forms)
+    // 填报模式：过滤掉勾选了“填报隐藏”的字段（Excel 模板和单行填报表单共用此逻辑）
+    return allFields.filter(f => !f.hideInForm)
+  } catch (e) {
+    return []
+  }
+})
+
+// 兼容旧逻辑名（如果其他地方引用了 schemaFields）
+const schemaFields = formFields
+
 const filterFields = computed(() => {
-  const filterable = schemaFields.value.filter(f => f.filterable)
+  const filterable = tableFields.value.filter(f => f.filterable)
   if (filterable.length > 0) return filterable
   
   const policy = formMeta.value?.defaultFilterPolicy
   if (policy === 'NONE') return []
-  // 默认策略或 FIRST_THREE：取前三个
-  return schemaFields.value.slice(0, 3)
+  // 默认策略或 FIRST_THREE：取前三个可见字段
+  return tableFields.value.slice(0, 3)
 })
 
 const loadFormMeta = async () => {
@@ -491,7 +571,8 @@ const handleAddNew = () => {
 }
 
 const handleEdit = (row) => {
-  editingRowId.value = row.id || row.ID || null // 强制获取 ID 标识
+  const pk = formMeta.value?.pkColumn || 'id'
+  editingRowId.value = getRowValue(row, pk) || null // 强制获取主键标识
   editingData.value = { ...row }
   isFilling.value = true
 }
@@ -547,7 +628,9 @@ const confirmDelete = async (row) => {
       type: 'warning'
     })
     
-    await handleDelete(row.id)
+    const pk = formMeta.value?.pkColumn || 'id'
+    const dataId = getRowValue(row, pk)
+    await handleDelete(dataId)
   } catch (e) {
     // cancelled
   }
@@ -618,6 +701,12 @@ const handleCurrentChange = (val) => { currentPage.value = val; loadTableData() 
 
 onMounted(() => { if (formId) loadFormMeta() })
 onUnmounted(() => { if (timer) clearInterval(timer) })
+
+watch([userEmail, isAdmin], ([newEmail]) => {
+  if (newEmail && formMeta.value) {
+    loadTableData()
+  }
+}, { immediate: true })
 </script>
 
 <style scoped>
@@ -691,16 +780,17 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 }
 
 .slim-banner {
-  padding: 6px 12px;
-  border-radius: 4px;
-  margin-bottom: 12px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  margin-bottom: 16px;
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 13px;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  color: #166534;
+  font-size: 14px;
+  background: #f0f9ff;
+  border: 1px solid #e0f2fe;
+  color: #0369a1;
+  transition: all 0.3s ease;
 }
 
 .slim-banner.success {
@@ -709,10 +799,39 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   color: #166534;
 }
 
+.slim-banner.warning {
+  background: #fffbeb;
+  border-color: #fef3c7;
+  color: #92400e;
+}
+
+.slim-banner.admin {
+  background: #f0f9ff;
+  border-color: #e0f2fe;
+  color: #0369a1;
+}
+
 .slim-banner.expired, .slim-banner.locked {
   background: #f8fafc;
   border-color: #e2e8f0;
   color: #475569;
+}
+
+.banner-text {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.sub-info {
+  font-weight: 500;
+  opacity: 0.9;
+  font-size: 13px;
+}
+
+.slim-banner.success .sub-info {
+  color: #166534;
 }
 
 .flat-toolbar {
