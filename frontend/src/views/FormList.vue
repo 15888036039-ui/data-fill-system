@@ -2,12 +2,9 @@
   <div class="form-list-page">
     <div class="page-layout">
       <el-card class="folder-card" shadow="never">
-        <div class="folder-card-header">
-          <div>
-            <div class="folder-title">模板目录</div>
-            <div class="folder-subtitle">支持多级目录组织模板</div>
-          </div>
-          <el-button v-if="isAdmin" type="primary" plain size="small" @click="createFolder()">新建目录</el-button>
+        <div class="folder-header">
+          <span class="folder-header-title">模板目录</span>
+          <el-button v-if="isAdmin" type="primary" link icon="Plus" @click="createFolder()">新建</el-button>
         </div>
 
         <div class="folder-tree-panel" v-loading="folderLoading">
@@ -67,49 +64,47 @@
       </el-card>
 
       <div class="content-panel">
-        <div class="filter-bar">
-          <el-input
-            v-model="searchQuery"
-            placeholder="搜索模板名称或物理表名..."
-            prefix-icon="Search"
-            clearable
-            class="search-input"
-            @keyup.enter="handleFilter"
-            @clear="handleFilter"
-          />
-          <el-select v-model="statusFilter" placeholder="模板状态" clearable class="status-select">
-            <el-option label="所有状态" value="" />
-            <el-option label="运行中" value="ACTIVE" />
-            <el-option label="已过期" value="EXPIRED" />
-            <el-option label="待发布" value="DISABLED" />
-          </el-select>
-          <el-button type="primary" icon="Search" @click="handleFilter">查询</el-button>
-          <el-button icon="Refresh" @click="resetFilter">重置</el-button>
-        </div>
-
-        <div class="toolbar-row">
-          <el-breadcrumb separator="/">
-            <el-breadcrumb-item @click="selectAllFolders">
-              <span class="crumb-link">全部模板</span>
-            </el-breadcrumb-item>
-            <el-breadcrumb-item v-for="item in selectedFolderCrumbs" :key="item.id">
-              <span class="crumb-link" @click="selectFolderById(item.id)">{{ item.name }}</span>
-            </el-breadcrumb-item>
-          </el-breadcrumb>
-
-          <div class="toolbar-meta">
-            <el-button
-              v-if="isAdmin"
-              type="warning"
-              plain
-              :disabled="selectedFormIds.length === 0"
-              @click="openBatchMoveDialog"
-            >
-              批量移动
-            </el-button>
-            <el-tag v-if="selectedFolderLabel" type="info" effect="plain" round>当前目录：{{ selectedFolderLabel }}</el-tag>
-            <el-tag v-if="isAdmin && selectedFormIds.length > 0" type="warning" effect="plain" round>已选 {{ selectedFormIds.length }} 个</el-tag>
-            <el-tag type="success" effect="plain" round>模板数：{{ filteredForms.length }}</el-tag>
+        <div class="view-header">
+          <div class="view-header-left">
+            <div class="view-title-row">
+              <span class="view-title">全部模板</span>
+              <el-tag type="success" effect="plain" round size="small" class="count-tag">
+                共 {{ filteredForms.length }} 个模板
+              </el-tag>
+            </div>
+          </div>
+          
+          <div class="view-header-right">
+            <div class="search-bar-integrated">
+              <el-input
+                v-model="searchQuery"
+                placeholder="搜索模板名称或物理表名..."
+                prefix-icon="Search"
+                clearable
+                class="search-input-compact"
+                @keyup.enter="handleFilter"
+                @clear="handleFilter"
+              />
+              <el-select v-model="statusFilter" placeholder="状态" clearable class="status-select-compact">
+                <el-option label="所有状态" value="" />
+                <el-option label="运行中" value="ACTIVE" />
+                <el-option label="已过期" value="EXPIRED" />
+                <el-option label="待发布" value="DISABLED" />
+              </el-select>
+              <el-button type="primary" @click="handleFilter">查询</el-button>
+              <el-button @click="resetFilter">重置</el-button>
+              <div class="divider"></div>
+              <el-button
+                v-if="isAdmin"
+                type="warning"
+                plain
+                icon="Rank"
+                :disabled="selectedFormIds.length === 0"
+                @click="openBatchMoveDialog"
+              >
+                批量移动
+              </el-button>
+            </div>
           </div>
         </div>
 
@@ -119,69 +114,80 @@
             style="width: 100%"
             v-loading="loading"
             @selection-change="handleSelectionChange"
+            row-class-name="modern-table-row"
           >
             <el-table-column v-if="isAdmin" type="selection" width="48" align="center" />
-            <el-table-column prop="name" label="模板名称" min-width="300" show-overflow-tooltip>
+            <el-table-column prop="name" label="模板名称" min-width="220" show-overflow-tooltip>
               <template #default="scope">
                 <div class="form-name-cell">
-                  <el-icon class="form-icon"><Document /></el-icon>
+                  <div class="icon-avatar">
+                    <el-icon><Document /></el-icon>
+                  </div>
                   <span class="name-text">{{ scope.row.name }}</span>
                 </div>
               </template>
             </el-table-column>
             
-            <el-table-column prop="folderId" label="所属目录" width="150" show-overflow-tooltip>
+            <el-table-column prop="folderId" label="所属目录" min-width="130" show-overflow-tooltip>
               <template #default="scope">
-                <span class="folder-path-text">{{ resolveFolderPath(scope.row.folderId) }}</span>
+                <div class="folder-path-cell">
+                  <el-icon size="12"><Folder /></el-icon>
+                  <span class="folder-path-text">{{ resolveFolderPath(scope.row.folderId) }}</span>
+                </div>
               </template>
             </el-table-column>
             
-            <el-table-column prop="tableName" label="物理表名" width="180" show-overflow-tooltip>
+            <el-table-column prop="tableName" label="物理表名" min-width="160" show-overflow-tooltip>
               <template #default="scope">
                 <code class="table-code">{{ scope.row.tableName }}</code>
               </template>
             </el-table-column>
- 
-            <el-table-column prop="status" label="状态" width="90" align="center">
+  
+            <el-table-column prop="status" label="状态" width="100" align="center">
               <template #default="scope">
                 <el-tag
                   :type="scope.row.status === 'ACTIVE' ? 'success' : (scope.row.status === 'EXPIRED' ? 'danger' : 'info')"
                   effect="light"
                   round
                   size="small"
+                  class="status-tag"
                 >
                   {{ scope.row.status === 'ACTIVE' ? '运行中' : (scope.row.status === 'EXPIRED' ? '已过期' : '待发布') }}
                 </el-tag>
               </template>
             </el-table-column>
- 
-            <el-table-column prop="deadline" label="截止时间" width="120">
+  
+            <el-table-column prop="deadline" label="截止时间" min-width="140">
               <template #default="scope">
                 <div class="time-cell">
+                  <el-icon v-if="scope.row.deadline" size="14"><Timer /></el-icon>
                   <span>{{ scope.row.deadline ? new Date(scope.row.deadline).toLocaleDateString() : '长期有效' }}</span>
                 </div>
               </template>
             </el-table-column>
- 
-            <el-table-column prop="creator" label="创建人" width="130" show-overflow-tooltip>
+  
+            <el-table-column prop="creator" label="创建人" width="120" show-overflow-tooltip>
               <template #default="scope">
-                <span class="time-muted">{{ scope.row.creator || 'admin' }}</span>
+                <span class="creator-text">{{ scope.row.creator || 'admin' }}</span>
               </template>
             </el-table-column>
- 
-            <el-table-column label="操作" width="190" align="right" fixed="right">
+  
+            <el-table-column label="操作" width="160" align="right" fixed="right">
               <template #default="scope">
                 <div class="action-cell">
-                  <el-button link type="primary" size="small" @click="$router.push(`/fill/${scope.row.id}?admin=true`)">数据</el-button>
-                  <el-divider direction="vertical" />
-                  <el-button v-if="isAdmin" link type="primary" size="small" @click="$router.push(`/designer/${scope.row.id}`)">设计</el-button>
-                  <el-divider v-if="isAdmin" direction="vertical" />
+                  <el-tooltip content="查看/填写数据" placement="top">
+                    <el-button circle size="small" type="primary" plain icon="List" @click="$router.push(`/fill/${scope.row.id}?admin=true`)" />
+                  </el-tooltip>
+                  <el-tooltip v-if="isAdmin" content="设计模板" placement="top">
+                    <el-button circle size="small" type="success" plain icon="Edit" @click="$router.push(`/designer/${scope.row.id}`)" />
+                  </el-tooltip>
+                  
                   <el-dropdown v-if="isAdmin" trigger="click">
-                    <el-button link type="info" size="small">更多</el-button>
+                    <el-button circle size="small" type="info" plain icon="MoreFilled" />
                     <template #dropdown>
                       <el-dropdown-menu>
-                        <el-dropdown-item @click="openMoveDialog(scope.row)">移动目录</el-dropdown-item>
-                        <el-dropdown-item divided @click="handleDeleteForm(scope.row)" style="color: #f56c6c">删除模板</el-dropdown-item>
+                        <el-dropdown-item icon="Rank" @click="openMoveDialog(scope.row)">移动目录</el-dropdown-item>
+                        <el-dropdown-item divided icon="Delete" @click="handleDeleteForm(scope.row)" style="color: #f56c6c">删除模板</el-dropdown-item>
                       </el-dropdown-menu>
                     </template>
                   </el-dropdown>
@@ -287,7 +293,7 @@
 import { ref, onMounted, onBeforeUnmount, inject, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Document, Folder, Timer, User, WarningFilled, InfoFilled, Menu, Box, Plus, Edit, Delete } from '@element-plus/icons-vue'
+import { Document, Folder, Timer, User, WarningFilled, InfoFilled, Menu, Box, Plus, Edit, Delete, Rank, List, MoreFilled } from '@element-plus/icons-vue'
 import axios from 'axios'
 
 const route = useRoute()
@@ -734,81 +740,58 @@ onBeforeUnmount(() => {
 
 .folder-card {
   position: relative;
-  width: 260px;
+  width: 280px;
   flex-shrink: 0;
-  border-radius: 14px;
+  border-radius: 16px;
   overflow: hidden;
+  border: 1px solid #f1f5f9;
+  background: white;
+  transition: all 0.3s;
 }
 
-.content-panel {
-  flex: 1;
-  min-width: 0;
-  width: 0; /* Ensures flex child doesn't overflow sibling */
+.folder-card:hover {
+  box-shadow: 0 12px 24px -10px rgba(15, 23, 42, 0.1);
 }
 
-.folder-card-header {
+.folder-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 12px;
+  padding: 16px 12px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  margin-bottom: 8px;
 }
 
-.folder-title {
-  font-size: 15px;
+.folder-header-title {
+  font-size: 14px;
   font-weight: 700;
+  color: #1e293b;
+  letter-spacing: 0.5px;
+}
+
+.folder-all-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  color: #64748b;
+  margin-bottom: 4px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-size: 13.5px;
+  border-radius: 8px;
+}
+
+.folder-all-item:hover {
+  background: #f1f5f9;
   color: #0f172a;
 }
 
-.folder-subtitle {
-  font-size: 11px;
-  color: #94a3b8;
-  margin-top: 2px;
-}
-
-.folder-tree-panel {
-  min-height: 480px;
-  max-height: 480px;
-  overflow-y: auto;
-}
-
-.folder-all-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  color: #334155;
-  background: #f8fafc;
-  margin-bottom: 8px;
-  transition: all 0.2s ease;
-  font-size: 13px;
-}
-
 .folder-all-item.active {
-  color: var(--primary-color);
-  background: rgba(64, 158, 255, 0.08);
-}
-
-.folder-all-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 10px;
-  border-radius: 8px;
-  cursor: pointer;
-  color: #334155;
-  background: #f8fafc;
-  margin-bottom: 8px;
-  transition: all 0.2s ease;
-  font-size: 13px;
-}
-
-
-.folder-all-item.active {
-  color: var(--primary-color);
-  background: rgba(64, 158, 255, 0.08);
+  color: white;
+  font-weight: 600;
+  background: var(--primary-color);
+  box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);
 }
 
 .folder-node {
@@ -825,7 +808,7 @@ onBeforeUnmount(() => {
 .folder-node-main {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -833,15 +816,17 @@ onBeforeUnmount(() => {
 
 .folder-node-icon {
   color: #94a3b8;
+  font-size: 16px;
 }
 
 .folder-node-name {
   display: block;
   flex: 1;
-  font-size: 13px;
+  font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: #334155;
 }
 
 .folder-node-actions {
@@ -852,8 +837,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   transition: opacity 0.2s ease;
   pointer-events: none;
-  background: linear-gradient(to left, #eff6ff 70%, transparent);
-  padding-left: 12px;
+  padding-left: 8px;
 }
 
 .folder-node:hover .folder-node-actions {
@@ -892,99 +876,139 @@ onBeforeUnmount(() => {
   color: #dc2626;
 }
 
-.filter-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 16px;
-  background: white;
-  padding: 16px;
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-  border: 1px solid #f1f5f9;
+.content-panel {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+  padding-bottom: 24px;
 }
 
-.toolbar-row {
+.view-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
   margin-bottom: 16px;
+  background: white;
+  padding: 12px 20px;
+  border-radius: 12px;
+  border: 1px solid #f1f5f9;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.02);
 }
 
-.toolbar-meta {
+.view-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.view-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.search-bar-integrated {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
-.crumb-link {
-  cursor: pointer;
-  color: #475569;
+.search-input-compact {
+  width: 240px;
 }
 
-.crumb-link:hover {
-  color: var(--primary-color);
+.status-select-compact {
+  width: 110px;
 }
 
-.search-input {
-  width: 320px;
-  max-width: 100%;
-}
-
-.status-select {
-  width: 160px;
-  max-width: 100%;
+.divider {
+  width: 1px;
+  height: 20px;
+  background: #e2e8f0;
+  margin: 0 4px;
 }
 
 .table-card {
-  padding: 8px;
-  border-radius: 12px;
+  border-radius: 16px;
+  border: 1px solid #f1f5f9;
+  box-shadow: 0 4px 20px -5px rgba(15, 23, 42, 0.04);
+  padding: 4px;
+}
+
+.modern-table-row {
+  transition: background-color 0.2s;
+}
+
+.modern-table-row:hover {
+  background-color: #f8fafc !important;
+}
+
+.icon-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.modern-table-row:hover .icon-avatar {
+  background: #e2e8f0;
+  color: var(--primary-color);
 }
 
 .form-name-cell {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-weight: 500;
-}
-
-.form-icon {
-  font-size: 18px;
-  color: #64748b;
-  flex-shrink: 0;
 }
 
 .name-text {
+  font-weight: 600;
   color: #1e293b;
   font-size: 14px;
 }
 
-.folder-path-text {
-  color: #475569;
+.folder-path-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #64748b;
+  font-size: 13px;
 }
 
 .table-code {
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  background: #f1f5f9;
+  background: #f8fafc;
   padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 13px;
+  border-radius: 6px;
+  font-size: 12px;
   color: #475569;
+  border: 1px solid #f1f5f9;
 }
 
-.time-cell,
-.creator-cell {
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  height: 24px;
+  border: none;
+}
+
+.time-cell {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
   color: #64748b;
+  font-size: 13px;
 }
 
-.time-muted {
-  color: #64748b;
+.creator-text {
+  color: #94a3b8;
   font-size: 13px;
 }
 
@@ -992,43 +1016,15 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
+  gap: 8px;
 }
 
-.table-card :deep(.el-table__row) {
-  height: 64px;
-}
-
-.table-card :deep(.el-table__cell) {
-  padding: 12px 0;
-}
-
-.move-dialog-body {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.move-form-name {
-  font-size: 14px;
-  color: #334155;
-  font-weight: 600;
-}
-
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.pagination-container {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 20px;
-  padding: 0 8px;
-}
-
-:deep(.el-table__header) {
+:deep(.el-table__header-wrapper th) {
   background-color: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+  font-size: 13px;
+  height: 48px;
 }
 
 :deep(.el-tree-node__content) {
@@ -1082,16 +1078,17 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
-  .filter-bar {
+  .filter-inputs {
     flex-direction: column;
     align-items: stretch;
   }
   .search-input, .status-select {
     width: 100%;
   }
-  .toolbar-row {
+  .view-header {
     flex-direction: column;
     align-items: flex-start;
+    gap: 16px;
   }
 }
 /* 彻底销毁确认弹窗样式 */

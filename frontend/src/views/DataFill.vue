@@ -64,6 +64,9 @@
         <span v-else-if="lockStatus.isLocked">
           填报锁定 {{ isAdmin ? '(管理员模式)' : '' }}
         </span>
+        <span v-else-if="lockStatus.isUpcoming && !isAdmin" class="banner-text">
+          本期填报任务尚未开启。预计开启时间：{{ formatDateTime(lockStatus.startTimeOfCycle) }}
+        </span>
         <span v-else-if="!isAdmin">{{ timeLeftMessage }}</span>
       </div>
 
@@ -162,7 +165,6 @@
           <el-table 
             :data="tableData" 
             border 
-            stripe 
             style="width: 100%" 
             v-loading="tableLoading" 
             @selection-change="handleSelectionChange"
@@ -239,25 +241,21 @@ import OperationLogs from '../components/OperationLogs.vue'
 const route = useRoute()
 const formId = route.params.id
 
-const currentUser = inject('currentUser', ref(''))
-const userEmail = computed(() => currentUser.value)
-
+const formMeta = ref(null)
 const loading = ref(true)
 const tableLoading = ref(false)
-const formMeta = ref(null)
+const isFilling = ref(false)
+const isUploading = ref(false)
 const tableData = ref([])
 const totalCount = ref(0)
-const isFilling = ref(false)
-const editingRowId = ref(null)
-const editingData = ref({})
-
 const currentPage = ref(1)
 const pageSize = ref(10)
-const importMode = ref('append')
-const isUploading = ref(false)
-
-// 操作日志相关
+const editingRowId = ref(null)
+const editingData = ref({})
 const logVisible = ref(false)
+
+const currentUser = inject('currentUser', ref(''))
+const userEmail = computed(() => currentUser.value)
 
 const searchParams = ref({})
 const selectedIds = ref([])
@@ -266,22 +264,27 @@ const isSelectAllFiltered = ref(false)
 const isAdminGlobal = inject('isAdmin', ref(true))
 const isAdmin = computed(() => isAdminGlobal.value)
 
+const now = ref(new Date())
+
 const timeLeftMessage = computed(() => {
   if (!formMeta.value || !formMeta.value.deadline) return ''
   const deadline = new Date(formMeta.value.deadline)
-  const now = new Date()
-  const diff = deadline - now
+  const diff = deadline - now.value
   
   if (diff <= 0) return '任务已截止，当前可能无法提交'
   
-  const totalHours = Math.floor(diff / (1000 * 60 * 60))
-  const days = Math.floor(totalHours / 24)
-  const hours = totalHours % 24
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+  const seconds = Math.floor((diff % (1000 * 60)) / 1000)
 
   if (days > 0) {
-    return `剩余 ${days} 天 ${hours} 小时截止，请及时完成`
+    return `剩余 ${days} 天 ${hours} 小时 ${minutes} 分截止，请及时完成`
   }
-  return `剩余最后 ${hours} 小时，请尽快填报`
+  if (hours > 0) {
+    return `剩余最后 ${hours} 小时 ${minutes} 分 ${seconds} 秒，请尽快填报`
+  }
+  return `剩余最后 ${minutes} 分 ${seconds} 秒，请尽快填报`
 })
 
 const isNearDeadline = computed(() => {
@@ -297,6 +300,8 @@ const isExpired = computed(() => {
 
 const lockStatus = ref({
   isLocked: false,
+  isUpcoming: false,
+  startTimeOfCycle: null,
   hasSubmitted: false,
   graceEndTime: null
 })
@@ -307,20 +312,22 @@ const isLocked = computed(() => {
 
 const canAdd = computed(() => {
   if (isAdmin.value) return true
-  // 如果任务全局锁定，则任何操作都不允许；否则检查表单单独的“允许新增”开关
-  return !isLocked.value && formMeta.value?.allowAdd !== false
+  // 任务未开启、已全局锁定，均不允许操作；否则检查单独的“允许新增”开关
+  if (lockStatus.value.isUpcoming || isLocked.value) return false
+  return formMeta.value?.allowAdd !== false
 })
 
 const canUpload = computed(() => {
   if (isAdmin.value) return true
-  // 上传数据不单独受 allowAdd 限制（管理员可能只想通过模板规范化填报），仅受任务全局锁定限制
-  return !isLocked.value
+  // 任务未开启、已全局锁定，均不允许上传
+  if (lockStatus.value.isUpcoming || isLocked.value) return false
+  return true
 })
 
 const canEdit = computed(() => {
   if (isAdmin.value) return true
-  // 检查表单单独的“允许修改”开关
-  return !isLocked.value && formMeta.value?.allowEdit !== false
+  if (lockStatus.value.isUpcoming || isLocked.value) return false
+  return formMeta.value?.allowEdit !== false
 })
 
 const canDelete = computed(() => {
@@ -385,6 +392,7 @@ const lastSubmitTimeFormatted = computed(() => {
 
 const graceTimeLeft = ref('')
 let timer = null
+let timerNow = null
 
 const isRowLocked = (row) => {
   return false // 根据需求变更：用户可以一直操作自己填报过的数据
@@ -699,8 +707,17 @@ const handleImportError = (err) => {
 const handleSizeChange = (val) => { pageSize.value = val; handleSearch() }
 const handleCurrentChange = (val) => { currentPage.value = val; loadTableData() }
 
-onMounted(() => { if (formId) loadFormMeta() })
-onUnmounted(() => { if (timer) clearInterval(timer) })
+onMounted(() => { 
+  if (formId) loadFormMeta() 
+  // 全局计时器，每秒刷新 now
+  timerNow = setInterval(() => {
+    now.value = new Date()
+  }, 1000)
+})
+onUnmounted(() => { 
+  if (timer) clearInterval(timer) 
+  if (timerNow) clearInterval(timerNow)
+})
 
 watch([userEmail, isAdmin], ([newEmail]) => {
   if (newEmail && formMeta.value) {

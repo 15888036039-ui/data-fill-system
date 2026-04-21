@@ -37,8 +37,9 @@ public class EmailService {
     private final JavaMailSender mailSender;
 
     @Value("${spring.mail.username}")
+    private String mailUsername;
 
-    private String fromEmail;
+    private String fromEmail = "data-service@furniwell.com";
 
     @Value("${data-fill.mail.subject-prefix:[美鹰·智数平台] }")
     private String subjectPrefix;
@@ -119,7 +120,7 @@ public class EmailService {
 
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
-            helper.setFrom(fromEmail);
+            helper.setFrom(fromEmail, subjectPrefix.replace("[", "").replace("]", "").trim());
 
             helper.setTo(to);
 
@@ -133,9 +134,9 @@ public class EmailService {
 
             return true;
 
-        } catch (MessagingException e) {
+        } catch (Exception e) {
 
-            log.error("邮件发送失败: {} -> {}, 错误: {}", fromEmail, to, e.getMessage());
+            log.error("邮件发送失败: {} -> {}, 错误类型: {}, 错误信息: {}", fromEmail, to, e.getClass().getSimpleName(), e.getMessage());
 
             return false;
 

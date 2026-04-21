@@ -49,133 +49,143 @@
         </el-card>
 
         <div class="content-panel">
-          <div class="filter-bar">
-            <el-input
-              v-model="searchQuery"
-              placeholder="搜索模板名称..."
-              prefix-icon="Search"
-              clearable
-              class="search-input"
-              @clear="handleFilter"
-              @keyup.enter="handleFilter"
-            />
-            <el-select v-model="statusFilter" placeholder="模板状态" clearable class="status-select">
-              <el-option label="所有状态" value="" />
-              <el-option label="待填报" value="pending" />
-              <el-option label="未开始" value="upcoming" />
-              <el-option label="已填报" value="completed" />
-              <el-option label="已截止" value="expired" />
-            </el-select>
-            <el-button type="primary" icon="Search" @click="handleFilter">查询</el-button>
-            <el-button icon="Refresh" @click="resetFilter">重置</el-button>
-          </div>
-
-          <div class="toolbar-row">
-            <el-breadcrumb separator="/">
-              <el-breadcrumb-item @click="selectAllFolders">
-                <span class="crumb-link">全部任务</span>
-              </el-breadcrumb-item>
-              <el-breadcrumb-item v-for="item in selectedFolderCrumbs" :key="item.id">
-                <span class="crumb-link" @click="selectFolderById(item.id)">{{ item.name }}</span>
-              </el-breadcrumb-item>
-            </el-breadcrumb>
-
-            <div class="toolbar-meta">
-              <el-tag v-if="selectedFolderLabel" type="info" effect="plain" round>当前目录：{{ selectedFolderLabel }}</el-tag>
-              <el-tag type="success" effect="plain" round>任务数：{{ filteredTasks.length }}</el-tag>
+          <div class="view-header">
+            <div class="view-header-left">
+              <div class="view-title-row">
+                <span class="view-title">{{ selectedFolderId ? selectedFolderLabel : '全部任务' }}</span>
+                <el-tag type="success" effect="plain" round size="small" class="count-tag">
+                  共 {{ filteredTasks.length }} 个任务
+                </el-tag>
+              </div>
+            </div>
+            
+            <div class="view-header-right">
+              <div class="search-bar-integrated">
+                <el-input
+                  v-model="searchQuery"
+                  placeholder="搜索模板名称..."
+                  prefix-icon="Search"
+                  clearable
+                  class="search-input-compact"
+                  @keyup.enter="handleFilter"
+                  @clear="handleFilter"
+                />
+                <el-select v-model="statusFilter" placeholder="状态" clearable class="status-select-compact">
+                  <el-option label="所有状态" value="" />
+                  <el-option label="待填报" value="pending" />
+                  <el-option label="未开始" value="upcoming" />
+                  <el-option label="已填报" value="completed" />
+                  <el-option label="已截止" value="expired" />
+                </el-select>
+                <el-button type="primary" @click="handleFilter">查询</el-button>
+                <el-button @click="resetFilter">重置</el-button>
+                <div class="divider"></div>
+                <el-button link type="primary" icon="Refresh" @click="loadTasks">刷新</el-button>
+              </div>
             </div>
           </div>
 
           <el-card class="table-card" shadow="never">
-            <el-table :data="paginatedTasks" style="width: 100%" v-loading="loading" stripe>
-          <el-table-column prop="name" label="模板名称" min-width="300">
-            <template #default="scope">
-              <div class="form-name-cell">
-                <el-icon class="form-icon" style="color: #64748b;"><Document /></el-icon>
-                <span class="name-text" style="font-size: 15px;">{{ scope.row.name }}</span>
-              </div>
-            </template>
-          </el-table-column>
+            <el-table 
+              :data="paginatedTasks" 
+              style="width: 100%" 
+              v-loading="loading"
+              row-class-name="modern-table-row"
+            >
+              <el-table-column prop="name" label="模板名称" min-width="220">
+                <template #default="scope">
+                  <div class="form-name-cell">
+                    <div class="icon-avatar">
+                      <el-icon><Document /></el-icon>
+                    </div>
+                    <span class="name-text">{{ scope.row.name }}</span>
+                  </div>
+                </template>
+              </el-table-column>
 
-          <el-table-column prop="folderPath" label="所属目录" min-width="220">
-            <template #default="scope">
-              <span class="folder-path-text">{{ scope.row.folderPath || '默认' }}</span>
-            </template>
-          </el-table-column>
+              <el-table-column prop="folderPath" label="所属目录" min-width="120">
+                <template #default="scope">
+                  <div class="folder-path-cell">
+                    <el-icon size="12"><Folder /></el-icon>
+                    <span class="folder-path-text">{{ scope.row.folderPath || '默认' }}</span>
+                  </div>
+                </template>
+              </el-table-column>
 
-          <el-table-column label="任务详情" min-width="320">
-            <template #default="scope">
-              <div class="task-info-cell">
-                <div class="status-tag-wrapper">
-                  <el-tag
-                    :type="scope.row.taskStatus === 'pending' ? 'warning' : (scope.row.taskStatus === 'upcoming' ? 'info' : (scope.row.taskStatus === 'completed' ? 'success' : 'danger'))"
-                    effect="light"
-                    round
+              <el-table-column label="任务详情" min-width="320">
+                <template #default="scope">
+                  <div class="task-info-cell">
+                    <div class="status-tag-wrapper">
+                      <el-tag
+                        :type="scope.row.taskStatus === 'pending' ? 'warning' : (scope.row.taskStatus === 'upcoming' ? 'info' : (scope.row.taskStatus === 'completed' ? 'success' : 'danger'))"
+                        effect="light"
+                        round
+                        size="small"
+                        class="info-status-tag"
+                      >
+                        {{ scope.row.taskStatus === 'pending' ? '待填报' : (scope.row.taskStatus === 'upcoming' ? '未开始' : (scope.row.taskStatus === 'completed' ? '已填报' : '已截止')) }}
+                      </el-tag>
+                    </div>
+                    
+                    <div class="detail-info">
+                      <template v-if="scope.row.taskStatus === 'pending'">
+                        <span class="main-info countdown">
+                          <el-icon><AlarmClock /></el-icon>
+                          剩余: {{ formatTimeLeft(scope.row.secondsLeft) }}
+                        </span>
+                        <span class="sub-text">截止日期: {{ scope.row.deadline ? new Date(scope.row.deadline).toLocaleString() : '长期有效' }}</span>
+                      </template>
+
+                      <template v-else-if="scope.row.taskStatus === 'upcoming'">
+                        <span class="main-info">
+                          <el-icon><Calendar /></el-icon>
+                          预计状态: {{ formatTimeLeft(scope.row.secondsUntilStart) }} 后开启
+                        </span>
+                        <span class="sub-text">开启时间: {{ scope.row.startTimeOfCycle ? new Date(scope.row.startTimeOfCycle).toLocaleString() : '' }}</span>
+                      </template>
+
+                      <template v-else-if="scope.row.taskStatus === 'completed'">
+                        <template v-if="scope.row.nextFillTime">
+                          <span class="main-info success">
+                            <el-icon><Calendar /></el-icon>
+                            下次周期: {{ new Date(scope.row.nextFillTime).toLocaleString() }}
+                          </span>
+                          <span v-if="scope.row.lastSubmitTime" class="sub-text">
+                            最近提交: {{ new Date(scope.row.lastSubmitTime).toLocaleString() }}
+                          </span>
+                        </template>
+                        <template v-else>
+                          <span class="main-info">
+                            <el-icon><Check /></el-icon>
+                            完成于: {{ scope.row.lastSubmitTime ? new Date(scope.row.lastSubmitTime).toLocaleString() : '---' }}
+                          </span>
+                        </template>
+                      </template>
+                      
+                      <template v-else>
+                        <span class="main-info expired">
+                          <el-icon><CircleClose /></el-icon>
+                          截止于: {{ new Date(scope.row.deadline).toLocaleString() }}
+                        </span>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+              </el-table-column>
+
+              <el-table-column label="操作" width="140" align="right" fixed="right">
+                <template #default="scope">
+                  <el-button 
+                    :type="scope.row.taskStatus === 'pending' ? 'primary' : 'info'" 
                     size="small"
+                    :icon="scope.row.taskStatus === 'pending' ? 'Edit' : 'View'"
+                    round
+                    @click="$router.push(`/fill/${scope.row.formId}`)"
                   >
-                    {{ scope.row.taskStatus === 'pending' ? '待填报' : (scope.row.taskStatus === 'upcoming' ? '未开始' : (scope.row.taskStatus === 'completed' ? '已填报' : '已截止')) }}
-                  </el-tag>
-                </div>
-                
-                <div class="detail-info">
-                  <template v-if="scope.row.taskStatus === 'pending'">
-                    <span class="main-info countdown">
-                      <el-icon><AlarmClock /></el-icon>
-                      剩余: {{ formatTimeLeft(scope.row.secondsLeft) }}
-                    </span>
-                    <span class="sub-text">截止日期: {{ scope.row.deadline ? new Date(scope.row.deadline).toLocaleString() : '长期有效' }}</span>
-                  </template>
-
-                  <template v-else-if="scope.row.taskStatus === 'upcoming'">
-                    <span class="main-info">
-                      <el-icon><Calendar /></el-icon>
-                      预计开始: {{ formatTimeLeft(scope.row.secondsUntilStart) }} 后
-                    </span>
-                    <span class="sub-text">开启时间: {{ scope.row.startTimeOfCycle ? new Date(scope.row.startTimeOfCycle).toLocaleString() : '' }}</span>
-                  </template>
-
-                  <template v-else-if="scope.row.taskStatus === 'completed'">
-                    <template v-if="scope.row.nextFillTime">
-                      <span class="main-info" style="color: #059669;">
-                        <el-icon><Calendar /></el-icon>
-                        下次填报: {{ new Date(scope.row.nextFillTime).toLocaleString() }}
-                      </span>
-                      <span v-if="scope.row.lastSubmitTime" class="sub-text">
-                        最近提交: {{ new Date(scope.row.lastSubmitTime).toLocaleString() }}
-                      </span>
-                    </template>
-                    <template v-else>
-                      <span class="main-info">
-                        <el-icon><Check /></el-icon>
-                        完成于: {{ scope.row.lastSubmitTime ? new Date(scope.row.lastSubmitTime).toLocaleString() : '---' }}
-                      </span>
-                    </template>
-                  </template>
-                  
-                  <template v-else>
-                    <span class="main-info expired">
-                      <el-icon><CircleClose /></el-icon>
-                      截止于: {{ new Date(scope.row.deadline).toLocaleString() }}
-                    </span>
-                  </template>
-                </div>
-              </div>
-            </template>
-          </el-table-column>
-
-          <el-table-column label="操作" width="160" align="right" fixed="right">
-            <template #default="scope">
-              <el-button 
-                :type="scope.row.taskStatus === 'pending' ? 'primary' : 'default'" 
-                size="small"
-                icon="Edit"
-                plain
-                @click="$router.push(`/fill/${scope.row.formId}`)"
-              >
-                {{ scope.row.taskStatus === 'pending' ? '立即填报' : '查看/修改' }}
-              </el-button>
-            </template>
-          </el-table-column>
+                    {{ scope.row.taskStatus === 'pending' ? '立即填报' : '查看/修改' }}
+                  </el-button>
+                </template>
+              </el-table-column>
             </el-table>
 
             <div class="pagination-container">
@@ -197,11 +207,11 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, inject, computed } from 'vue'
+import { ref, onMounted, onUnmounted, watch, inject, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
-import { Document, Folder, Edit, Calendar, Search, Refresh, AlarmClock, Check, CircleClose } from '@element-plus/icons-vue'
+import { Document, Folder, Edit, Calendar, Search, Refresh, AlarmClock, Check, CircleClose, View } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -333,18 +343,33 @@ const handlePaginationChange = () => {
   // purely distinct frontend pagination, computed handles it automatically
 }
 
-onMounted(() => {
-  if (userEmail.value) {
-    loadFolders()
-    loadTasks()
-  }
-})
-
 watch(userEmail, (newEmail) => {
   if (newEmail) {
     loadFolders()
     loadTasks()
   }
+})
+
+let timer = null
+onMounted(() => {
+  if (userEmail.value) {
+    loadFolders()
+    loadTasks()
+  }
+  timer = setInterval(() => {
+    allTasks.value.forEach(task => {
+      if (task.secondsLeft !== undefined && task.secondsLeft > 0) {
+        task.secondsLeft--
+      }
+      if (task.secondsUntilStart !== undefined && task.secondsUntilStart > 0) {
+        task.secondsUntilStart--
+      }
+    })
+  }, 1000)
+})
+
+onUnmounted(() => {
+  if (timer) clearInterval(timer)
 })
 
 const selectAllFolders = () => {
@@ -372,10 +397,12 @@ const formatTimeLeft = (seconds) => {
   const days = Math.floor(seconds / 86400)
   const hours = Math.floor((seconds % 86400) / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
+  const secs = Math.floor(seconds % 60)
   
   if (days > 0) return `${days}天 ${hours}小时`
-  if (hours > 0) return `${hours}小时 ${minutes}分钟`
-  return `${minutes}分钟`
+  if (hours > 0) return `${hours}小时 ${minutes}分 ${secs}秒`
+  if (minutes > 0) return `${minutes}分钟 ${secs}秒`
+  return `${secs}秒`
 }
 </script>
 
@@ -398,31 +425,39 @@ const formatTimeLeft = (seconds) => {
 }
 
 .folder-card {
-  width: 260px;
+  width: 280px;
   flex-shrink: 0;
-  border-radius: 14px;
+  border-radius: 16px;
   overflow: hidden;
+  border: 1px solid #f1f5f9;
+  background: white;
+  transition: all 0.3s;
+}
+
+.folder-card:hover {
+  box-shadow: 0 12px 24px -10px rgba(15, 23, 42, 0.1);
 }
 
 .folder-card-header {
-  margin-bottom: 12px;
+  padding: 16px 12px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  margin-bottom: 8px;
 }
 
 .folder-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
-  color: #0f172a;
+  color: #1e293b;
+  letter-spacing: 0.5px;
 }
 
 .folder-subtitle {
-  font-size: 11px;
-  color: #94a3b8;
-  margin-top: 2px;
+  display: none; /* 精简 UI */
 }
 
 .folder-tree-panel {
-  min-height: 480px;
-  max-height: 480px;
+  padding: 0 12px 20px;
+  max-height: calc(100vh - 240px);
   overflow-y: auto;
 }
 
@@ -430,19 +465,25 @@ const formatTimeLeft = (seconds) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
-  border-radius: 8px;
+  padding: 10px 14px;
   cursor: pointer;
-  color: #334155;
-  background: #f8fafc;
-  margin-bottom: 8px;
-  transition: all 0.2s ease;
-  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 4px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-size: 13.5px;
+  border-radius: 8px;
+}
+
+.folder-all-item:hover {
+  background: #f1f5f9;
+  color: #0f172a;
 }
 
 .folder-all-item.active {
-  color: var(--primary-color);
-  background: rgba(64, 158, 255, 0.08);
+  color: white;
+  font-weight: 600;
+  background: var(--primary-color);
+  box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.2);
 }
 
 .folder-node {
@@ -459,7 +500,7 @@ const formatTimeLeft = (seconds) => {
 .folder-node-main {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -472,63 +513,115 @@ const formatTimeLeft = (seconds) => {
 .folder-node-name {
   display: block;
   flex: 1;
-  font-size: 13px;
+  font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: #334155;
 }
 
 .content-panel {
   flex: 1;
   min-width: 0;
+  width: 0;
+  padding-bottom: 24px;
 }
 
-.filter-bar {
-  display: flex;
-  gap: 16px;
-  margin-bottom: 16px;
-  background: white;
-  padding: 16px;
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-  border: 1px solid #f1f5f9;
-}
-
-.search-input {
-  width: 320px;
-}
-
-.status-select {
-  width: 160px;
-}
-
-.toolbar-row {
+.view-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  height: 64px;
   margin-bottom: 16px;
+  padding: 0 4px;
 }
 
-.toolbar-meta {
+.view-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.view-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: #1e293b;
+  letter-spacing: -0.5px;
+}
+
+.count-tag {
+  font-weight: 600;
+  border: none;
+  background: #f0fdf4;
+}
+
+.search-bar-integrated {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  background: white;
+  padding: 4px;
+  border-radius: 12px;
 }
 
-.crumb-link {
-  cursor: pointer;
-  color: #475569;
+.search-input-compact {
+  width: 240px;
 }
 
-.crumb-link:hover {
-  color: var(--primary-color);
+.search-input-compact :deep(.el-input__wrapper) {
+  box-shadow: none !important;
+  background: #f1f5f9;
+  border-radius: 8px;
+}
+
+.status-select-compact {
+  width: 110px;
+}
+
+.status-select-compact :deep(.el-input__wrapper) {
+  box-shadow: none !important;
+  background: #f1f5f9;
+  border-radius: 8px;
+}
+
+.divider {
+  width: 1px;
+  height: 20px;
+  background: #e2e8f0;
+  margin: 0 4px;
 }
 
 .table-card {
-  padding: 8px;
-  border-radius: 12px;
+  border-radius: 16px;
+  border: 1px solid #f1f5f9;
+  box-shadow: 0 4px 20px -5px rgba(15, 23, 42, 0.04);
+  padding: 4px;
+}
+
+.modern-table-row {
+  transition: background-color 0.2s;
+}
+
+.modern-table-row:hover {
+  background-color: #f8fafc !important;
+}
+
+.icon-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.modern-table-row:hover .icon-avatar {
+  background: #e2e8f0;
+  color: var(--primary-color);
 }
 
 .form-name-cell {
@@ -537,70 +630,60 @@ const formatTimeLeft = (seconds) => {
   gap: 12px;
 }
 
-.form-icon {
-  font-size: 20px;
-  color: #94a3b8;
-}
-
 .name-text {
   font-weight: 600;
-  color: #334155;
+  color: #1e293b;
+  font-size: 15px;
 }
 
-.folder-path-text {
-  color: #475569;
-}
-
-.table-code {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  background: #f1f5f9;
-  padding: 4px 8px;
-  border-radius: 4px;
+.folder-path-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #64748b;
   font-size: 13px;
-  color: #475569;
 }
 
 .task-info-cell {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
 }
 
 .status-tag-wrapper {
   flex-shrink: 0;
-  width: 70px;
+  width: 80px;
+}
+
+.info-status-tag {
+  width: 100%;
+  justify-content: center;
+  border: none;
 }
 
 .detail-info {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
 }
 
 .main-info {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   color: #334155;
 }
 
-.main-info.countdown {
-  color: #d97706;
-}
-
-.main-info.expired {
-  color: #ef4444;
-}
+.main-info.countdown { color: #d97706; }
+.main-info.expired { color: #ef4444; }
+.main-info.success { color: #10b981; }
 
 .sub-text {
-  font-size: 11px;
+  font-size: 12px;
   color: #94a3b8;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .pagination-container {
@@ -610,30 +693,12 @@ const formatTimeLeft = (seconds) => {
   padding: 0 8px;
 }
 
-:deep(.el-table__header) {
+:deep(.el-table__header-wrapper th) {
   background-color: #f8fafc;
-}
-
-:deep(.el-tree-node__content) {
-  min-height: 34px;
-  border-radius: 6px;
-  padding-right: 6px;
-}
-
-:deep(.el-tree) {
-  overflow-x: hidden;
-}
-
-:deep(.el-tree-node) {
-  overflow: hidden;
-}
-
-:deep(.el-tree-node > .el-tree-node__content) {
-  overflow: hidden;
-}
-
-:deep(.el-tree .el-scrollbar__wrap) {
-  overflow-x: hidden !important;
+  color: #475569;
+  font-weight: 600;
+  font-size: 13px;
+  height: 48px;
 }
 
 @media (max-width: 1280px) {
@@ -646,8 +711,7 @@ const formatTimeLeft = (seconds) => {
     margin-bottom: 16px;
   }
   .folder-tree-panel {
-    min-height: 200px;
-    max-height: 200px;
+    max-height: 240px;
   }
 }
 

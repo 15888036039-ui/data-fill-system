@@ -66,7 +66,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Calendar, AlarmClock, RefreshRight, ArrowRight } from '@element-plus/icons-vue'
 
@@ -112,15 +112,34 @@ const formatDate = (date) => {
   })
 }
 
+let timer = null
+onMounted(() => {
+  timer = setInterval(() => {
+    props.tasks.forEach(task => {
+      if (task.secondsLeft !== undefined && task.secondsLeft > 0) {
+        task.secondsLeft--
+      }
+      if (task.secondsUntilStart !== undefined && task.secondsUntilStart > 0) {
+        task.secondsUntilStart--
+      }
+    })
+  }, 1000)
+})
+onUnmounted(() => {
+  if (timer) clearInterval(timer)
+})
+
 const formatTimeLeft = (seconds) => {
   if (seconds <= 0) return '已到期'
   const days = Math.floor(seconds / 86400)
   const hours = Math.floor((seconds % 86400) / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
+  const secs = Math.floor(seconds % 60)
   
   if (days > 0) return `${days}天 ${hours}小时`
-  if (hours > 0) return `${hours}小时 ${minutes}分`
-  return `${minutes}分钟`
+  if (hours > 0) return `${hours}小时 ${minutes}分 ${secs}秒`
+  if (minutes > 0) return `${minutes}分钟 ${secs}秒`
+  return `${secs}秒`
 }
 
 const goToFill = (formId) => {

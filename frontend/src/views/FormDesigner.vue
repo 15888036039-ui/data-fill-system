@@ -13,8 +13,8 @@
       </div>
       <div class="header-actions">
         <el-button @click="$router.push('/forms')" class="btn-cancel">取消并返回</el-button>
-        <el-button v-if="!isEditMode" type="primary" size="large" icon="Platform" @click="submitFormAndCreateTable">{{ bindExistingTableMode ? '确认绑定并发布' : '创建并发布模板' }}</el-button>
-        <el-button v-else type="primary" size="large" icon="Check" @click="updateFormMeta">完成并保存</el-button>
+        <el-button v-if="!isEditMode" type="primary" icon="Platform" @click="submitFormAndCreateTable">{{ bindExistingTableMode ? '确认绑定并发布' : '创建并发布模板' }}</el-button>
+        <el-button v-else type="primary" icon="Check" @click="updateFormMeta">完成并保存</el-button>
       </div>
     </div>
 
@@ -410,7 +410,10 @@
                 </el-table-column>
                 <el-table-column label="中文显示名" min-width="180">
                   <template #default="scope">
-                    <el-input v-model="scope.row.name" placeholder="字段标题" />
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <el-input v-model="scope.row.name" placeholder="字段标题" />
+                      <el-tag v-if="scope.row.systemLocked" size="small" type="info" effect="plain" style="flex-shrink: 0;">系统</el-tag>
+                    </div>
                   </template>
                 </el-table-column>
                 <el-table-column label="物理列名 (英文)" min-width="180">
@@ -481,7 +484,18 @@
                 </el-table-column>
                 <el-table-column label="操作" width="80" align="center">
                   <template #default="scope">
-                    <el-button type="danger" icon="Delete" circle plain @click="removeField(scope.$index)" />
+                    <el-tooltip :content="scope.row.systemLocked ? '系统锁定字段不可删除' : '删除字段'" placement="top">
+                      <span>
+                        <el-button 
+                          type="danger" 
+                          icon="Delete" 
+                          circle 
+                          plain 
+                          @click="removeField(scope.$index)" 
+                          :disabled="scope.row.systemLocked" 
+                        />
+                      </span>
+                    </el-tooltip>
                   </template>
                 </el-table-column>
              </el-table>
@@ -1064,15 +1078,27 @@ const inspectExistingTable = async () => {
     
     // 后端返回的是 ExcelParseResult 对象，其 fields 属性才是字段数组
     if (res.data && res.data.fields && res.data.fields.length > 0) {
-      fields.value = res.data.fields.map(f => ({
+      // 1. 映射字段并设置系统锁定状态
+      let mappedFields = res.data.fields.map(f => ({
         _uid: _fieldUidCounter++,
         ...f,
         required: f.required || false,
         filterable: f.filterable || false,
         hideInForm: f.hideInForm || false,
         hideInList: f.hideInList || false,
-        systemLocked: (f.columnName || '').toLowerCase() === 'id'
+        systemLocked: isSystemManagedField(f)
       }))
+      
+      // 2. 排序：将 id 放在第一行，其余按原顺序
+      mappedFields.sort((a, b) => {
+        const aName = (a.columnName || '').toLowerCase()
+        const bName = (b.columnName || '').toLowerCase()
+        if (aName === 'id') return -1
+        if (bName === 'id') return 1
+        return 0
+      })
+      
+      fields.value = mappedFields
       
       formMeta.tableName = existingTableForm.tableName
       formMeta.schemaName = existingTableForm.schemaName
@@ -1195,7 +1221,7 @@ const finalizeFields = () => {
 
 const isSystemManagedField = (field) => {
   const reserved = [
-    'id', 'load_user', 'job_instance', 'extra_data',
+    'id', 'load_user', 'extra_data',
     'w_insert_dt', 'w_update_dt', 'delete_flag',
     'ctime', 'mtime', 'create_time', 'update_time', 'created_at', 'updated_at',
     'is_delete', 'deleted', 'del_flag', 'insert_time'
@@ -1236,7 +1262,7 @@ const applyParsedResults = (data) => {
     ElMessage.warning(`注意：该 Excel 包含 ${data.totalColumns} 列，系统仅识别了前 1000 列。`)
   }
   
-  fields.value = data.fields.map(f => {
+  let mappedFields = data.fields.map(f => {
     const row = {
       _uid: _fieldUidCounter++,
       ...f,
@@ -1248,7 +1274,7 @@ const applyParsedResults = (data) => {
       filterable: f.filterable || false,
       hideInForm: f.hideInForm || false,
       hideInList: f.hideInList || false,
-      systemLocked: (f.columnName || '').toLowerCase() === 'id'
+      systemLocked: isSystemManagedField(f)
     }
     if (!row.columnName) {
         row.columnName = generateColumnName(f.name)
@@ -1256,6 +1282,17 @@ const applyParsedResults = (data) => {
     handleDbTypeChange(row.dbType, row)
     return row
   })
+  
+  // 排序：将 id 放在第一行
+  mappedFields.sort((a, b) => {
+    const aName = (a.columnName || '').toLowerCase()
+    const bName = (b.columnName || '').toLowerCase()
+    if (aName === 'id') return -1
+    if (bName === 'id') return 1
+    return 0
+  })
+  
+  fields.value = mappedFields
     
   ElMessage.success(`成功识别出 ${fields.value.length} 个字段。`)
   if (!formMeta.name && lastFileName.value) {
@@ -1493,8 +1530,8 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 32px;
-  padding: 24px 0;
+  margin-bottom: 24px;
+  padding: 16px 0;
   background: white;
   z-index: 100;
   transition: all 0.3s;
@@ -1503,10 +1540,10 @@ onMounted(() => {
 .sticky-header {
   position: sticky;
   top: 0;
-  padding: 16px 0;
-  border-bottom: 1px solid #f1f5f9;
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(10px);
+  padding: 12px 0;
+  border-bottom: 2px solid #f8fafc;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px) saturate(180%);
 }
 
 .header-info {
@@ -1519,9 +1556,9 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: 12px;
   color: #94a3b8;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .breadcrumb-item {
@@ -1550,8 +1587,8 @@ onMounted(() => {
 }
 
 .page-title {
-  font-size: 28px;
-  font-weight: 900;
+  font-size: 22px;
+  font-weight: 800;
   color: #1e293b;
   margin: 0;
   letter-spacing: -0.5px;
@@ -1564,12 +1601,29 @@ onMounted(() => {
 }
 
 .config-sidebar {
-  width: 480px;
+  width: 400px;
   flex-shrink: 0;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sidebar-card {
+  border: 1px solid #f1f5f9;
+  border-radius: 12px;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.sidebar-card:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.02);
 }
 
 .fields-main {
   flex: 1;
+  min-width: 0; /* 防止表格撑开容器 */
+}
+
+.fields-card {
+  border: 1px solid #f1f5f9;
+  border-radius: 12px;
 }
 
 .form-row {
@@ -1580,11 +1634,30 @@ onMounted(() => {
 .section-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 16px;
+  gap: 10px;
+  font-size: 15px;
   font-weight: 700;
-  color: #334155;
-  margin-bottom: 20px;
+  color: #1e293b;
+  margin-bottom: 16px;
+  letter-spacing: 0.01em;
+}
+
+.meta-form :deep(.el-form-item__label) {
+  font-size: 13px;
+  font-weight: 500;
+  color: #64748b;
+  padding-bottom: 4px;
+}
+
+.meta-form :deep(.el-input__wrapper),
+.meta-form :deep(.el-textarea__wrapper) {
+  box-shadow: 0 0 0 1px #e2e8f0 inset;
+  transition: all 0.2s;
+  padding: 4px 12px;
+}
+
+.meta-form :deep(.el-input__wrapper.is-focus) {
+  box-shadow: 0 0 0 2px var(--el-color-primary-light-5) inset !important;
 }
 
 .section-title .el-icon {

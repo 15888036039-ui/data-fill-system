@@ -299,11 +299,13 @@ body {
 
 .app-header {
   height: var(--header-height);
-  background: white;
-  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(12px) saturate(180%);
+  border-bottom: 1px solid #f1f5f9;
   position: sticky;
   top: 0;
   z-index: 1000;
+  transition: all 0.3s;
 }
 
 .header-content {
@@ -322,10 +324,17 @@ body {
 }
 
 .nav-menu .el-menu-item {
-  font-size: 15px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
   color: #64748b;
-  border-bottom: 2px solid transparent !important;
+  border-bottom: 3px solid transparent !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  padding: 0 20px;
+}
+
+.nav-menu .el-menu-item:hover {
+  color: #0f172a !important;
+  background: transparent !important;
 }
 
 .nav-menu .el-menu-item.is-active {
@@ -368,9 +377,14 @@ body {
 
 /* Global Element Plus Overrides */
 .el-card {
-  border-radius: 12px !important;
-  border: 1px solid #e2e8f0 !important;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1) !important;
+  border-radius: 16px !important;
+  border: 1px solid #f1f5f9 !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05) !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.el-card:hover {
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05) !important;
 }
 
 .el-button--primary {

@@ -1,6 +1,7 @@
 package com.example.datafill.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -17,9 +18,9 @@ public class DataFillForm {
     private String name;        // 表单中文名
     @TableField("table_name")
     private String tableName;   // 要在数据库里创建的物理表名 (如 df_employee)
-    @TableField("table_comment")
+    @TableField(value = "table_comment", updateStrategy = FieldStrategy.IGNORED)
     private String tableComment; // 数据库表注释
-    @TableField("folder_id")
+    @TableField(value = "folder_id", updateStrategy = FieldStrategy.IGNORED)
     private String folderId;    // 所属目录ID，null 表示默认 (原未分类)
     private String forms;       // 字段定义的 JSON 字符串
 
@@ -38,21 +39,27 @@ public class DataFillForm {
     private String reminderMode;
 
     /** 当 reminderMode=MONTHLY 时，每月第几天（1-31），例如 10 代表每月10号 */
+    @TableField(updateStrategy = FieldStrategy.IGNORED)
     private Integer monthlyDay;
 
     /** 当 reminderMode=WEEKLY 时，每周第几天（1-7，1=周一...7=周日） */
+    @TableField(updateStrategy = FieldStrategy.IGNORED)
     private Integer weeklyDayOfWeek;
 
     /** 收件人邮箱列表的 JSON 数组字符串，如 ["a@xx.com","b@xx.com"] */
+    @TableField(updateStrategy = FieldStrategy.IGNORED)
     private String recipientEmails;
 
     /** 允许填报的用户邮箱列表 JSON 字符串，如 ["u1@xx.com","u2@xx.com"]，为空表示所有用户都能填报 */
+    @TableField(updateStrategy = FieldStrategy.IGNORED)
     private String fillUserEmails;
 
     /** 填报周期天数（例如 1=每天可填一次；7=每7天可填一次；为空或<=0 表示只需填报一次） */
+    @TableField(updateStrategy = FieldStrategy.IGNORED)
     private Integer cycleDays;
 
     /** 提醒时间（HH:mm），例如 09:00；为空时默认 09:00 */
+    @TableField(updateStrategy = FieldStrategy.IGNORED)
     private String reminderTime;
 
     /** 固定期限模式下的提醒发送时间*/
@@ -76,10 +83,11 @@ public class DataFillForm {
     private LocalDateTime updateTime;
 
     /** 键值对配对规则配置 (用于导入时识别 JSON 字段) */
+    @TableField(updateStrategy = FieldStrategy.IGNORED)
     private String kvConfig;
 
     /** 参考模板解析结果配置（用于回显表头映射、数据库字段参考等） */
-    @TableField("reference_template_config")
+    @TableField(value = "reference_template_config", updateStrategy = FieldStrategy.IGNORED)
     private String referenceTemplateConfig;
 
     /** 表单创建人 */
@@ -94,10 +102,11 @@ public class DataFillForm {
     private Boolean hardDelete;
 
     /** 分组标识（用于分链接展示，如 link_a, link_b） */
-    @TableField("group_tag")
+    @TableField(value = "group_tag", updateStrategy = FieldStrategy.IGNORED)
     private String groupTag;
 
     /** 基于业务或填报规范的描述说明（展示在填报页顶部） */
+    @TableField(updateStrategy = FieldStrategy.IGNORED)
     private String description;
 
     @TableField("is_external")

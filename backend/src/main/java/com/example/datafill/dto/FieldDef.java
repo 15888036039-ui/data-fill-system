@@ -24,4 +24,5 @@ public class FieldDef {
     private Integer maxLength;   // 最大长度 (仅文本与字段定义一致)
     private Boolean hideInForm;  // 是否在填报模版/表单中隐藏
     private Boolean hideInList;  // 是否在列表展示中隐藏
+    private Boolean systemLocked; // 是否为系统锁定字段 (禁止修改列名或删除)
 }

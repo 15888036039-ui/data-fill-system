@@ -92,7 +92,7 @@
                    <div class="section-title"><el-icon><Reading /></el-icon> 3. 精准词典映射 (高优先级)</div>
                    <el-button type="success" size="small" icon="Plus" @click="addDictRow">添加词条</el-button>
                 </div>
-                <el-table :data="dwDictList" border stripe height="550" class="dict-table-compact">
+                <el-table :data="dwDictList" border height="550" class="dict-table-compact">
                   <el-table-column label="中文名称" prop="cn">
                     <template #default="scope">
                       <el-input v-model="scope.row.cn" size="small" placeholder="如：年龄" />
@@ -123,7 +123,7 @@
               <el-button type="success" size="small" icon="Plus" @click="addPairRow">添加配对基因</el-button>
             </div>
 
-            <el-table :data="kwPairsList" border stripe height="550">
+            <el-table :data="kwPairsList" border height="550">
               <el-table-column label="Key 特征列名 (键)" prop="key">
                 <template #default="scope">
                   <el-input v-model="scope.row.key" placeholder="如：description" />

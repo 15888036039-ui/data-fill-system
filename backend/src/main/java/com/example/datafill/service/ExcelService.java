@@ -70,7 +70,10 @@ public class ExcelService {
 
     private static final java.util.Set<String> EXISTING_TABLE_SYSTEM_COLUMNS = new java.util.HashSet<>(
             java.util.Arrays.asList(
-                    "id", "load_user", "w_insert_dt", "w_update_dt", "delete_flag", "extra_data", "job_instance"));
+                    "id", "load_user", "extra_data",
+                    "w_insert_dt", "w_update_dt", "delete_flag",
+                    "ctime", "mtime", "create_time", "update_time", "created_at", "updated_at",
+                    "is_delete", "deleted", "del_flag", "insert_time"));
 
     private static final String[] INSERT_AUDIT_LEXICON = { "w_insert_dt", "ctime", "create_time", "created_at",
             "insert_time" };
@@ -683,7 +686,6 @@ public class ExcelService {
             importSystemColumns.add("applicantname");
             importSystemColumns.add("applicant_email");
             importSystemColumns.add("applicant_name");
-            importSystemColumns.add("job_instance");
 
             java.util.Set<String> businessFieldColumns = new java.util.HashSet<>();
             java.util.Map<String, String> requiredFieldDisplayByColumn = new java.util.LinkedHashMap<>();
@@ -1231,16 +1233,13 @@ public class ExcelService {
             List<String> row = rows.get(i);
             String firstCell = readCell(row, 0);
             String columnName = readCell(row, 1);
-            if ("功能".equalsIgnoreCase(firstCell)) {
+            if ("功能".equalsIgnoreCase(firstCell) || "说明".equalsIgnoreCase(firstCell) || "业务规则".equalsIgnoreCase(firstCell)) {
                 break;
             }
             if (isRowBlank(row)) {
-                if (!referenceRows.isEmpty()) {
-                    break;
-                }
                 continue;
             }
-            if (columnName == null || columnName.trim().isEmpty()) {
+            if (columnName == null || columnName.trim().isEmpty() || !columnName.trim().matches("^[a-zA-Z0-9_]+$")) {
                 continue;
             }
 
@@ -1254,10 +1253,7 @@ public class ExcelService {
             referenceRows.add(referenceRow);
 
             String normalizedColumnName = columnName.trim();
-            if (EXISTING_TABLE_SYSTEM_COLUMNS.contains(normalizedColumnName.toLowerCase())
-                    && !"extra_data".equalsIgnoreCase(normalizedColumnName)) {
-                continue;
-            }
+            boolean isSystem = EXISTING_TABLE_SYSTEM_COLUMNS.contains(normalizedColumnName.toLowerCase());
 
             FieldDef field = new FieldDef();
             field.setColumnName(normalizedColumnName);
@@ -1268,32 +1264,39 @@ public class ExcelService {
             String dbType = buildReferenceDbType(referenceRow.getFieldType(), referenceRow.getPrecision());
             field.setDbType(dbType);
             applyFieldTypeByDbType(field, dbType);
-            field.setRequired(isRequiredMark(referenceRow.getNotNull()));
+            field.setRequired(!isSystem && isRequiredMark(referenceRow.getNotNull()));
             field.setFilterable(filterColumnSet.contains(normalizedColumnName.toLowerCase()));
+            field.setSystemLocked(isSystem);
+            if (isSystem && !"extra_data".equalsIgnoreCase(normalizedColumnName)) {
+                field.setHideInForm(true);
+                field.setHideInList(true);
+            }
             fieldMap.putIfAbsent(normalizedColumnName.toLowerCase(), field);
         }
 
-        if (fieldMap.isEmpty()) {
-            for (com.example.datafill.dto.ReferenceFieldMapping mapping : headerMappings) {
-                if (mapping.getColumnName() == null || mapping.getColumnName().trim().isEmpty()) {
-                    continue;
-                }
-                if (EXISTING_TABLE_SYSTEM_COLUMNS.contains(mapping.getColumnName().toLowerCase())
-                        && !"extra_data".equalsIgnoreCase(mapping.getColumnName())) {
-                    continue;
-                }
-                fieldMap.computeIfAbsent(mapping.getColumnName().toLowerCase(), key -> {
-                    FieldDef field = new FieldDef();
-                    field.setColumnName(mapping.getColumnName());
-                    field.setOriginalColumnName(mapping.getColumnName());
-                    field.setName(mapping.getExcelHeader());
-                    field.setDbType(mapping.getColumnName().toLowerCase().endsWith("_json") ? "jsonb" : "varchar(255)");
-                    applyFieldTypeByDbType(field, field.getDbType());
-                    field.setRequired(false);
-                    field.setFilterable(filterColumnSet.contains(mapping.getColumnName().toLowerCase()));
-                    return field;
-                });
+        for (com.example.datafill.dto.ReferenceFieldMapping mapping : headerMappings) {
+            if (mapping.getColumnName() == null || mapping.getColumnName().trim().isEmpty()) {
+                continue;
             }
+            boolean isSystem = EXISTING_TABLE_SYSTEM_COLUMNS.contains(mapping.getColumnName().toLowerCase());
+            fieldMap.computeIfAbsent(mapping.getColumnName().toLowerCase(), key -> {
+                FieldDef field = new FieldDef();
+                field.setColumnName(mapping.getColumnName());
+                field.setOriginalColumnName(mapping.getColumnName());
+                field.setName(mapping.getExcelHeader() != null && !mapping.getExcelHeader().trim().isEmpty()
+                        ? mapping.getExcelHeader()
+                        : mapping.getColumnName());
+                field.setDbType(mapping.getColumnName().toLowerCase().endsWith("_json") ? "jsonb" : "varchar(255)");
+                applyFieldTypeByDbType(field, field.getDbType());
+                field.setRequired(false);
+                field.setFilterable(filterColumnSet.contains(mapping.getColumnName().toLowerCase()));
+                field.setSystemLocked(isSystem);
+                if (isSystem && !"extra_data".equalsIgnoreCase(mapping.getColumnName())) {
+                    field.setHideInForm(true);
+                    field.setHideInList(true);
+                }
+                return field;
+            });
         }
 
         List<com.example.datafill.dto.ExcelParseResult.DetectedPair> kvPairs = new ArrayList<>();
@@ -1314,6 +1317,78 @@ public class ExcelService {
         String tableComment = tableCommentRowIndex >= 0 ? readCell(rows.get(tableCommentRowIndex), 1) : "";
         if (tableName.trim().isEmpty()) {
             throw new RuntimeException("未识别到参考模板中的表名");
+        }
+
+        // --- 核心增强：自动补全缺失的系统审计字段 ---
+        java.util.Set<String> physicalColumns = new java.util.HashSet<>();
+        for (FieldDef f : fieldMap.values()) {
+            if (f.getColumnName() != null) physicalColumns.add(f.getColumnName().toLowerCase());
+        }
+
+        // 1. 强制补齐 id
+        if (!physicalColumns.contains("id")) {
+            FieldDef idField = new FieldDef();
+            idField.setColumnName("id");
+            idField.setOriginalColumnName("id");
+            idField.setName("ID");
+            idField.setDbType("int4");
+            idField.setType("number");
+            idField.setSystemLocked(true);
+            idField.setHideInForm(true);
+            idField.setHideInList(true);
+            fieldMap.put("id", idField);
+        }
+
+        // 2. 补齐标准审计列（w_insert_dt, w_update_dt, delete_flag, load_user）
+        // 不再使用 detectRole 动态拦截，而是只要物理列里没有显式的 w_insert_dt，就补齐一个；
+        // 如果已经有了，确保其在 fieldMap 中存在。
+        if (!physicalColumns.contains("w_insert_dt")) {
+            FieldDef f = new FieldDef();
+            f.setColumnName("w_insert_dt");
+            f.setOriginalColumnName("w_insert_dt");
+            f.setName("创建时间");
+            f.setDbType("timestamp");
+            f.setType("datetime");
+            f.setSystemLocked(true);
+            f.setHideInForm(true);
+            f.setHideInList(true);
+            fieldMap.put("w_insert_dt", f);
+        }
+        if (!physicalColumns.contains("w_update_dt")) {
+            FieldDef f = new FieldDef();
+            f.setColumnName("w_update_dt");
+            f.setOriginalColumnName("w_update_dt");
+            f.setName("更新时间");
+            f.setDbType("timestamp");
+            f.setType("datetime");
+            f.setSystemLocked(true);
+            f.setHideInForm(true);
+            f.setHideInList(true);
+            fieldMap.put("w_update_dt", f);
+        }
+        if (!physicalColumns.contains("delete_flag")) {
+            FieldDef f = new FieldDef();
+            f.setColumnName("delete_flag");
+            f.setOriginalColumnName("delete_flag");
+            f.setName("删除标记");
+            f.setDbType("boolean");
+            f.setType("boolean");
+            f.setSystemLocked(true);
+            f.setHideInForm(true);
+            f.setHideInList(true);
+            fieldMap.put("delete_flag", f);
+        }
+        if (!physicalColumns.contains("load_user") && !physicalColumns.contains("fill_user")) {
+            FieldDef f = new FieldDef();
+            f.setColumnName("load_user");
+            f.setOriginalColumnName("load_user");
+            f.setName("导入用户");
+            f.setDbType("varchar(100)");
+            f.setType("input");
+            f.setSystemLocked(true);
+            f.setHideInForm(true);
+            f.setHideInList(true);
+            fieldMap.put("load_user", f);
         }
 
         com.example.datafill.dto.ReferenceTemplateParseResult result = new com.example.datafill.dto.ReferenceTemplateParseResult();
@@ -1833,7 +1908,7 @@ public class ExcelService {
             }
 
             Set<String> usedColNames = new HashSet<>(java.util.Arrays.asList("id", "create_time", "delete_flag",
-                    "extra_data", "w_insert_dt", "w_update_dt", "load_user", "job_instance"));
+                    "extra_data", "w_insert_dt", "w_update_dt", "load_user"));
 
             Map<String, String> kwPairs = new HashMap<>();
             Map<String, List<Integer>> groupedBySuffix = new HashMap<>();
@@ -1988,7 +2063,7 @@ public class ExcelService {
                 "INNER JOIN pg_catalog.pg_class cls ON cls.relname = c.table_name AND cls.relnamespace = ns.oid " +
                 "LEFT JOIN pg_catalog.pg_description pgd ON pgd.objoid = cls.oid AND pgd.objsubid = c.ordinal_position " +
                 "WHERE c.table_schema = ? AND c.table_name = ? " +
-                "ORDER BY c.ordinal_position";
+                "ORDER BY (CASE WHEN c.column_name = 'id' THEN 0 ELSE 1 END), c.ordinal_position";
 
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, schemaName, tableName);
         if (rows.isEmpty()) {
@@ -2004,13 +2079,14 @@ public class ExcelService {
                 continue;
             }
             originalHeaders.add(columnName);
-            if (EXISTING_TABLE_SYSTEM_COLUMNS.contains(columnName.toLowerCase())) {
-                continue;
-            }
+            
+            boolean isSystem = EXISTING_TABLE_SYSTEM_COLUMNS.contains(columnName.toLowerCase());
 
             FieldDef field = new FieldDef();
             field.setColumnName(columnName);
             field.setOriginalColumnName(columnName);
+            field.setSystemLocked(isSystem);
+            
             String comment = asText(row.get("column_comment"));
             field.setName((comment != null && !comment.trim().isEmpty()) ? comment : columnName);
 
@@ -2018,11 +2094,19 @@ public class ExcelService {
             field.setDbType(dbType);
             applyFieldTypeByDbType(field, dbType);
 
-            String nullable = asText(row.get("is_nullable"));
-            field.setRequired("NO".equalsIgnoreCase(nullable));
-            field.setFilterable(businessIndex < 5);
+            if (isSystem) {
+                field.setRequired(false);
+                field.setFilterable(false);
+                field.setHideInForm(true);
+                field.setHideInList(true);
+            } else {
+                String nullable = asText(row.get("is_nullable"));
+                field.setRequired("NO".equalsIgnoreCase(nullable));
+                field.setFilterable(businessIndex < 3);
+                businessIndex++;
+            }
+            
             fields.add(field);
-            businessIndex++;
         }
 
         if (fields.isEmpty()) {
@@ -2100,7 +2184,7 @@ public class ExcelService {
             }
         }
         def.setRequired(false);
-        def.setFilterable(colIndex < 5 && s.nonBlankCount > 0);
+        def.setFilterable(colIndex < 3 && s.nonBlankCount > 0);
         return def;
     }
 
@@ -2120,16 +2204,16 @@ public class ExcelService {
         if ("text".equals(dataType)) {
             return "text";
         }
-        if ("integer".equals(dataType) || "int4".equals(udtName)) {
+        if ("integer".equals(dataType) || "int4".equals(dataType) || "int4".equals(udtName)) {
             return "int4";
         }
-        if ("bigint".equals(dataType) || "int8".equals(udtName)) {
+        if ("bigint".equals(dataType) || "int8".equals(dataType) || "int8".equals(udtName)) {
             return "int8";
         }
-        if ("smallint".equals(dataType) || "int2".equals(udtName)) {
+        if ("smallint".equals(dataType) || "int2".equals(dataType) || "int2".equals(udtName)) {
             return "int2";
         }
-        if ("boolean".equals(dataType) || "bool".equals(udtName)) {
+        if ("boolean".equals(dataType) || "bool".equals(dataType) || "bool".equals(udtName)) {
             return "bool";
         }
         if ("date".equals(dataType)) {

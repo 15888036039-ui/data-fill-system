@@ -36,7 +36,7 @@ public class DynamicDataDmlService {
 
     private static final java.util.Set<String> SYSTEM_FIELDS = new java.util.HashSet<>(Arrays.asList(
         "id", "load_user", "creator", "w_insert_dt", "w_update_dt", 
-        "create_time", "update_time", "delete_flag", "extra_data", "job_instance",
+        "create_time", "update_time", "delete_flag", "extra_data",
         "ctime", "mtime", "created_at", "updated_at"
     ));
 
@@ -490,6 +490,12 @@ public class DynamicDataDmlService {
                 args.add(now);
             }
         }
+        
+        if (hasColumn(physicalColumns, "delete_flag") && !rowData.containsKey("delete_flag")) {
+            columns.add("\"delete_flag\"");
+            placeholders.add("?");
+            args.add(false);
+        }
 
         for (Map.Entry<String, Object> entry : rowData.entrySet()) {
             String key = entry.getKey();
@@ -578,6 +584,7 @@ public class DynamicDataDmlService {
             if (hasColumn(physicalColumns, col)) columns.add("\"" + col + "\"");
         }
         if (hasColumn(physicalColumns, "load_user")) columns.add("\"load_user\"");
+        if (hasColumn(physicalColumns, "delete_flag")) columns.add("\"delete_flag\"");
 
         List<String> dataColumns = new ArrayList<>();
         List<String> dataColumnTypes = new ArrayList<>();
@@ -615,6 +622,7 @@ public class DynamicDataDmlService {
                             if (hasColumn(physicalColumns, col)) appendTsv(tsv, now);
                         }
                         if (hasColumn(physicalColumns, "load_user")) appendTsv(tsv, row.get("load_user") != null ? row.get("load_user") : row.get("creator"));
+                        if (hasColumn(physicalColumns, "delete_flag")) appendTsv(tsv, false);
 
                         for (int i = 0; i < dataColumns.size(); i++) {
                             String col = dataColumns.get(i);
@@ -767,7 +775,7 @@ public class DynamicDataDmlService {
         StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         List<Object> args = new ArrayList<>();
         if (hasColumn(physicalColumns, "delete_flag")) {
-            where.append(" AND (delete_flag IS NULL OR delete_flag = FALSE) ");
+            where.append(" AND \"delete_flag\" = FALSE ");
         }
         if (!isAdmin && userEmail != null && hasColumn(physicalColumns, "load_user")) {
             where.append(" AND (\"load_user\" = ? OR \"load_user\" IS NULL) ");
@@ -806,6 +814,16 @@ public class DynamicDataDmlService {
             String mode = form.getReminderMode();
             double remDays = form.getReminderDays() != null ? form.getReminderDays() : 3.0;
             LocalDateTime now = LocalDateTime.now();
+            
+            java.time.LocalTime rt = java.time.LocalTime.of(9, 0);
+            try {
+                if (form.getReminderTime() != null && !form.getReminderTime().trim().isEmpty()) {
+                    String[] parts = form.getReminderTime().split(":");
+                    int h = Integer.parseInt(parts[0]);
+                    int m = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
+                    rt = java.time.LocalTime.of(h, m);
+                }
+            } catch (Exception ignored) {}
 
             // 1. 查询用户最近一次填报时间 (与 getUserTasks 完全一致的探测逻辑)
             LocalDateTime lastSubmitTime = null;
@@ -831,28 +849,25 @@ public class DynamicDataDmlService {
             LocalDateTime nextFillTime = null;
 
             if ("WEEKLY".equalsIgnoreCase(mode) || "MONTHLY".equalsIgnoreCase(mode)) {
-                if (deadline != null) {
-                    java.time.LocalTime rt = java.time.LocalTime.of(9, 0);
-                    try {
-                        if (form.getReminderTime() != null && !form.getReminderTime().trim().isEmpty()) {
-                            String[] parts = form.getReminderTime().split(":");
-                            int h = Integer.parseInt(parts[0]);
-                            int m = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
-                            rt = java.time.LocalTime.of(h, m);
-                        }
-                    } catch (Exception ignored) {}
+                    LocalDateTime startTimeOfCycle = null;
+                    if (form.getReminderDateTime() != null) {
+                        startTimeOfCycle = form.getReminderDateTime().withNano(0);
+                    } else {
+                        startTimeOfCycle = deadline.minusHours((long) (remDays * 24)).with(rt).withNano(0);
+                    }
 
-                    LocalDateTime startTimeOfCycle = deadline.minusHours((long)(remDays * 24)).with(rt).withNano(0);
+                    boolean isUpcoming = now.isBefore(startTimeOfCycle);
+                    lockStatusMap.put("isUpcoming", isUpcoming);
+                    lockStatusMap.put("startTimeOfCycle", startTimeOfCycle);
 
                     if (lastSubmitTime != null && lastSubmitTime.isAfter(startTimeOfCycle)) {
                         completedCurrentCycle = true;
                         if ("WEEKLY".equalsIgnoreCase(mode)) {
                             nextFillTime = startTimeOfCycle.plusDays(7);
-                        } else {
+                        } else if ("MONTHLY".equalsIgnoreCase(mode)) {
                             nextFillTime = startTimeOfCycle.plusMonths(1);
                         }
                     }
-                }
             } else {
                 Integer cycleDays = form.getCycleDays();
                 if (cycleDays != null && cycleDays > 0 && lastSubmitTime != null) {
@@ -888,16 +903,12 @@ public class DynamicDataDmlService {
                     List<Object> sqlArgs = new ArrayList<>();
                     if (deadline != null && ("WEEKLY".equalsIgnoreCase(mode) || "MONTHLY".equalsIgnoreCase(mode))) {
                          // 计算本期开始时间
-                        java.time.LocalTime rt = java.time.LocalTime.of(9, 0);
-                        try {
-                            if (form.getReminderTime() != null && !form.getReminderTime().trim().isEmpty()) {
-                                String[] parts = form.getReminderTime().split(":");
-                                int h = Integer.parseInt(parts[0]);
-                                int m = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
-                                rt = java.time.LocalTime.of(h, m);
-                            }
-                        } catch (Exception ignored) {}
-                        LocalDateTime cycleStartTime = deadline.minusHours((long)(remDays * 24)).with(rt).withNano(0);
+                        LocalDateTime cycleStartTime = null;
+                        if (form.getReminderDateTime() != null) {
+                            cycleStartTime = form.getReminderDateTime().withNano(0);
+                        } else {
+                            cycleStartTime = deadline.minusHours((long) (remDays * 24)).with(rt).withNano(0);
+                        }
                         sql += " AND \"" + col + "\" >= ? ";
                         sqlArgs.add(cycleStartTime);
                     }
