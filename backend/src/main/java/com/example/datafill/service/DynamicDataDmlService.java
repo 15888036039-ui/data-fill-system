@@ -929,7 +929,7 @@ public class DynamicDataDmlService {
             boolean completedCurrentCycle = false;
             LocalDateTime nextFillTime = null;
 
-            if ("WEEKLY".equalsIgnoreCase(mode) || "MONTHLY".equalsIgnoreCase(mode)) {
+            if ("WEEKLY".equalsIgnoreCase(mode) || "MONTHLY".equalsIgnoreCase(mode) || "DEADLINE".equalsIgnoreCase(mode)) {
                     LocalDateTime startTimeOfCycle = null;
                     if (form.getReminderDateTime() != null) {
                         startTimeOfCycle = form.getReminderDateTime().withNano(0);
