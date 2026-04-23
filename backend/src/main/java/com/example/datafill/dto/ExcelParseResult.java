@@ -21,6 +21,9 @@ public class ExcelParseResult {
     private String detectedInsertDt;
     private String detectedUpdateDt;
     private String detectedDeleteFlag;
+    
+    private boolean hasIdConflict;
+    private String conflictMessage;
 
     @Data
     @NoArgsConstructor

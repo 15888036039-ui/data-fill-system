@@ -129,7 +129,7 @@
                     
                     <div class="detail-info">
                       <template v-if="scope.row.taskStatus === 'pending'">
-                        <span class="main-info countdown">
+                        <span v-if="scope.row.secondsLeft !== null && scope.row.secondsLeft !== undefined" class="main-info countdown">
                           <el-icon><AlarmClock /></el-icon>
                           剩余: {{ formatTimeLeft(scope.row.secondsLeft) }}
                         </span>
@@ -393,6 +393,7 @@ const findFolderIdByPath = (segments) => {
 }
 
 const formatTimeLeft = (seconds) => {
+  if (seconds === null || seconds === undefined) return ''
   if (seconds <= 0) return '已到期'
   const days = Math.floor(seconds / 86400)
   const hours = Math.floor((seconds % 86400) / 3600)

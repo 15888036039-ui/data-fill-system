@@ -29,10 +29,11 @@ public class DataFillForm {
 
     /** 填报截止时间（超过后默认不能再填报） */
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
+    @TableField(updateStrategy = FieldStrategy.IGNORED)
     private LocalDateTime deadline;
 
     /** 提前提醒天数（支持小数，如 0.5 代表提前 12 小时） */
-    @TableField("reminder_days")
+    @TableField(value = "reminder_days", updateStrategy = FieldStrategy.IGNORED)
     private Double reminderDays;
 
     /** 提醒策略：DEADLINE=按固定截止时间一次性；MONTHLY=每月某日；WEEKLY=每周某天 */
@@ -64,16 +65,16 @@ public class DataFillForm {
 
     /** 固定期限模式下的提醒发送时间*/
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
-    @TableField("reminder_date_time")
+    @TableField(value = "reminder_date_time", updateStrategy = FieldStrategy.IGNORED)
     private LocalDateTime reminderDateTime;
 
-    @TableField("deadline_monthly_day")
+    @TableField(value = "deadline_monthly_day", updateStrategy = FieldStrategy.IGNORED)
     private Integer deadlineMonthlyDay;
 
-    @TableField("deadline_weekly_day_of_week")
+    @TableField(value = "deadline_weekly_day_of_week", updateStrategy = FieldStrategy.IGNORED)
     private Integer deadlineWeeklyDayOfWeek;
 
-    @TableField("deadline_time")
+    @TableField(value = "deadline_time", updateStrategy = FieldStrategy.IGNORED)
     private String deadlineTime;
 
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")

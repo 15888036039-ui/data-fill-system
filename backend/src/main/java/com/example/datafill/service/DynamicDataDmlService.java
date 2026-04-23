@@ -3,7 +3,9 @@ package com.example.datafill.service;
 import com.example.datafill.dto.FieldDef;
 import com.example.datafill.entity.DataFillForm;
 import com.example.datafill.entity.UserFillLog;
+import com.example.datafill.entity.UserCompletionSnapshot;
 import com.example.datafill.mapper.DataFillFormMapper;
+import com.example.datafill.mapper.UserCompletionSnapshotMapper;
 import com.example.datafill.mapper.UserFillLogMapper;
 import com.example.datafill.util.SqlUtil;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -32,20 +34,21 @@ public class DynamicDataDmlService {
 
     private final ApprovalService approvalService;
     private final UserFillLogMapper userFillLogMapper;
+    private final UserCompletionSnapshotMapper snapshotMapper;
     private final ObjectMapper objectMapper;
 
     private static final java.util.Set<String> SYSTEM_FIELDS = new java.util.HashSet<>(Arrays.asList(
         "id", "load_user", "creator", "w_insert_dt", "w_update_dt", 
         "create_time", "update_time", "delete_flag", "extra_data",
-        "ctime", "mtime", "created_at", "updated_at"
+        "created_at", "updated_at"
     ));
 
     private static final java.util.Set<String> CREATION_FIELDS = new java.util.HashSet<>(Arrays.asList(
-        "w_insert_dt", "create_time", "ctime", "created_at"
+        "w_insert_dt", "create_time", "created_at"
     ));
 
     private static final java.util.Set<String> UPDATE_FIELDS = new java.util.HashSet<>(Arrays.asList(
-        "w_update_dt", "update_time", "mtime", "updated_at"
+        "w_update_dt", "update_time", "updated_at"
     ));
 
     private java.util.Map<String, String> loadPhysicalColumns(String schema, String table) {
@@ -285,6 +288,55 @@ public class DynamicDataDmlService {
 
         // 兜底：不暴露正则原文，不提联系管理员
         return "格式不符合要求";
+    }
+
+    /**
+     * 同步物理表状态到快照表，用于任务列表加速
+     */
+    public void refreshUserCompletionSnapshot(String userEmail, String formId) {
+        if (userEmail == null || userEmail.trim().isEmpty() || formId == null)
+            return;
+
+        DataFillForm form = formMapper.selectById(formId);
+        if (form == null || form.getTableName() == null)
+            return;
+
+        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName()
+                : "public";
+        String tableName = form.getTableName();
+        String col = (form.getInsertDtColumn() != null && !form.getInsertDtColumn().trim().isEmpty())
+                ? form.getInsertDtColumn().trim()
+                : "w_insert_dt";
+
+        String fullTable = SqlUtil.quoteTable(schema + "." + tableName);
+
+        try {
+            // 查询物理表中的最新时间和总数
+            String sql = String.format(
+                    "SELECT COUNT(1) as total, MAX(\"%s\") as last_time FROM %s WHERE \"load_user\" = ? AND \"delete_flag\" = FALSE",
+                    col, fullTable);
+
+            Map<String, Object> stats = jdbcTemplate.queryForMap(sql, userEmail);
+            Number totalNum = (Number) stats.get("total");
+            Object lastTimeObj = stats.get("last_time");
+            LocalDateTime lastTime = null;
+            if (lastTimeObj instanceof LocalDateTime) {
+                lastTime = (LocalDateTime) lastTimeObj;
+            } else if (lastTimeObj instanceof java.sql.Timestamp) {
+                lastTime = ((java.sql.Timestamp) lastTimeObj).toLocalDateTime();
+            }
+
+            UserCompletionSnapshot snap = new UserCompletionSnapshot();
+            snap.setUserEmail(userEmail);
+            snap.setFormId(formId);
+            snap.setCount(totalNum != null ? totalNum.intValue() : 0);
+            snap.setLastSubmitTime(lastTime);
+            snap.setUpdateTime(LocalDateTime.now());
+
+            snapshotMapper.upsert(snap);
+        } catch (Exception e) {
+            log.warn("同步填报状态快照失败, formId={}, user={}: {}", formId, userEmail, e.getMessage());
+        }
     }
 
     private Object convertValueForDb(Object val, String dbType) {
@@ -536,11 +588,12 @@ public class DynamicDataDmlService {
         }
 
         UserFillLog fillLog = new UserFillLog();
-        fillLog.setFormId(formId);
-        fillLog.setDataId(finalDataId);
         fillLog.setUserEmail(loadUser);
         fillLog.setSubmitTime(now);
         userFillLogMapper.insert(fillLog);
+
+        // 同步填报快照
+        refreshUserCompletionSnapshot(loadUser, formId);
     }
 
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
@@ -662,6 +715,17 @@ public class DynamicDataDmlService {
                 return null;
             } catch (Exception e) { throw new RuntimeException(e); }
         });
+
+        // 批量导入后，同步受影响用户的快照状态
+        Set<String> affectedUsers = new HashSet<>();
+        for (Map<String, Object> row : rows) {
+            Object u = row.get("load_user");
+            if (u == null) u = row.get("creator");
+            if (u != null) affectedUsers.add(u.toString());
+        }
+        for (String user : affectedUsers) {
+            refreshUserCompletionSnapshot(user, formId);
+        }
     }
 
     private void appendTsv(StringBuilder sb, Object val) {
@@ -763,6 +827,23 @@ public class DynamicDataDmlService {
                 updateSql = String.format("UPDATE %s SET %s WHERE \"%s\" = ?", SqlUtil.quoteTable(fullTableName), sets.toString(), pk);
             }
             jdbcTemplate.update(updateSql, args.toArray());
+
+            // 更新数据后同步快照
+            String affectedUser = rowData.containsKey("load_user") ? rowData.get("load_user").toString()
+                    : (rowData.containsKey("creator") ? rowData.get("creator").toString() : null);
+            
+            if (affectedUser == null) {
+                // 如果 rowData 没传 load_user，尝试从物理表反查当前记录的所属用户，确保快照同步
+                try {
+                    String checkSql = String.format("SELECT \"load_user\" FROM %s WHERE \"%s\" = ?", SqlUtil.quoteTable(fullTableName), pk);
+                    Object dbUser = jdbcTemplate.queryForObject(checkSql, Object.class, dataId);
+                    if (dbUser != null) affectedUser = dbUser.toString();
+                } catch (Exception ignored) {}
+            }
+
+            if (affectedUser != null) {
+                refreshUserCompletionSnapshot(affectedUser, formId);
+            }
         }
     }
 
@@ -973,6 +1054,17 @@ public class DynamicDataDmlService {
             convertedIds.add(convertValueForDb(id, pkType));
         }
 
+        // 删除前识别受影响的用户，以便后续同步快照
+        List<String> affectedUsers = new ArrayList<>();
+        try {
+            String psPlaceholder = String.join(",", dataIds.stream().map(i -> "?").toArray(String[]::new));
+            String querySql = String.format("SELECT DISTINCT \"load_user\" FROM %s WHERE \"%s\" IN (%s)", 
+                    SqlUtil.quoteTable(fullTableName), pk, psPlaceholder);
+            affectedUsers = jdbcTemplate.queryForList(querySql, String.class, convertedIds.toArray());
+        } catch (Exception e) {
+            log.warn("探测受影响用户失败: {}", e.getMessage());
+        }
+
         StringJoiner ps = new StringJoiner(",");
         for (int i = 0; i < dataIds.size(); i++) {
             if (pkType != null && !pkType.equals("text") && !pkType.equals("character varying")) {
@@ -986,6 +1078,11 @@ public class DynamicDataDmlService {
             jdbcTemplate.update(String.format("UPDATE %s SET delete_flag=TRUE WHERE \"%s\" IN (%s)", SqlUtil.quoteTable(fullTableName), pk, ps), convertedIds.toArray());
         } else {
             jdbcTemplate.update(String.format("DELETE FROM %s WHERE \"%s\" IN (%s)", SqlUtil.quoteTable(fullTableName), pk, ps), convertedIds.toArray());
+        }
+
+        // 删除后同步受影响用户的快照
+        for (String user : affectedUsers) {
+            refreshUserCompletionSnapshot(user, formId);
         }
     }
 
@@ -1008,10 +1105,24 @@ public class DynamicDataDmlService {
             args.add(operatorEmail);
         }
 
+        // 删除前探测受影响的用户
+        List<String> affectedUsers = new ArrayList<>();
+        try {
+            String querySql = String.format("SELECT DISTINCT \"load_user\" FROM %s %s", SqlUtil.quoteTable(fullTableName), where);
+            affectedUsers = jdbcTemplate.queryForList(querySql, String.class, args.toArray());
+        } catch (Exception e) {
+            log.warn("探测受影响用户失败: {}", e.getMessage());
+        }
+
         if (hasColumn(physicalColumns, "delete_flag") && !isHardDeleteMode) {
             jdbcTemplate.update(String.format("UPDATE %s SET delete_flag=TRUE %s", SqlUtil.quoteTable(fullTableName), where), args.toArray());
         } else {
             jdbcTemplate.update(String.format("DELETE FROM %s %s", SqlUtil.quoteTable(fullTableName), where), args.toArray());
+        }
+
+        // 删除后同步受影响用户的快照
+        for (String user : affectedUsers) {
+            if (user != null) refreshUserCompletionSnapshot(user, formId);
         }
     }
 

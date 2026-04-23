@@ -212,6 +212,18 @@ CREATE TABLE IF NOT EXISTS user_fill_log (
     update_time  TIMESTAMP
 );
 
+-- 4.6 用户填报状态快照表：user_completion_snapshot（用于加速任务列表查询）
+CREATE TABLE IF NOT EXISTS user_completion_snapshot (
+    user_email      VARCHAR(255),
+    form_id         VARCHAR(64),
+    last_submit_time TIMESTAMP,
+    count           INTEGER DEFAULT 0,
+    update_time     TIMESTAMP,
+    PRIMARY KEY (user_email, form_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ucs_user_email ON user_completion_snapshot(user_email);
+
+
 
 
 -- 4.5 零侵入操作日志表：operation_log（专门记录单行增删改与批量导入）

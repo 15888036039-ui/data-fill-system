@@ -434,7 +434,7 @@ public class DataFillController {
 
     @GetMapping("/inspectTable")
     public com.example.datafill.dto.ExcelParseResult inspectExistingTable(
-            @RequestParam(required = false, defaultValue = "public") String schemaName,
+            @RequestParam(required = false, defaultValue = "ods") String schemaName,
             @RequestParam String tableName) {
         return excelService.inspectExistingTable(schemaName, tableName);
     }
@@ -470,7 +470,7 @@ public class DataFillController {
 
     @PostMapping("/forms/repairTableByName")
     public Map<String, Object> repairTableByName(
-            @RequestParam(required = false, defaultValue = "public") String schemaName,
+            @RequestParam(required = false, defaultValue = "ods") String schemaName,
             @RequestParam String tableName,
             @RequestParam String userEmail,
             @RequestBody List<String> columns) {

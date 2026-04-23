@@ -18,4 +18,7 @@ public class ReferenceTemplateParseResult {
     private List<ReferenceTableColumn> referenceRows;
     private List<ExcelParseResult.DetectedPair> kvPairs;
     private String parserProfile;
+
+    private boolean hasIdConflict;
+    private String conflictMessage;
 }

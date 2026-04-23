@@ -310,8 +310,8 @@
               <el-icon><Grid /></el-icon> 表单字段定义
             </div>
             <div class="field-actions">
-              <el-button icon="Upload" plain @click="importDialogVisible = true" v-if="!isEditMode">从 Excel 导入结构</el-button>
-              <el-button icon="Tickets" plain @click="referenceTemplateDialogVisible = true" v-if="!isEditMode">导入参考模板</el-button>
+              <!-- <el-button icon="Upload" plain @click="importDialogVisible = true" v-if="!isEditMode">从 Excel 导入结构</el-button> -->
+              <el-button icon="Tickets" plain @click="referenceTemplateDialogVisible = true" v-if="!isEditMode">智能识别 Excel 模版</el-button>
               <el-button icon="Document" plain @click="existingTableDialogVisible = true" v-if="!isEditMode">从已有表识别</el-button>
               <el-button type="primary" plain icon="Plus" @click="addField">新增字段</el-button>
             </div>
@@ -343,6 +343,65 @@
               </div>
             </template>
           </el-alert>
+
+          <el-alert
+            v-if="isSimpleRename"
+            title="检测到字段名变更"
+            type="info"
+            show-icon
+            style="margin-bottom: 24px;"
+            :closable="false"
+          >
+            <template #default>
+              <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <span>检测到物理表字段 <code>{{ missingBusinessColumns[0] }}</code> 已更名为 <code>{{ untrackedBusinessColumns[0] }}</code>，系统可为您一键修复绑定。</span>
+                </div>
+                <el-button type="primary" size="small" @click="handleAutoRenameFix" :loading="isSyncingColumns" icon="Refresh">一键修复重命名</el-button>
+              </div>
+            </template>
+          </el-alert>
+
+          <el-alert
+            v-if="untrackedBusinessColumns.length > 0 && !isSimpleRename"
+            title="检测到物理表中存在未注册的列。系统可将其识别为新字段或与下方丢失字段重新绑定。"
+            type="warning"
+            show-icon
+            style="margin-bottom: 24px;"
+            :closable="false"
+          >
+            <template #default>
+              <div v-for="c in untrackedBusinessColumns" :key="c" style="margin-bottom: 8px; display: flex; align-items: center; gap: 12px;">
+                <el-tag size="small" type="warning">{{ c }}</el-tag>
+                <el-icon><Right /></el-icon>
+                <el-select v-model="untrackedMapping[c]" placeholder="作为新字段追加" size="small" style="width: 220px" clearable>
+                  <el-option label="作为新字段追加" value="__NEW__" />
+                  <el-option v-for="m in missingBusinessColumns" :key="m" :label="'替换/映射到丢失列: ' + m" :value="m" />
+                </el-select>
+              </div>
+              <el-button type="warning" size="small" @click="syncUntrackedColumns" icon="Refresh" :loading="isSyncingColumns" style="margin-top: 4px">执行同步/绑定</el-button>
+            </template>
+          </el-alert>
+
+          <el-alert
+            v-if="missingBusinessColumns.length > 0 && !isSimpleRename"
+            title="检测到配置中的部分业务字段在物理表中已丢失。这会导致填报提交失败！"
+            type="error"
+            show-icon
+            style="margin-bottom: 24px;"
+            :closable="false"
+          >
+            <template #default>
+              <div style="margin-bottom: 8px;">
+                丢失列：<el-tag size="small" type="danger" v-for="c in missingBusinessColumns" :key="c" style="margin-right: 4px">{{ c }}</el-tag>
+              </div>
+              <div style="display: flex; gap: 12px;">
+                <el-button type="primary" size="small" @click="repairMissingBusinessColumns" :loading="isRepairing">在数据库中重建丢失列</el-button>
+                <el-button type="danger" plain size="small" @click="removeMissingBusinessColumns" icon="Close">从配置中移除丢失列</el-button>
+              </div>
+            </template>
+          </el-alert>
+
           <el-alert
             v-if="isEditMode"
             title="当前处于元数据编辑模式。管理员可以修改业务字段；系统内置保留列将保持锁定或由内核自动管理。"
@@ -361,8 +420,18 @@
             <el-button type="primary" link @click="pairConfirmDialogVisible = true">查看记录</el-button>
           </div>
 
-          <div class="fields-list">
-             <el-table :data="fields" style="width: 100%" row-key="_uid">
+           <div class="fields-list">
+             <el-table :data="fields" style="width: 100%" row-key="_uid" :row-class-name="tableRowClassName">
+                <el-table-column width="40" align="center">
+                  <template #default="scope">
+                    <el-tooltip :content="scope.row.systemLocked ? '系统审计字段位置固定' : '按住拖拽排序'" placement="top">
+                      <span>
+                        <el-icon v-if="!scope.row.systemLocked" class="drag-handle" style="cursor: move; color: #94a3b8;"><Sort /></el-icon>
+                        <el-icon v-else style="color: #cbd5e1;"><Lock /></el-icon>
+                      </span>
+                    </el-tooltip>
+                  </template>
+                </el-table-column>
                 <el-table-column type="expand">
                   <template #default="props">
                     <div style="padding: 16px 24px; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0; margin: 8px;">
@@ -608,12 +677,12 @@
 
     <el-dialog
       v-model="referenceTemplateDialogVisible"
-      title="导入参考模板"
+      title="智能识别 Excel 模版"
       width="560px"
       destroy-on-close
       class="custom-dialog"
     >
-      <div class="import-config-body" v-loading="isParsingReferenceTemplate" element-loading-text="正在解析参考模板...">
+      <div class="import-config-body" v-loading="isParsingReferenceTemplate" element-loading-text="正在智能识别 Excel 模版...">
         <div class="upload-area">
           <el-upload
             drag
@@ -722,8 +791,9 @@
 import { reactive, ref, onMounted, inject, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Setting, Notification, Grid, User, Plus, Upload, Delete, Check, Platform, UploadFilled, InfoFilled, Connection, Tickets, Document, ArrowRight } from '@element-plus/icons-vue'
+import { Setting, Notification, Grid, User, Plus, Upload, Delete, Check, Refresh, Right, Platform, UploadFilled, InfoFilled, Connection, Tickets, Document, ArrowRight, Sort, Lock } from '@element-plus/icons-vue'
 import axios from 'axios'
+import Sortable from 'sortablejs'
 
 const router = useRouter()
 const route = useRoute()
@@ -733,7 +803,7 @@ const isEditMode = ref(!!route.params.id)
 
 const formMeta = reactive({
   name: '',
-  schemaName: 'public',
+  schemaName: 'ods',
   tableName: '',
   tableComment: '',
   folderId: '',
@@ -775,7 +845,7 @@ const isInspectingExistingTable = ref(false)
 const isParsingReferenceTemplate = ref(false)
 const bindExistingTableMode = ref(false)
 const existingTableForm = reactive({
-  schemaName: 'public',
+  schemaName: 'ods',
   tableName: ''
 })
 const importConfig = reactive({
@@ -791,10 +861,18 @@ const headerMappings = ref([])
 const referenceRows = ref([])
 const referenceParserProfile = ref('')
 const missingColumns = ref([])
+const untrackedBusinessColumns = ref([])
+const untrackedMapping = reactive({}) // 用于存储列映射关系
+const missingBusinessColumns = ref([])
 const isRepairing = ref(false)
+const isSyncingColumns = ref(false)
 
 const displayMissingColumns = computed(() => {
   return missingColumns.value
+})
+
+const isSimpleRename = computed(() => {
+  return untrackedBusinessColumns.value.length === 1 && missingBusinessColumns.value.length === 1
 })
 
 const parsedKvConfig = computed(() => {
@@ -828,6 +906,46 @@ const kvTargetColumnsText = computed(() => {
   return targets.slice(0, 2).join(', ') + ` 等${targets.length}个`
 })
 
+// 拖拽排序初始化
+const initDragSort = () => {
+  const el = document.querySelector('.fields-list .el-table__body-wrapper tbody')
+  if (!el) return
+  
+  Sortable.create(el, {
+    handle: '.drag-handle',
+    animation: 150,
+    ghostClass: 'drag-ghost',
+    onMove: (evt) => {
+      // 禁止移动到系统列的位置
+      if (evt.related.classList.contains('system-locked-row')) {
+        return false
+      }
+      return true
+    },
+    onEnd: (evt) => {
+      const { oldIndex, newIndex } = evt
+      if (oldIndex === newIndex) return
+      
+      // 物理 DOM 已经变了，需要手动同步 Vue 数组
+      // 为了精确同步，我们先根据 DOM 结构记录下新的顺序，或者直接操作数组
+      // 注意：eltable 渲染后 oldIndex/newIndex 对应的是 tbody 里的 tr 索引
+      const targetRow = fields.value.splice(oldIndex, 1)[0]
+      fields.value.splice(newIndex, 0, targetRow)
+      
+      // 强制刷新一次，防止 DOM 和数据不同步
+      const raw = [...fields.value]
+      fields.value = []
+      setTimeout(() => {
+        fields.value = raw
+      }, 0)
+    }
+  })
+}
+
+const tableRowClassName = ({ row }) => {
+  return row.systemLocked ? 'system-locked-row' : ''
+}
+
 // 数据库模式列表
 const availableSchemas = ref([])
 const schemaLoading = ref(false)
@@ -836,12 +954,13 @@ const loadSchemas = async () => {
   schemaLoading.value = true
   try {
     const res = await axios.get('/api/fill/schemas')
-    availableSchemas.value = res.data || ['public']
-    if (!availableSchemas.value.includes('public')) {
-      availableSchemas.value.unshift('public')
+    availableSchemas.value = res.data || []
+    if (!isEditMode.value && availableSchemas.value.length > 0) {
+      formMeta.schemaName = availableSchemas.value[0]
+      existingTableForm.schemaName = availableSchemas.value[0]
     }
   } catch (e) {
-    availableSchemas.value = ['public']
+    availableSchemas.value = []
   } finally {
     schemaLoading.value = false
   }
@@ -993,6 +1112,18 @@ const onFileChange = async (uploadFile) => {
     const res = await axios.post('/api/fill/forms/parseExcel', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
+    
+    // [新逻辑] 检查主键冲突
+    if (res.data.hasIdConflict) {
+      ElMessageBox.alert(
+        res.data.conflictMessage || '检测到 Excel 中已包含 id 字段。为了由系统统一管理主键并确保 COPY 导入性能，请管理员先删除 Excel 中的 id 列，然后再次上传识别。',
+        '物理表主键冲突',
+        { type: 'error', confirmButtonText: '知道了' }
+      )
+      importDialogVisible.value = false
+      return
+    }
+    
     bindExistingTableMode.value = false
     
     lastParseResult.value = res.data
@@ -1033,6 +1164,18 @@ const onReferenceTemplateFileChange = async (uploadFile) => {
     const res = await axios.post('/api/fill/forms/parseReferenceTemplate', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
+    
+    // [新逻辑] 检查主键冲突
+    if (res.data.hasIdConflict) {
+      ElMessageBox.alert(
+        res.data.conflictMessage || '检测到参考模板中已包含 id 字段。为保证系统自动分配主键，请管理员先在参考模板中移除该列，然后再次识别。',
+        '物理表主键冲突',
+        { type: 'error', confirmButtonText: '知道了' }
+      )
+      referenceTemplateDialogVisible.value = false
+      return
+    }
+    
     bindExistingTableMode.value = false
     formMeta.tableName = res.data.tableName || ''
     formMeta.tableComment = res.data.tableComment || ''
@@ -1062,20 +1205,34 @@ const onReferenceTemplateFileChange = async (uploadFile) => {
   }
 }
 
-const inspectExistingTable = async () => {
-  if (!existingTableForm.tableName) {
-    ElMessage.warning('请输入物理表名')
+const inspectExistingTable = async (sName, tName, silent = false) => {
+  const schemaName = (typeof sName === 'string') ? sName : existingTableForm.schemaName
+  const tableName = (typeof tName === 'string') ? tName : existingTableForm.tableName
+  if (!tableName) {
+    if (!sName) ElMessage.warning('请输入物理表名')
     return
   }
   isInspectingExistingTable.value = true
   try {
     const res = await axios.get('/api/fill/inspectTable', {
       params: { 
-        tableName: existingTableForm.tableName,
-        schemaName: existingTableForm.schemaName
+        tableName: tableName,
+        schemaName: schemaName
       }
     })
     
+    // [新逻辑] 检查主键冲突 (仅在非静默模式下弹出，补齐后的刷新应避开弹窗)
+    if (res.data.hasIdConflict && !silent) {
+      ElMessageBox.alert(
+        res.data.conflictMessage || '检测到物理表已存在 id 字段。为了由系统统一管理主键并确保 COPY 导入性能，请管理员先在数据库中删除或重命名物理表的 id 列，然后再次识别。',
+        '物理表主键冲突',
+        { type: 'error', confirmButtonText: '知道了' }
+      )
+      // 停止后续识别逻辑，强制用户去删列
+      isInspectingExistingTable.value = false
+      return
+    }
+
     // 后端返回的是 ExcelParseResult 对象，其 fields 属性才是字段数组
     if (res.data && res.data.fields && res.data.fields.length > 0) {
       // 1. 映射字段并设置系统锁定状态
@@ -1100,8 +1257,8 @@ const inspectExistingTable = async () => {
       
       fields.value = mappedFields
       
-      formMeta.tableName = existingTableForm.tableName
-      formMeta.schemaName = existingTableForm.schemaName
+      formMeta.tableName = tableName
+      formMeta.schemaName = schemaName
       bindExistingTableMode.value = true
       existingTableDialogVisible.value = false
       missingColumns.value = res.data.missingColumns || []
@@ -1113,13 +1270,13 @@ const inspectExistingTable = async () => {
       
       formMeta.pkColumn = 'id'
 
-      if (missingColumns.value.length > 0) {
+      if (missingColumns.value.length > 0 && !silent) {
         ElMessageBox.alert(
           `已识别表结构，但检测到物理表缺少审计列：[${missingColumns.value.join(', ')}]。建议先补齐审计列，否则删除和更新功能将受限。`,
           '配置风险提示',
           { type: 'warning', confirmButtonText: '知道了' }
         )
-      } else {
+      } else if (!silent) {
         ElMessage.success('已识别已有表结构，发布时将直接绑定该表')
       }
     } else {
@@ -1129,6 +1286,124 @@ const inspectExistingTable = async () => {
     ElMessage.error(e.response?.data?.message || '读取已有表结构失败')
   } finally {
     isInspectingExistingTable.value = false
+  }
+}
+
+const checkTableConsistency = async () => {
+  if (!formMeta.tableName) return
+  try {
+    const res = await axios.get('/api/fill/checkTable', {
+      params: { 
+        schemaName: formMeta.schemaName || 'public', 
+        tableName: formMeta.tableName 
+      }
+    })
+    missingColumns.value = res.data.missingColumns || []
+    untrackedBusinessColumns.value = res.data.untrackedBusinessColumns || []
+    missingBusinessColumns.value = res.data.missingBusinessColumns || []
+    
+    // 初始化映射建议
+    untrackedBusinessColumns.value.forEach(c => {
+      // 智能推断：如果库里多一个，配置里少一个，认为是重命名
+      if (untrackedBusinessColumns.value.length === 1 && missingBusinessColumns.value.length === 1) {
+        untrackedMapping[c] = missingBusinessColumns.value[0]
+      } else {
+        untrackedMapping[c] = '__NEW__'
+      }
+    })
+  } catch (e) {
+    console.warn('一致性检查失败', e)
+  }
+}
+
+const handleAutoRenameFix = async () => {
+  if (!isSimpleRename.value) return
+  // 由于 checkTableConsistency 已经预设了 untrackedMapping，这里直接调同步即可
+  await syncUntrackedColumns()
+}
+
+const syncUntrackedColumns = async () => {
+  if (untrackedBusinessColumns.value.length === 0) return
+  isSyncingColumns.value = true
+  try {
+    const res = await axios.get('/api/fill/inspectTable', {
+      params: { 
+        tableName: formMeta.tableName,
+        schemaName: formMeta.schemaName
+      }
+    })
+    
+    if (res.data && res.data.fields) {
+      const allNewFields = res.data.fields
+      const currentFields = [...fields.value]
+      let addedCount = 0
+      let updatedCount = 0
+
+      for (const col of untrackedBusinessColumns.value) {
+        const choice = untrackedMapping[col]
+        const colDef = allNewFields.find(f => (f.columnName || '').toLowerCase() === col.toLowerCase())
+        if (!colDef) continue
+
+        if (choice === '__NEW__' || !choice) {
+          // 作为新字段追加
+          currentFields.push({
+            _uid: _fieldUidCounter++,
+            ...colDef,
+            originalColumnName: colDef.columnName || '',
+            systemLocked: isSystemManagedField(colDef)
+          })
+          addedCount++
+        } else {
+          // 替换/绑定到现有字段 (处理重命名)
+          const targetIdx = currentFields.findIndex(f => (f.columnName || '').toLowerCase() === choice.toLowerCase())
+          if (targetIdx > -1) {
+             const oldField = currentFields[targetIdx]
+             currentFields[targetIdx] = {
+               ...oldField, // 保留原有的中文名、校验逻辑等
+               columnName: colDef.columnName, // 更新为库里真实的新物理列名
+               dbType: colDef.dbType
+             }
+             updatedCount++
+          }
+        }
+      }
+
+      fields.value = currentFields
+      ElMessage.success(`操作完成：新增 ${addedCount} 个，绑定重命名 ${updatedCount} 个。`)
+      untrackedBusinessColumns.value = []
+      missingBusinessColumns.value = []
+    }
+  } catch (e) {
+    ElMessage.error('同步失败: ' + (e.response?.data?.message || '网络异常'))
+  } finally {
+    isSyncingColumns.value = false
+  }
+}
+
+const removeMissingBusinessColumns = () => {
+  if (missingBusinessColumns.value.length === 0) return
+  const cols = new Set(missingBusinessColumns.value.map(c => c.toLowerCase()))
+  fields.value = fields.value.filter(f => {
+    const lmn = (f.columnName || '').toLowerCase()
+    return !cols.has(lmn)
+  })
+  missingBusinessColumns.value = []
+  ElMessage.success('已从页面配置中移除并同步状态')
+}
+
+const repairMissingBusinessColumns = async () => {
+  if (missingBusinessColumns.value.length === 0) return
+  isRepairing.value = true
+  try {
+    const res = await axios.post(`/api/fill/forms/${route.params.id}/repairTable?userEmail=${currentUser.value}`, missingBusinessColumns.value)
+    if (res.data.success && res.data.success.length > 0) {
+      ElMessage.success(`成功在库中重建字段: ${res.data.success.join(', ')}`)
+      checkTableConsistency() 
+    }
+  } catch (e) {
+    ElMessage.error('重建物理字段失败: ' + (e.response?.data?.message || '网络异常'))
+  } finally {
+    isRepairing.value = false
   }
 }
 
@@ -1154,10 +1429,11 @@ const repairTableColumns = async () => {
         url = `/api/fill/forms/repairTableByName?schemaName=${formMeta.schemaName}&tableName=${formMeta.tableName}&userEmail=${currentUser.value}`
     }
     
-    const res = await axios.post(url, targetCols)
+    const res = await axios.post(url, targetCols.map(c => c.split(' ')[0]))
     if (res.data.success && res.data.success.length > 0) {
       ElMessage.success(`成功补齐字段: ${res.data.success.join(', ')}`)
-      missingColumns.value = missingColumns.value.filter(c => !res.data.success.includes(c))
+      // 核心：补齐成功后重新识别，使系统字段出现在列表中。此处使用 silent=true 避开冲突弹窗
+      await inspectExistingTable(formMeta.schemaName, formMeta.tableName, true)
     }
     if (res.data.failed && res.data.failed.length > 0) {
       ElMessage.error(`部分字段补齐失败: ${res.data.failed.join(', ')}`)
@@ -1223,7 +1499,7 @@ const isSystemManagedField = (field) => {
   const reserved = [
     'id', 'load_user', 'extra_data',
     'w_insert_dt', 'w_update_dt', 'delete_flag',
-    'ctime', 'mtime', 'create_time', 'update_time', 'created_at', 'updated_at',
+    'create_time', 'update_time', 'created_at', 'updated_at',
     'is_delete', 'deleted', 'del_flag', 'insert_time'
   ]
   return reserved.includes((field?.columnName || '').toLowerCase())
@@ -1479,6 +1755,9 @@ const loadFormForEdit = async () => {
         referenceParserProfile.value = ''
       }
     }
+    
+    // 加载完成后执行一致性检查
+    checkTableConsistency()
   } catch (e) {
     ElMessage.error('加载任务配置失败')
   }
@@ -1517,7 +1796,13 @@ onMounted(() => {
   loadSchemas()
   loadUserList()
   loadFolderTree()
-  if (isEditMode.value) loadFormForEdit()
+  if (isEditMode.value) {
+    loadFormForEdit().then(() => {
+       setTimeout(initDragSort, 500)
+    })
+  } else {
+    setTimeout(initDragSort, 500)
+  }
 })
 </script>
 
@@ -1862,5 +2147,26 @@ onMounted(() => {
   gap: 8px;
   color: #0369a1;
   font-size: 13px;
+}
+
+.drag-handle {
+  transition: color 0.2s;
+}
+
+.drag-handle:hover {
+  color: var(--el-color-primary) !important;
+}
+
+.drag-ghost {
+  background: #ecf5ff !important;
+  opacity: 0.8;
+}
+
+:deep(.system-locked-row) {
+  background-color: #fcfcfc;
+}
+
+:deep(.system-locked-row.el-table__row) {
+  cursor: not-allowed !important;
 }
 </style>

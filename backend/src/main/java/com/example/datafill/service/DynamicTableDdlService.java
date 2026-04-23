@@ -6,11 +6,10 @@ import com.example.datafill.dto.FieldDef;
 import com.example.datafill.entity.DataFillFolder;
 
 import com.example.datafill.entity.DataFillForm;
-
+import com.example.datafill.entity.UserCompletionSnapshot;
 import com.example.datafill.entity.UserFillLog;
-
 import com.example.datafill.mapper.DataFillFormMapper;
-
+import com.example.datafill.mapper.UserCompletionSnapshotMapper;
 import com.example.datafill.mapper.UserFillLogMapper;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -49,9 +48,8 @@ import java.util.HashMap;
 public class DynamicTableDdlService {
 
     private final DataFillFormMapper formMapper;
-
     private final UserFillLogMapper userFillLogMapper;
-
+    private final UserCompletionSnapshotMapper snapshotMapper;
     private final ObjectMapper objectMapper;
 
     private final SchedulerService schedulerService;
@@ -139,10 +137,7 @@ public class DynamicTableDdlService {
     }
 
     public List<String> getAvailableSchemas() {
-        String sql = "SELECT nspname FROM pg_catalog.pg_namespace " +
-                "WHERE nspname NOT LIKE 'pg_%' AND nspname != 'information_schema' " +
-                "ORDER BY nspname";
-        return jdbcTemplate.queryForList(sql, String.class);
+        return java.util.Arrays.asList("ods", "dim");
     }
 
     private List<FieldDef> parseFields(String formsJson) {
@@ -158,7 +153,7 @@ public class DynamicTableDdlService {
         if (schema == null || schema.trim().isEmpty()) {
             schema = SqlUtil.extractSchema(table);
             if (schema == null) {
-                schema = "public"; // 默认 public
+                schema = "ods"; // 默认 ods
             }
             table = SqlUtil.extractTable(table);
         }
@@ -171,12 +166,12 @@ public class DynamicTableDdlService {
     private String getConflictTemplateName(String schema, String table) {
         if (table == null || table.trim().isEmpty())
             return null;
-        schema = (schema == null || schema.trim().isEmpty()) ? "public" : schema.trim();
+        schema = (schema == null || schema.trim().isEmpty()) ? "ods" : schema.trim();
 
         QueryWrapper<DataFillForm> qw = new QueryWrapper<DataFillForm>().eq("table_name", table.trim());
-        if ("public".equalsIgnoreCase(schema)) {
+        if ("ods".equalsIgnoreCase(schema)) {
             // 兼容旧记录中 schema_name 可能为 null 或为空的情况
-            qw.and(i -> i.eq("schema_name", "public").or().isNull("schema_name").or().eq("schema_name", ""));
+            qw.and(i -> i.eq("schema_name", "ods").or().isNull("schema_name").or().eq("schema_name", ""));
         } else {
             qw.eq("schema_name", schema);
         }
@@ -184,9 +179,9 @@ public class DynamicTableDdlService {
         return (exist != null) ? exist.getName() : null;
     }
 
-    private static final String[] INSERT_AUDIT_LEXICON = { "w_insert_dt", "ctime", "create_time", "created_at",
+    private static final String[] INSERT_AUDIT_LEXICON = { "w_insert_dt", "create_time", "created_at",
             "insert_time" };
-    private static final String[] UPDATE_AUDIT_LEXICON = { "w_update_dt", "mtime", "update_time", "updated_at" };
+    private static final String[] UPDATE_AUDIT_LEXICON = { "w_update_dt", "update_time", "updated_at" };
     private static final String[] DELETE_FLAG_LEXICON = { "delete_flag", "is_delete", "deleted", "del_flag" };
 
     private String detectRole(java.util.Set<String> columns, String[] lexicon) {
@@ -199,11 +194,24 @@ public class DynamicTableDdlService {
     }
 
     public Map<String, Object> checkTableStatus(String schema, String table) {
+        // 统一默认 schema 为 public，与前端和 PG 习惯保持一致
         schema = (schema == null || schema.trim().isEmpty()) ? "public" : schema.trim();
         table = table == null ? "" : table.trim();
 
-        // 1. 检查元数据是否已注册，通过冲突名称识别
-        String conflictName = getConflictTemplateName(schema, table);
+        // 1. 检查元数据是否已注册
+        DataFillForm exist = null;
+        String conflictName = null;
+        if (!table.isEmpty()) {
+            QueryWrapper<DataFillForm> qwForm = new QueryWrapper<DataFillForm>().eq("table_name", table);
+            // 如果是 public，兼容 null 或空字符串的 schema 记录
+            if ("public".equalsIgnoreCase(schema)) {
+                qwForm.and(i -> i.eq("schema_name", "public").or().isNull("schema_name").or().eq("schema_name", ""));
+            } else {
+                qwForm.eq("schema_name", schema);
+            }
+            exist = formMapper.selectOne(qwForm.last("limit 1"));
+        }
+        conflictName = (exist != null) ? exist.getName() : null;
 
         // 2. 检查物理表是否存在
         boolean physicalExists = physicalTableExists(schema, table);
@@ -217,39 +225,52 @@ public class DynamicTableDdlService {
 
         if (physicalExists) {
             java.util.Set<String> physicalColumns = loadPhysicalColumns(schema, table);
-            List<String> missing = new ArrayList<>();
+            List<String> missingSystemCols = new ArrayList<>();
 
-            // 1. 强制锁死主键 id
-            if (!physicalColumns.contains("id")) {
-                missing.add("id");
-            }
-
-            // 2. 角色识别：如果已有“长得像”的审计列，则不列入 missing
+            // 1. 角色识别与核心审计列校验
             String detectedInsert = detectRole(physicalColumns, INSERT_AUDIT_LEXICON);
             String detectedUpdate = detectRole(physicalColumns, UPDATE_AUDIT_LEXICON);
             String detectedDelete = detectRole(physicalColumns, DELETE_FLAG_LEXICON);
 
-            if (detectedInsert == null) {
-                missing.add("w_insert_dt");
-            }
-            if (detectedUpdate == null) {
-                missing.add("w_update_dt");
-            }
-            if (detectedDelete == null) {
-                missing.add("delete_flag");
-            }
+            if (!physicalColumns.contains("id")) missingSystemCols.add("id");
+            if (detectedInsert == null) missingSystemCols.add("w_insert_dt");
+            if (detectedUpdate == null) missingSystemCols.add("w_update_dt");
+            if (detectedDelete == null) missingSystemCols.add("delete_flag");
+            if (!physicalColumns.contains("load_user")) missingSystemCols.add("load_user");
 
+            res.put("missingColumns", missingSystemCols);
             res.put("detectedInsertDt", detectedInsert);
             res.put("detectedUpdateDt", detectedUpdate);
             res.put("detectedDeleteFlag", detectedDelete);
 
-            // 如果 id 存在但类型是 int8/bigint，也列入 missing 触发修复
-            if (physicalColumns.contains("id")) {
-                String idType = getIdType(schema, table);
-                if ("int8".equalsIgnoreCase(idType) || "bigint".equalsIgnoreCase(idType)) {
-                    if (!missing.contains("id")) {
-                        missing.add("id");
+            // 2. 检测业务列差异 (仅针对已注册的表单进行元数据对比)
+            if (exist != null && exist.getForms() != null) {
+                try {
+                    List<FieldDef> metaFields = objectMapper.readValue(exist.getForms(), new TypeReference<List<FieldDef>>() {});
+                    java.util.Set<String> metaColumnNames = new java.util.HashSet<>();
+                    for (FieldDef f : metaFields) {
+                        if (f.getColumnName() != null) metaColumnNames.add(f.getColumnName().toLowerCase());
                     }
+
+                    List<String> untrackedCols = new ArrayList<>();
+                    for (String pc : physicalColumns) {
+                        String lpc = pc.toLowerCase();
+                        if (!isSystemManagedColumn(lpc) && !metaColumnNames.contains(lpc)) {
+                            untrackedCols.add(pc);
+                        }
+                    }
+                    res.put("untrackedBusinessColumns", untrackedCols);
+
+                    List<String> missingFromPk = new ArrayList<>();
+                    for (FieldDef f : metaFields) {
+                        String lmn = f.getColumnName() == null ? "" : f.getColumnName().toLowerCase();
+                        if (!lmn.isEmpty() && !isSystemManagedColumn(lmn) && !physicalColumns.contains(lmn)) {
+                            missingFromPk.add(f.getColumnName());
+                        }
+                    }
+                    res.put("missingBusinessColumns", missingFromPk);
+                } catch (Exception e) {
+                    log.warn("对比元数据列失败: {}", e.getMessage());
                 }
             }
         }
@@ -266,11 +287,25 @@ public class DynamicTableDdlService {
         }
     }
 
+    private boolean checkIndexExists(String schema, String table, String columnName) {
+        try {
+            String sql = "SELECT count(1) FROM pg_indexes WHERE schemaname = ? AND tablename = ? AND indexdef LIKE ?";
+            Integer count = jdbcTemplate.queryForObject(sql, Integer.class, schema, table, "%(\"" + columnName + "\")%");
+            if (count == null || count == 0) {
+                 // 兼容不带引号的情况
+                 count = jdbcTemplate.queryForObject(sql, Integer.class, schema, table, "%(" + columnName + ")%");
+            }
+            return count != null && count > 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private java.util.Set<String> loadPhysicalColumns(String schema, String table) {
         if (schema == null || schema.trim().isEmpty()) {
             schema = SqlUtil.extractSchema(table);
             if (schema == null) {
-                schema = "public";
+                schema = "ods";
             }
             table = SqlUtil.extractTable(table);
         }
@@ -342,7 +377,7 @@ public class DynamicTableDdlService {
 
         // 1. 检查物理表名是否重复 (Schema 粒度, 含公共模式兼容)
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName()
-                : "public";
+                : "ods";
         form.setSchemaName(schema); // 确保元数据中 schema_name 不为 null
         String conflictName = getConflictTemplateName(schema, form.getTableName());
         if (conflictName != null) {
@@ -462,6 +497,13 @@ public class DynamicTableDdlService {
             }
 
             jdbcTemplate.execute(ddl.toString());
+            
+            // 为 load_user 增加索引，优化状态探测查询性能
+            try {
+                jdbcTemplate.execute(String.format("CREATE INDEX ON %s (\"load_user\")", SqlUtil.quoteTable(fullTableName)));
+            } catch (Exception e) {
+                log.warn("创建 load_user 索引失败（可能已存在或不支持）: {}", e.getMessage());
+            }
         } catch (Exception e) {
             // 把关键的 SQL 错误信息透传到前端，便于管理员直接定位（例如 [42704] 类型不存在）
             Throwable cause = e.getCause();
@@ -522,7 +564,7 @@ public class DynamicTableDdlService {
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
     public String bindExistingTable(DataFillForm form) {
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName()
-                : "public";
+                : "ods";
         form.setSchemaName(schema); // 确保元数据中 schema_name 不为 null
         String conflictName = getConflictTemplateName(schema, form.getTableName());
         if (conflictName != null) {
@@ -611,7 +653,7 @@ public class DynamicTableDdlService {
         if (!isExt) {
             String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty())
                     ? form.getSchemaName()
-                    : "public";
+                    : "ods";
             String fullTable = schema + "." + form.getTableName();
 
             try {
@@ -778,6 +820,8 @@ public class DynamicTableDdlService {
                     }
                 }
 
+                java.util.Set<String> physicalCols = loadPhysicalColumns(schema, exist.getTableName());
+
                 for (FieldDef nf : newFields) {
                     String colName = nf.getColumnName();
                     if (colName == null)
@@ -786,29 +830,36 @@ public class DynamicTableDdlService {
                     String originalColName = nf.getOriginalColumnName();
                     FieldDef of = originalColName == null ? null : oldFieldMap.get(originalColName.toLowerCase());
                     if (of == null) {
-                        // A: 发现新字段 -> 执行 ALTER TABLE ADD COLUMN
+                        // A: 发现新字段 -> 先判断物理库是否已经存在同名列（防止重复加列导致语法错误）
                         if (isReservedColumnName(colName)) {
                             // 系统列物理表通常已存在，此处仅同步元数据，跳过物理加列
                             continue;
                         }
-                        log.info("表单 {} 检测到新字段 {}, 准备执行物理加列", exist.getName(), colName);
-                        StringBuilder addColSql = new StringBuilder();
-                        addColSql.append("ALTER TABLE ").append(SqlUtil.quoteTable(fullTableName))
-                                .append(" ADD COLUMN \"").append(colName).append("\" ");
 
-                        String dbTypeArg = nf.getDbType();
-                        if (dbTypeArg != null && !dbTypeArg.trim().isEmpty()) {
-                            addColSql.append(normalizeDbTypeForPostgres(dbTypeArg));
+                        if (physicalCols.contains(colName.toLowerCase())) {
+                            log.info("表单 {} 字段 {} 已存在于物理表中，无需执行加列，仅同步元数据与注释", exist.getName(), colName);
                         } else {
-                            addColSql.append("VARCHAR(255)");
-                        }
+                            log.info("表单 {} 检测到新字段 {}, 准备执行物理加列", exist.getName(), colName);
+                            StringBuilder addColSql = new StringBuilder();
+                            addColSql.append("ALTER TABLE ").append(SqlUtil.quoteTable(fullTableName))
+                                    .append(" ADD COLUMN \"").append(colName).append("\" ");
 
-                        if (nf.getRequired() != null && nf.getRequired()) {
-                            addColSql.append(" DEFAULT ''"); // 生产环境 ADD COLUMN NOT NULL 建议带 DEFAULT
-                        }
+                            String dbTypeArg = nf.getDbType();
+                            if (dbTypeArg != null && !dbTypeArg.trim().isEmpty()) {
+                                addColSql.append(normalizeDbTypeForPostgres(dbTypeArg));
+                            } else {
+                                addColSql.append("VARCHAR(255)");
+                            }
 
-                        jdbcTemplate.execute(addColSql.toString());
-                        // 同步添加注释
+                            if (nf.getRequired() != null && nf.getRequired()) {
+                                addColSql.append(" DEFAULT ''"); // 生产环境 ADD COLUMN NOT NULL 建议带 DEFAULT
+                            }
+
+                            jdbcTemplate.execute(addColSql.toString());
+                            physicalCols.add(colName.toLowerCase()); // 更新本地副本，防止后续冲突
+                        }
+                        
+                        // 同步加列后或已存在同名列时，均执行注释同步
                         jdbcTemplate.execute("COMMENT ON COLUMN " + SqlUtil.quoteTable(fullTableName) + ".\"" + colName
                                 + "\" IS '" + escapeSqlLiteral(nf.getName()) + "';");
                     } else {
@@ -823,9 +874,41 @@ public class DynamicTableDdlService {
                                 throw new RuntimeException("系统保留列 " + physicalColName + " 不允许修改字段类型");
                             }
                         } else if (!colName.equalsIgnoreCase(physicalColName)) {
-                            log.info("表单 {} 字段 {} 重命名为 {}", exist.getName(), physicalColName, colName);
-                            jdbcTemplate.execute("ALTER TABLE " + SqlUtil.quoteTable(fullTableName)
-                                    + " RENAME COLUMN \"" + physicalColName + "\" TO \"" + colName + "\"");
+                            // 核心增强：防止外部先改了数据库导致此处 RENAME 报错
+                            // 如果物理库里【已经】是新名字了，且【不存在】旧名字，说明库里已经同步过了，跳过 DDL 报错
+                            boolean oldExists = physicalCols.contains(physicalColName.toLowerCase());
+                            boolean newExists = physicalCols.contains(colName.toLowerCase());
+
+                            if (!oldExists && newExists) {
+                                log.info("表单 {} 字段 {} 似乎已在外部重命名为 {}, 跳过 DDL", exist.getName(), physicalColName, colName);
+                            } else {
+                                log.info("表单 {} 字段 {} 重命名为 {}", exist.getName(), physicalColName, colName);
+                                jdbcTemplate.execute("ALTER TABLE " + SqlUtil.quoteTable(fullTableName)
+                                        + " RENAME COLUMN \"" + physicalColName + "\" TO \"" + colName + "\"");
+                            }
+                            
+                            // 同步更新参考模板配置中的映射关系，防止下载模板时列丢失或表头变化
+                            if (exist.getReferenceTemplateConfig() != null && !exist.getReferenceTemplateConfig().trim().isEmpty()) {
+                                try {
+                                    Map<String, Object> refConfig = objectMapper.readValue(exist.getReferenceTemplateConfig(), new TypeReference<Map<String, Object>>() {});
+                                    Object mappingsObj = refConfig.get("headerMappings");
+                                    if (mappingsObj instanceof List<?>) {
+                                        List<Map<String, Object>> mappings = (List<Map<String, Object>>) mappingsObj;
+                                        boolean changed = false;
+                                        for (Map<String, Object> m : mappings) {
+                                            if (physicalColName.equalsIgnoreCase(String.valueOf(m.get("columnName")))) {
+                                                m.put("columnName", colName);
+                                                changed = true;
+                                            }
+                                        }
+                                        if (changed) {
+                                            exist.setReferenceTemplateConfig(objectMapper.writeValueAsString(refConfig));
+                                        }
+                                    }
+                                } catch (Exception e) {
+                                    log.warn("同步更新 referenceTemplateConfig 失败: {}", e.getMessage());
+                                }
+                            }
                             physicalColName = colName;
                         }
 
@@ -854,6 +937,55 @@ public class DynamicTableDdlService {
                 }
                 // 更新元数据 JSON
                 exist.setForms(incoming.getForms());
+
+                // C: 处理物理删列 -> 找出 oldFieldMap 中存在但 newFields 中不再引用的字段
+                // 我们现在允许对所有表（含外部绑定表）执行删列，只要该字段不是系统保留列且已被从元数据中移除
+                java.util.Set<String> referencedOldNames = new java.util.HashSet<>();
+                for (FieldDef nf : newFields) {
+                    String ocn = nf.getOriginalColumnName();
+                    if (ocn != null && !ocn.trim().isEmpty()) {
+                        referencedOldNames.add(ocn.trim().toLowerCase());
+                    }
+                }
+
+                // 定义受保护的列集合（静态保留列 + 当前表单正在使用的审计列/状态位）
+                java.util.Set<String> protectedCols = new java.util.HashSet<>(RESERVED_COLUMN_NAMES);
+                if (exist.getInsertDtColumn() != null) protectedCols.add(exist.getInsertDtColumn().toLowerCase());
+                if (exist.getUpdateDtColumn() != null) protectedCols.add(exist.getUpdateDtColumn().toLowerCase());
+                if (exist.getDeleteFlagColumn() != null) protectedCols.add(exist.getDeleteFlagColumn().toLowerCase());
+                if (exist.getPkColumn() != null) protectedCols.add(exist.getPkColumn().toLowerCase());
+
+                for (String oldColName : oldFieldMap.keySet()) {
+                    String lowerOldName = oldColName.toLowerCase();
+                    // 如果旧字段名不再被任何新字段引用，且不是核心系统保护列，则执行物理删除
+                    if (!referencedOldNames.contains(lowerOldName) && !protectedCols.contains(lowerOldName)) {
+                        log.info("表单 {} 检测到字段 {} 被移除，准备执行物理删列", exist.getName(), oldColName);
+                        try {
+                            jdbcTemplate.execute("ALTER TABLE " + SqlUtil.quoteTable(fullTableName)
+                                    + " DROP COLUMN IF EXISTS \"" + oldColName + "\"");
+                            
+                            // 同步删除参考模板配置中的映射关系，防止下载后出现死字段
+                            if (exist.getReferenceTemplateConfig() != null && !exist.getReferenceTemplateConfig().trim().isEmpty()) {
+                                try {
+                                    Map<String, Object> refConfig = objectMapper.readValue(exist.getReferenceTemplateConfig(), new TypeReference<Map<String, Object>>() {});
+                                    Object mappingsObj = refConfig.get("headerMappings");
+                                    if (mappingsObj instanceof List<?>) {
+                                        List<Map<String, Object>> mappings = (List<Map<String, Object>>) mappingsObj;
+                                        boolean changed = mappings.removeIf(m -> oldColName.equalsIgnoreCase(String.valueOf(m.get("columnName"))));
+                                        if (changed) {
+                                            exist.setReferenceTemplateConfig(objectMapper.writeValueAsString(refConfig));
+                                        }
+                                    }
+                                } catch (Exception e) {
+                                    log.warn("同步删除 referenceTemplateConfig 映射失败: {}", e.getMessage());
+                                }
+                            }
+                        } catch (Exception dropEx) {
+                            // 删列可能因为存在依赖（如视图、外键）而失败，此处记录警告但不中断保存流程
+                            log.warn("物理删列 {} 失败（可能存在依赖或已手动删除）: {}", oldColName, dropEx.getMessage());
+                        }
+                    }
+                }
             } catch (Exception e) {
                 log.error("更新表单字段元数据失败", e);
                 throw new RuntimeException("更新表单物理结构失败: " + e.getMessage());
@@ -909,12 +1041,23 @@ public class DynamicTableDdlService {
         }
         List<DataFillForm> allForms = formMapper.selectList(qw);
 
-        // 批量获取该用户的所有填报日志，解决 N+1 问题
+        // 批量获取该用户的所有填报日志
         Map<String, UserFillLog> lastLogMap = new HashMap<>();
         if (userEmail != null && !userEmail.trim().isEmpty()) {
             List<UserFillLog> logs = userFillLogMapper.selectLastUploadsByUser(userEmail);
-            for (UserFillLog log : logs) {
-                lastLogMap.put(log.getFormId(), log);
+            for (UserFillLog logEntry : logs) {
+                lastLogMap.put(logEntry.getFormId(), logEntry);
+            }
+        }
+
+        // 核心优化：批量获取该用户的所有填报状态快照 (Mirror Table)
+        Map<String, UserCompletionSnapshot> snapshotMap = new HashMap<>();
+        if (userEmail != null && !userEmail.trim().isEmpty()) {
+            List<UserCompletionSnapshot> snapshots = snapshotMapper.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<UserCompletionSnapshot>()
+                            .eq("user_email", userEmail));
+            for (UserCompletionSnapshot s : snapshots) {
+                snapshotMap.put(s.getFormId(), s);
             }
         }
 
@@ -923,14 +1066,10 @@ public class DynamicTableDdlService {
         List<Map<String, Object>> expired = new ArrayList<>();
         List<Map<String, Object>> completed = new ArrayList<>();
 
-        // 收集需要动态探测物理表的表单（即没有填报日志记录的表单）
-        List<DataFillForm> formsToProbe = new ArrayList<>();
-        
-        // 第一遍循环：过滤权限和分类，并确定哪些需要探测
-        List<DataFillForm> filteredForms = new ArrayList<>();
+        // 结果组装
         for (DataFillForm form : allForms) {
-            String status = form.getStatus();
-            if (!"ACTIVE".equalsIgnoreCase(status) && !"EXPIRED".equalsIgnoreCase(status)) {
+            String statusField = form.getStatus();
+            if (!"ACTIVE".equalsIgnoreCase(statusField) && !"EXPIRED".equalsIgnoreCase(statusField)) {
                 continue;
             }
 
@@ -941,48 +1080,66 @@ public class DynamicTableDdlService {
                     continue;
                 }
                 try {
-                    List<String> allowed = objectMapper.readValue(fillUserEmails, new TypeReference<List<String>>() {});
-                    if (allowed == null || allowed.isEmpty() || allowed.stream().noneMatch(e -> e != null && e.trim().equalsIgnoreCase(userEmail.trim()))) {
+                    List<String> allowed = objectMapper.readValue(fillUserEmails, new TypeReference<List<String>>() {
+                    });
+                    if (allowed == null || allowed.isEmpty()
+                            || allowed.stream().noneMatch(e -> e != null && e.trim().equalsIgnoreCase(userEmail.trim()))) {
                         continue;
                     }
                 } catch (Exception e) {
                     continue;
                 }
             }
-            filteredForms.add(form);
-            
-            if (!lastLogMap.containsKey(form.getId()) && userEmail != null && !userEmail.trim().isEmpty() && form.getTableName() != null) {
-                formsToProbe.add(form);
-            }
-        }
 
-        // 批量探测物理表中的 MAX(...)，适配外部识别表的自定义时间字段
-        Map<String, LocalDateTime> probeMap = new HashMap<>();
-        if (!formsToProbe.isEmpty()) {
-            for (DataFillForm pf : formsToProbe) {
-                try {
-                    // 获取模板定义的插入时间字段名，若无则默认为 w_insert_dt
-                    String col = (pf.getInsertDtColumn() != null && !pf.getInsertDtColumn().trim().isEmpty()) 
-                                 ? pf.getInsertDtColumn().trim() : "w_insert_dt";
-                    
-                    String checkSql = String.format("SELECT MAX(\"%s\") FROM \"%s\" WHERE load_user = ?", col, pf.getTableName());
-                    LocalDateTime ldt = jdbcTemplate.queryForObject(checkSql, LocalDateTime.class, userEmail);
-                    if (ldt != null) {
-                        probeMap.put(pf.getId(), ldt);
+            // 获取最后填报时间：先搜快照，再搜日志，最后物理探测(仅冷启动一次)
+            LocalDateTime lastSubmitTime = null;
+            UserCompletionSnapshot snap = snapshotMap.get(form.getId());
+
+            if (snap != null) {
+                // 1. 命中快照
+                lastSubmitTime = snap.getLastSubmitTime();
+            } else {
+                // 2. 快照缺失，尝试冷启动物理探测（仅执行一次并回填快照）
+                if (userEmail != null && form.getTableName() != null) {
+                    try {
+                        String col = (form.getInsertDtColumn() != null && !form.getInsertDtColumn().trim().isEmpty())
+                                ? form.getInsertDtColumn().trim()
+                                : "w_insert_dt";
+                        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName().trim() : "public";
+                        String fullTable = schema + "." + form.getTableName();
+                        String checkSql = String.format("SELECT MAX(\"%s\") FROM %s WHERE \"load_user\" = ? AND \"delete_flag\" = FALSE",
+                                col, SqlUtil.quoteTable(fullTable));
+                        lastSubmitTime = jdbcTemplate.queryForObject(checkSql, LocalDateTime.class, userEmail);
+
+                        // 异步/后台刷新快照
+                        final LocalDateTime finalTime = lastSubmitTime;
+                        new Thread(() -> {
+                            try {
+                                UserCompletionSnapshot newSnap = new UserCompletionSnapshot();
+                                newSnap.setUserEmail(userEmail);
+                                newSnap.setFormId(form.getId());
+                                newSnap.setLastSubmitTime(finalTime);
+                                newSnap.setUpdateTime(LocalDateTime.now());
+                                snapshotMapper.upsert(newSnap);
+                            } catch (Exception ignored) {
+                            }
+                        }).start();
+                    } catch (Exception e) {
+                        log.warn("物理探测冷启动失败: {}", e.getMessage());
                     }
-                } catch (Exception ignored) {
+                }
+
+                // 3. 兜底逻辑：如果日志比物理探测还新（或者物理探测没搜到数据）
+                UserFillLog logEntry = lastLogMap.get(form.getId());
+                if (logEntry != null) {
+                    if (lastSubmitTime == null || logEntry.getSubmitTime().isAfter(lastSubmitTime)) {
+                        lastSubmitTime = logEntry.getSubmitTime();
+                    }
                 }
             }
-        }
 
-        // 第二遍循环：组装结果
-        for (DataFillForm form : filteredForms) {
             LocalDateTime deadline = form.getDeadline();
             boolean isExpired = "EXPIRED".equalsIgnoreCase(form.getStatus()) || (deadline != null && !now.isBefore(deadline));
-
-            // 获取最后填报时间：优先查日志 Map，其次查探测 Map
-            UserFillLog lastLog = lastLogMap.get(form.getId());
-            LocalDateTime lastSubmitTime = (lastLog != null) ? lastLog.getSubmitTime() : probeMap.get(form.getId());
 
             Integer cycleDays = form.getCycleDays();
             String mode = form.getReminderMode();
@@ -1093,24 +1250,9 @@ public class DynamicTableDdlService {
         List<String> failed = new ArrayList<>();
 
         for (String col : columnsToAdd) {
-            String lowerCol = col.toLowerCase();
+            String lowerCol = (col == null) ? "" : col.toLowerCase();
+            if (lowerCol.contains("idx_load_user")) continue;
             String fullTable = SqlUtil.quoteTable(fullTableName);
-
-            if ("id".equals(lowerCol) && physicalColumns.contains("id")) {
-                // 如果 id 已经存在，检查是否需要从 bigint/int8 降级为 int4/serial
-                String idType = getIdType(schema, tableName);
-                if ("int8".equalsIgnoreCase(idType) || "bigint".equalsIgnoreCase(idType)) {
-                    try {
-                        jdbcTemplate.execute("ALTER TABLE " + fullTable + " ALTER COLUMN \"id\" TYPE int4");
-                        success.add(col + " (类型修复)");
-                        continue;
-                    } catch (Exception e) {
-                        log.error("修复 id 类型失败", e);
-                        failed.add(col + " (类型修复失败): " + e.getMessage());
-                        continue;
-                    }
-                }
-            }
 
             if (physicalColumns.contains(lowerCol)) continue;
             
@@ -1138,11 +1280,28 @@ public class DynamicTableDdlService {
                 if ("delete_flag".equals(lowerCol)) {
                     jdbcTemplate.execute("UPDATE " + fullTable + " SET \"delete_flag\" = FALSE WHERE \"delete_flag\" IS NULL");
                 }
+                // 如果是补齐 load_user，同步创建索引
+                if ("load_user".equals(lowerCol)) {
+                    jdbcTemplate.execute("CREATE INDEX ON " + fullTable + " (\"load_user\")");
+                }
                 success.add(col);
             } catch (Exception e) {
                 log.error("补齐列 {} 失败", col, e);
                 failed.add(col + ": " + e.getMessage());
             }
+        }
+        
+        // 后验：如果物理表存在 load_user 但没有索引，则静默补齐索引（不再作为缺失列提示）
+        try {
+            java.util.Set<String> updatedCols = loadPhysicalColumns(schema, tableName);
+            if (updatedCols.contains("load_user")) {
+                if (!checkIndexExists(schema, tableName, "load_user")) {
+                    jdbcTemplate.execute("CREATE INDEX ON " + SqlUtil.quoteTable(fullTableName) + " (\"load_user\")");
+                    log.info("物理表 {} 补齐 load_user 性能索引成功", fullTableName);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("静默补齐 load_user 索引失败 (可能已存在): {}", e.getMessage());
         }
         
         Map<String, Object> res = new HashMap<>();

@@ -34,7 +34,8 @@
 
         <el-table-column v-if="status === 'pending'" label="剩余时间" width="160">
           <template #default="scope">
-            <span style="color: #d97706; font-weight: 600;">{{ formatTimeLeft(scope.row.secondsLeft) }}</span>
+            <span v-if="scope.row.secondsLeft !== null && scope.row.secondsLeft !== undefined" style="color: #d97706; font-weight: 600;">{{ formatTimeLeft(scope.row.secondsLeft) }}</span>
+            <span v-else style="color: #94a3b8; font-size: 13px;">-</span>
           </template>
         </el-table-column>
 
@@ -130,6 +131,7 @@ onUnmounted(() => {
 })
 
 const formatTimeLeft = (seconds) => {
+  if (seconds === null || seconds === undefined) return ''
   if (seconds <= 0) return '已到期'
   const days = Math.floor(seconds / 86400)
   const hours = Math.floor((seconds % 86400) / 3600)

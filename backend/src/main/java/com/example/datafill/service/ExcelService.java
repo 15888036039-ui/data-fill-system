@@ -1,11 +1,10 @@
 package com.example.datafill.service;
 
 import com.example.datafill.dto.FieldDef;
-
 import com.example.datafill.entity.DataFillForm;
-
+import com.example.datafill.entity.UserFillLog;
 import com.example.datafill.mapper.DataFillFormMapper;
-
+import com.example.datafill.mapper.UserFillLogMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -72,12 +71,12 @@ public class ExcelService {
             java.util.Arrays.asList(
                     "id", "load_user", "extra_data",
                     "w_insert_dt", "w_update_dt", "delete_flag",
-                    "ctime", "mtime", "create_time", "update_time", "created_at", "updated_at",
+                    "create_time", "update_time", "created_at", "updated_at",
                     "is_delete", "deleted", "del_flag", "insert_time"));
 
-    private static final String[] INSERT_AUDIT_LEXICON = { "w_insert_dt", "ctime", "create_time", "created_at",
+    private static final String[] INSERT_AUDIT_LEXICON = { "w_insert_dt", "create_time", "created_at",
             "insert_time" };
-    private static final String[] UPDATE_AUDIT_LEXICON = { "w_update_dt", "mtime", "update_time", "updated_at" };
+    private static final String[] UPDATE_AUDIT_LEXICON = { "w_update_dt", "update_time", "updated_at" };
     private static final String[] DELETE_FLAG_LEXICON = { "delete_flag", "is_delete", "deleted", "del_flag" };
 
     private String detectRole(java.util.Set<String> columns, String[] lexicon) {
@@ -94,6 +93,7 @@ public class ExcelService {
     private final DynamicDataDmlService dataDmlService;
 
     private final ObjectMapper objectMapper;
+    private final UserFillLogMapper userFillLogMapper;
 
     @org.springframework.beans.factory.annotation.Autowired
     @Qualifier("dynamicJdbcTemplate")
@@ -356,6 +356,7 @@ public class ExcelService {
         boolean couldBeDate = true;
         boolean couldBeNumber = true;
         boolean hasDecimal = false;
+        boolean hasCommas = false;
         Set<String> uniqueValues = new HashSet<>();
         List<String> rawValues = new ArrayList<>();
 
@@ -371,9 +372,56 @@ public class ExcelService {
      * 
      */
 
-    public void exportTemplate(String formId, OutputStream outputStream) throws IOException {
+    private void processHeaderAndExpand(
+            String headerOrCol,
+            FieldDef field,
+            List<com.example.datafill.dto.ExcelParseResult.DetectedPair> kvPairsToExpand,
+            List<String> templateHeaders,
+            Map<String, String> displayNameByHeader) {
 
-        DataFillForm form = formMapper.selectById(formId);
+        String col = field != null ? field.getColumnName() : headerOrCol;
+        if (col == null || col.trim().isEmpty()) return;
+
+        boolean expanded = false;
+        if (kvPairsToExpand != null && !kvPairsToExpand.isEmpty()) {
+            // 注意：检查 excelHeader 还是 columnName？
+            // 如果是 JSON 字段，columnName 一定包含 _json。
+            // 只要物理列名匹配 KV 配置中的合并列名，就触发展开。
+            List<com.example.datafill.dto.ExcelParseResult.DetectedPair> matched = kvPairsToExpand.stream()
+                    .filter(p -> col.equalsIgnoreCase(p.getSuggestedColumnName()))
+                    .collect(java.util.stream.Collectors.toList());
+
+            if (!matched.isEmpty()) {
+                log.info("触发 KV 展开: 原始识别列={}, 合并列名={}", headerOrCol, col);
+                for (com.example.datafill.dto.ExcelParseResult.DetectedPair p : matched) {
+                    for (String suffix : p.getSuffixes()) {
+                        String kb = p.getKeyBase() + suffix;
+                        String vb = p.getValueBase() + suffix;
+                        if (!templateHeaders.contains(kb)) {
+                            templateHeaders.add(kb);
+                            displayNameByHeader.put(kb, kb);
+                        }
+                        if (!templateHeaders.contains(vb)) {
+                            templateHeaders.add(vb);
+                            displayNameByHeader.put(vb, vb);
+                        }
+                    }
+                }
+                expanded = true;
+            }
+        }
+
+        if (!expanded) {
+            templateHeaders.add(headerOrCol);
+            String displayName = (field != null && field.getName() != null && !field.getName().trim().isEmpty())
+                    ? field.getName()
+                    : headerOrCol;
+            displayNameByHeader.put(headerOrCol, displayName);
+        }
+    }
+
+    public void exportTemplate(String formId, OutputStream outputStream) throws IOException {
+        com.example.datafill.entity.DataFillForm form = formMapper.selectById(formId);
 
         if (form == null) {
 
@@ -381,14 +429,17 @@ public class ExcelService {
 
         }
 
+        // [Debug Log] 导出模板日志
+        log.info("开始导出表单模板, formId={}, name={}", formId, form.getName());
+
         List<FieldDef> fields;
-
         try {
-
-            fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {
+            String formsJson = form.getForms();
+            fields = objectMapper.readValue(formsJson, new TypeReference<List<FieldDef>>() {
             });
-
+            log.info("表单字段解析成功, count={}", fields.size());
         } catch (JsonProcessingException e) {
+            log.error("表单解析错误, formId={}", formId, e);
             throw new RuntimeException("表单解析错误", e);
         }
 
@@ -398,8 +449,24 @@ public class ExcelService {
         List<String> templateHeaders = new ArrayList<>();
         Map<String, String> displayNameByHeader = new LinkedHashMap<>();
 
-        // 对“参考模板创建”的表单，下载模板优先使用原始 excel 表头，避免用户无法按模板回传。
+        // 加载 KV 配置，用于在导出时根据合并列名还原原始业务列名
+        List<com.example.datafill.dto.ExcelParseResult.DetectedPair> savedPairs = new ArrayList<>();
+        if (form.getKvConfig() != null && !form.getKvConfig().trim().isEmpty()) {
+            try {
+                savedPairs = objectMapper.readValue(form.getKvConfig(),
+                        new TypeReference<List<com.example.datafill.dto.ExcelParseResult.DetectedPair>>() {
+                        });
+                log.info("加载 kvConfig 成功, pairCount={}", savedPairs.size());
+            } catch (Exception e) {
+                log.warn("解析 kvConfig 失败, formId={}", formId, e);
+            }
+        }
+        final List<com.example.datafill.dto.ExcelParseResult.DetectedPair> kvPairsToExpand = savedPairs;
+
+        // 核心逻辑梳理：将业务字段映射到模板表头
+        // 1. 如果有参考模板，按其记录的 excelHeader 和顺序进行映射
         if (form.getReferenceTemplateConfig() != null && !form.getReferenceTemplateConfig().trim().isEmpty()) {
+            log.info("进入参考模板导出逻辑...");
             try {
                 Map<String, Object> referenceConfig = objectMapper.readValue(
                         form.getReferenceTemplateConfig(),
@@ -407,73 +474,61 @@ public class ExcelService {
                         });
                 Object mappingsObj = referenceConfig.get("headerMappings");
                 if (mappingsObj instanceof List<?>) {
-                    List<Map<String, Object>> mappingRows = new ArrayList<>();
+                    List<Map<String, Object>> mappingRowsRaw = new ArrayList<>();
                     for (Object item : (List<?>) mappingsObj) {
-                        if (!(item instanceof Map<?, ?>)) {
-                            continue;
+                        if (item instanceof Map<?, ?>) {
+                            Map<String, Object> m = new HashMap<>();
+                            ((Map<?, ?>) item).forEach((k, v) -> m.put(String.valueOf(k), v));
+                            mappingRowsRaw.add(m);
                         }
-                        Map<?, ?> raw = (Map<?, ?>) item;
-                        String excelHeader = asText(raw.get("excelHeader"));
-                        String columnName = asText(raw.get("columnName"));
-                        Integer columnIndex = asInteger(raw.get("columnIndex"));
-                        if (excelHeader == null || excelHeader.trim().isEmpty() || columnName == null
-                                || columnName.trim().isEmpty()) {
-                            continue;
-                        }
-                        Map<String, Object> row = new HashMap<>();
-                        row.put("excelHeader", excelHeader.trim());
-                        row.put("columnName", columnName.trim());
-                        row.put("columnIndex", columnIndex);
-                        mappingRows.add(row);
                     }
-                    mappingRows.sort((a, b) -> {
-                        Integer ai = (Integer) a.get("columnIndex");
-                        Integer bi = (Integer) b.get("columnIndex");
-                        if (ai == null && bi == null)
-                            return 0;
-                        if (ai == null)
-                            return 1;
-                        if (bi == null)
-                            return -1;
+                    mappingRowsRaw.sort((a, b) -> {
+                        Integer ai = asInteger(a.get("columnIndex"));
+                        Integer bi = asInteger(b.get("columnIndex"));
+                        if (ai == null && bi == null) return 0;
+                        if (ai == null) return 1;
+                        if (bi == null) return -1;
                         return Integer.compare(ai, bi);
                     });
 
-                    for (Map<String, Object> row : mappingRows) {
-                        String excelHeader = String.valueOf(row.get("excelHeader"));
-                        String columnName = String.valueOf(row.get("columnName"));
-                        
-                        // 校验该列是否在业务字段列表中（且未被隐藏）
+                    Set<String> processedFieldColumnNames = new HashSet<>();
+                    for (Map<String, Object> row : mappingRowsRaw) {
+                        String excelHeader = asText(row.get("excelHeader"));
+                        String columnName = asText(row.get("columnName"));
+                        if (excelHeader == null || columnName == null) continue;
+
                         FieldDef targetField = fields.stream()
-                                .filter(f -> f.getColumnName() != null
-                                        && f.getColumnName().equalsIgnoreCase(columnName))
+                                .filter(f -> columnName.equalsIgnoreCase(f.getColumnName()))
                                 .findFirst()
                                 .orElse(null);
-                        
+
                         if (targetField != null) {
-                            templateHeaders.add(excelHeader);
-                            displayNameByHeader.put(excelHeader, 
-                                targetField.getName() == null || targetField.getName().trim().isEmpty() 
-                                ? excelHeader : targetField.getName());
+                            processHeaderAndExpand(excelHeader, targetField, kvPairsToExpand, templateHeaders, displayNameByHeader);
+                            processedFieldColumnNames.add(columnName.toLowerCase());
+                        }
+                    }
+
+                    // 补全：追加 mappings 中未包含的业务列
+                    for (FieldDef field : fields) {
+                        String col = field.getColumnName();
+                        if (col != null && !processedFieldColumnNames.contains(col.toLowerCase())) {
+                            processHeaderAndExpand(col, field, kvPairsToExpand, templateHeaders, displayNameByHeader);
                         }
                     }
                 }
             } catch (Exception e) {
-                log.warn("下载模板解析 referenceTemplateConfig 失败, formId={}", formId, e);
+                log.warn("解析 referenceTemplateConfig 失败, formId={}", formId, e);
             }
         }
 
-        // 非参考模板（或解析失败）走原逻辑：第一行使用数据库列名
+        // 2. 如果没用参考模板（或者解析失败），直接按字段列表生成
         if (templateHeaders.isEmpty()) {
+            log.info("未识别到参考模板配置，进入常规导出逻辑...");
             for (FieldDef field : fields) {
-                if (field.getColumnName() == null || field.getColumnName().trim().isEmpty()) {
-                    continue;
-                }
-                String header = field.getColumnName();
-                templateHeaders.add(header);
-                displayNameByHeader.put(header,
-                        field.getName() == null || field.getName().trim().isEmpty() ? header : field.getName());
+                processHeaderAndExpand(field.getColumnName(), field, kvPairsToExpand, templateHeaders, displayNameByHeader);
             }
         }
+        log.info("模板生成完成, 最终表头数量={}", templateHeaders.size());
 
         try (XSSFWorkbook workbook = new XSSFWorkbook()) {
 
@@ -485,16 +540,13 @@ public class ExcelService {
 
             for (String header : templateHeaders) {
                 Cell headerCell = headerRow.createCell(colIndex);
-                // 优先使用显示名称（字段中文名），对于参考模板则直接使用其存储的原始 excelHeader (header 变量)
+                
+                // 优先使用显示名称（字段中文名）
                 String display = displayNameByHeader.getOrDefault(header, header);
 
-                // 如果是参考模板创建的表单，header 变量本身就是原始 excel 表头，直接设置即可
-                // 如果是常规表单，header 是数据库字段名，display 是字段中文名
-                if (form.getReferenceTemplateConfig() != null && !form.getReferenceTemplateConfig().trim().isEmpty()) {
-                    headerCell.setCellValue(header);
-                } else {
-                    headerCell.setCellValue(display);
-                }
+                // 如果该 header 本身就是从 referenceTemplateConfig 里读出来的原始 excelHeader，则优先使用原始头，保证兼容性
+                // 如果是新追加的字段，则显示其中文名（display）
+                headerCell.setCellValue(display);
 
                 // 自适应列宽
                 sheet.autoSizeColumn(colIndex);
@@ -523,7 +575,7 @@ public class ExcelService {
         if (file.getSize() > (long) maxFileSizeMb * 1024 * 1024) {
             throw new RuntimeException("上传文件过大（超过 " + maxFileSizeMb + "MB），为了确保系统稳定性，请将数据分批进行导入。");
         }
-        DataFillForm form = formMapper.selectById(formId);
+        com.example.datafill.entity.DataFillForm form = formMapper.selectById(formId);
         if (form == null)
             throw new RuntimeException("表单不存在");
 
@@ -677,8 +729,6 @@ public class ExcelService {
             boolean hasReferenceMappings = !referenceHeaderMappings.isEmpty();
 
             java.util.Set<String> importSystemColumns = new java.util.HashSet<>(EXISTING_TABLE_SYSTEM_COLUMNS);
-            importSystemColumns.add("ctime");
-            importSystemColumns.add("mtime");
             importSystemColumns.add("create_time");
             importSystemColumns.add("update_time");
             importSystemColumns.add("creator");
@@ -761,7 +811,18 @@ public class ExcelService {
                         formId, unresolvedHeaders.size(), unresolvedSamples);
             }
 
-            record KVPairConfig(int fk, int fv, String targetJsonCol) {
+            class KVPairConfig {
+                private final int fk;
+                private final int fv;
+                private final String targetJsonCol;
+                KVPairConfig(int fk, int fv, String targetJsonCol) {
+                    this.fk = fk;
+                    this.fv = fv;
+                    this.targetJsonCol = targetJsonCol;
+                }
+                int fk() { return fk; }
+                int fv() { return fv; }
+                String targetJsonCol() { return targetJsonCol; }
             }
             List<KVPairConfig> activeKVPairs = new ArrayList<>();
 
@@ -879,16 +940,21 @@ public class ExcelService {
 
                 if (!checkedTemplate && row.getRowNum() == 1) {
                     checkedTemplate = true;
+                    int matchCount = 0;
                     boolean isSecondHeader = false;
                     for (int c = 0; c < lastCol; c++) {
                         Cell cell = row.getCell(c);
                         if (cell != null) {
                             String val = dataFormatter.formatCellValue(cell).trim();
-                            if (!val.isEmpty() && fields.stream().anyMatch(f -> val.equals(f.getName()))) {
-                                isSecondHeader = true;
-                                break;
+                            if (!val.isEmpty() && fields.stream().anyMatch(f -> val.equalsIgnoreCase(f.getName()) || val.equalsIgnoreCase(f.getColumnName()))) {
+                                matchCount++;
                             }
                         }
+                    }
+                    // 只有当超过 1 个单元格匹配到字段名（中文或英文）时，才认为它是第二个表头行。
+                    // 仅 1 个匹配极其容易与真实数据冲突（如某个单元格恰好填了与字段名相同的单词）。
+                    if (matchCount > 1) {
+                        isSecondHeader = true;
                     }
                     if (isSecondHeader) {
                         startRow = 2;
@@ -915,13 +981,18 @@ public class ExcelService {
                                 isDateColumn[vCol] = org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(vc);
                                 dateColumnChecked[vCol] = true;
                             }
-                            vvObj = isDateColumn[vCol] ? vc.getDateCellValue() : vc.getNumericCellValue();
+                            if (isDateColumn[vCol]) {
+                                vvObj = vc.getDateCellValue();
+                            } else {
+                                double dVal = vc.getNumericCellValue();
+                                vvObj = new java.math.BigDecimal(String.valueOf(dVal)).stripTrailingZeros().toPlainString();
+                            }
                         } else {
                             String s = dataFormatter.formatCellValue(vc).trim();
                             // Handle formatted numbers like "1,875.00"
                             if (s.contains(",") && s.replace(",", "").matches("-?\\d*\\.?\\d+")) {
                                 try {
-                                    vvObj = new java.math.BigDecimal(s.replace(",", ""));
+                                    vvObj = new java.math.BigDecimal(s.replace(",", "")).stripTrailingZeros().toPlainString();
                                 } catch (Exception e) {
                                     vvObj = s;
                                 }
@@ -975,14 +1046,15 @@ public class ExcelService {
                         try {
                             val = cell.getStringCellValue();
                         } catch (Exception e) {
-                            val = cell.getNumericCellValue();
+                            double dVal = cell.getNumericCellValue();
+                            val = new java.math.BigDecimal(String.valueOf(dVal)).stripTrailingZeros().toPlainString();
                         }
                     } else {
                         String s = dataFormatter.formatCellValue(cell).trim();
                         // Handle formatted numbers like "1,875.00"
                         if (s.contains(",") && s.replace(",", "").matches("-?\\d*\\.?\\d+")) {
                             try {
-                                val = new java.math.BigDecimal(s.replace(",", ""));
+                                val = new java.math.BigDecimal(s.replace(",", "")).stripTrailingZeros().toPlainString();
                             } catch (Exception e) {
                                 val = s;
                             }
@@ -1111,6 +1183,20 @@ public class ExcelService {
             }
 
         }
+
+        if (totalCount > 0) {
+            try {
+                UserFillLog fillLog = new UserFillLog();
+                fillLog.setFormId(formId);
+                fillLog.setUserEmail(creator);
+                fillLog.setSubmitTime(LocalDateTime.now());
+                fillLog.setDataId("IMPORT_" + java.util.UUID.randomUUID().toString().substring(0, 8));
+                userFillLogMapper.insert(fillLog);
+            } catch (Exception e) {
+                log.warn("写入填报日志失败, formId={}, user={}", formId, creator, e);
+            }
+        }
+
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
         result.put("count", totalCount);
@@ -1319,6 +1405,8 @@ public class ExcelService {
             throw new RuntimeException("未识别到参考模板中的表名");
         }
 
+        com.example.datafill.dto.ReferenceTemplateParseResult result = new com.example.datafill.dto.ReferenceTemplateParseResult();
+
         // --- 核心增强：自动补全缺失的系统审计字段 ---
         java.util.Set<String> physicalColumns = new java.util.HashSet<>();
         for (FieldDef f : fieldMap.values()) {
@@ -1337,6 +1425,10 @@ public class ExcelService {
             idField.setHideInForm(true);
             idField.setHideInList(true);
             fieldMap.put("id", idField);
+        } else {
+            // [强约束] 如果参考模板中物理列里已经写了 id，说明导入时会冲突（系统要自己管 id）
+            result.setHasIdConflict(true);
+            result.setConflictMessage("检测到物理表参考区块中已包含 id 字段。为保证系统自动分配主键，请管理员先在参考模板中移除该列，然后再次识别并点击‘一键补齐’。");
         }
 
         // 2. 补齐标准审计列（w_insert_dt, w_update_dt, delete_flag, load_user）
@@ -1390,8 +1482,6 @@ public class ExcelService {
             f.setHideInList(true);
             fieldMap.put("load_user", f);
         }
-
-        com.example.datafill.dto.ReferenceTemplateParseResult result = new com.example.datafill.dto.ReferenceTemplateParseResult();
         result.setTableName(tableName);
         result.setTableComment(tableComment.trim().isEmpty() ? tableName : tableComment);
         result.setFilterColumns(new ArrayList<>(filterColumnSet));
@@ -1857,6 +1947,14 @@ public class ExcelService {
                 stats.add(new ColumnStat(c, name));
             }
             result.setOriginalHeaders(originalHeaders);
+            
+            // --- 核心增强：识别 Excel 中是否包含 id 字段 ---
+            boolean hasIdInExcel = originalHeaders.stream()
+                .anyMatch(h -> h != null && "id".equalsIgnoreCase(h.trim()));
+            if (hasIdInExcel) {
+                result.setHasIdConflict(true);
+                result.setConflictMessage("检测到 Excel 中已包含 id 字段。为了由系统统一管理主键并确保 COPY 导入性能，请管理员先删除 Excel 中的 id 列，然后再次上传识别。");
+            }
 
             int rowCount = 0;
             while (rowIterator.hasNext()) {
@@ -1883,7 +1981,11 @@ public class ExcelService {
                         }
                     } else if (cell.getCellType() == org.apache.poi.ss.usermodel.CellType.STRING) {
                         s.couldBeDate = false;
-                        String text = cell.getStringCellValue().trim().replace(",", "");
+                        String originalText = cell.getStringCellValue();
+                        if (originalText.contains(",")) {
+                            s.hasCommas = true;
+                        }
+                        String text = originalText.trim().replace(",", "");
                         try {
                             double d = Double.parseDouble(text);
                             if (d != Math.floor(d))
@@ -1907,8 +2009,7 @@ public class ExcelService {
                 result.setTruncated(true);
             }
 
-            Set<String> usedColNames = new HashSet<>(java.util.Arrays.asList("id", "create_time", "delete_flag",
-                    "extra_data", "w_insert_dt", "w_update_dt", "load_user"));
+            Set<String> usedColNames = new HashSet<>(java.util.Collections.singletonList("id"));
 
             Map<String, String> kwPairs = new HashMap<>();
             Map<String, List<Integer>> groupedBySuffix = new HashMap<>();
@@ -2057,6 +2158,7 @@ public class ExcelService {
 
         String sql = "SELECT c.ordinal_position, c.column_name, c.data_type, c.udt_name, " +
                 "c.character_maximum_length, c.numeric_precision, c.numeric_scale, c.is_nullable, " +
+                "c.column_default, c.is_identity, " +
                 "COALESCE(pgd.description, '') AS column_comment " +
                 "FROM information_schema.columns c " +
                 "INNER JOIN pg_catalog.pg_namespace ns ON ns.nspname = c.table_schema " +
@@ -2127,19 +2229,30 @@ public class ExcelService {
         }
 
         List<String> missing = new ArrayList<>();
-        if (!physicalColumns.contains("id")) {
-            missing.add("id");
-        } else {
-            // 检查 id 类型，如果是 bigint 则标记为缺失/需修复 (int8 = bigint)
+        if (physicalColumns.contains("id")) {
+            // [强约束] 只要物理表有 id，就触发冲突标记，引导用户去重命名/删除以让出主键控制权
+            result.setHasIdConflict(true);
+            result.setConflictMessage("检测到物理表已存在 id 字段。为保证系统自动分配主键，请管理员先在数据库中删除或重命名该列，然后再次识别并点击‘一键补齐’。");
+            
+            boolean isStandardId = false;
             for (Map<String, Object> r : rows) {
                 if ("id".equalsIgnoreCase(asText(r.get("column_name")))) {
-                    String udt = lower(asText(r.get("udt_name")));
-                    if ("int8".equals(udt) || "bigint".equals(udt)) {
-                        if (!missing.contains("id")) missing.add("id");
-                        break;
+                    String udtLabel = lower(asText(r.get("udt_name")));
+                    String isIdent = asText(r.get("is_identity"));
+                    String colDef = asText(r.get("column_default"));
+                    if ("int4".equals(udtLabel)) {
+                        if ("YES".equalsIgnoreCase(isIdent) || (colDef != null && colDef.contains("nextval"))) {
+                            isStandardId = true;
+                        }
                     }
+                    break;
                 }
             }
+            if (!isStandardId) {
+                missing.add("id");
+            }
+        } else {
+            missing.add("id");
         }
 
         String dInsert = detectRole(physicalColumns, INSERT_AUDIT_LEXICON);
@@ -2149,6 +2262,12 @@ public class ExcelService {
         if (dInsert == null) missing.add("w_insert_dt");
         if (dUpdate == null) missing.add("w_update_dt");
         if (dDelete == null) missing.add("delete_flag");
+
+        // 增加 load_user 及索引检测
+        // 增加 load_user 检测 (索引的管理由后台自动处理，不再作为缺失列提示)
+        if (!physicalColumns.contains("load_user")) {
+            missing.add("load_user");
+        }
 
         result.setMissingColumns(missing);
         result.setDetectedInsertDt(dInsert);
@@ -2162,13 +2281,38 @@ public class ExcelService {
         FieldDef def = new FieldDef();
         def.setName(s.headerName);
         String baseColName = generateDwColumnName(s.headerName, colIndex);
+        
+        // 核心增强：识别 Excel 中是否出现了除 ID 以外的系统预留字段名
+        boolean isSystemReserved = EXISTING_TABLE_SYSTEM_COLUMNS.contains(baseColName.toLowerCase());
+        boolean canDirectUseSystemName = isSystemReserved && !"id".equalsIgnoreCase(baseColName);
+
         String finalColName = baseColName;
-        int suffixVal = 1;
-        while (usedColNames.contains(finalColName)) {
-            finalColName = baseColName + "_" + suffixVal++;
+        if (canDirectUseSystemName && !usedColNames.contains(finalColName.toLowerCase())) {
+            // 如果是系统预留字段（如 w_insert_dt），且之前【在这个 Excel 里】还没出现过，则直接占用
+        } else {
+            // 普通字段或重复的系统字段，进入避让逻辑
+            int suffixVal = 1;
+            while (usedColNames.contains(finalColName.toLowerCase()) || EXISTING_TABLE_SYSTEM_COLUMNS.contains(finalColName.toLowerCase())) {
+                finalColName = baseColName + "_" + suffixVal++;
+            }
         }
-        usedColNames.add(finalColName);
+
+        usedColNames.add(finalColName.toLowerCase());
         def.setColumnName(finalColName);
+
+        boolean isSystem = EXISTING_TABLE_SYSTEM_COLUMNS.contains(finalColName.toLowerCase());
+        def.setSystemLocked(isSystem);
+
+        if (isSystem) {
+            def.setRequired(false);
+            def.setFilterable(false);
+            // 除了 extra_data 这种允许填写的，其余系统列默认隐藏
+            if (!"extra_data".equalsIgnoreCase(finalColName)) {
+                def.setHideInForm(true);
+                def.setHideInList(true);
+            }
+        }
+
         def.setType("input");
         def.setDbType("varchar(255)");
         if (smartType && s.nonBlankCount > 0) {
@@ -2177,14 +2321,18 @@ public class ExcelService {
                 def.setDbType("timestamp");
             } else if (s.couldBeNumber) {
                 def.setType("number");
+                // 仅当存在真实小数时建议 numeric，带千分位的整数依然建议 int4，避免物理列类型非预期变更
                 def.setDbType(s.hasDecimal ? "numeric" : "int4");
             } else if (s.rawValues.stream().anyMatch(val -> val.length() > 50)) {
                 def.setType("textarea");
                 def.setDbType("text");
             }
         }
-        def.setRequired(false);
-        def.setFilterable(colIndex < 3 && s.nonBlankCount > 0);
+        
+        if (!isSystem) {
+            def.setRequired(false);
+            def.setFilterable(colIndex < 3 && s.nonBlankCount > 0);
+        }
         return def;
     }
 
@@ -2266,6 +2414,20 @@ public class ExcelService {
 
     private String lower(String value) {
         return value == null ? null : value.toLowerCase();
+    }
+
+    private boolean checkIndexExists(String schema, String table, String columnName) {
+        try {
+            String sql = "SELECT count(1) FROM pg_indexes WHERE schemaname = ? AND tablename = ? AND indexdef LIKE ?";
+            Integer count = jdbcTemplate.queryForObject(sql, Integer.class, schema, table, "%(\"" + columnName + "\")%");
+            if (count == null || count == 0) {
+                // 兼容不带引号的情况
+                count = jdbcTemplate.queryForObject(sql, Integer.class, schema, table, "%(" + columnName + ")%");
+            }
+            return count != null && count > 0;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private Integer asInteger(Object value) {
