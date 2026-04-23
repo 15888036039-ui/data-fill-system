@@ -954,7 +954,7 @@ public class DynamicDataDmlService {
                 if (cycleDays != null && cycleDays > 0 && lastSubmitTime != null) {
                     nextFillTime = lastSubmitTime.plusDays(cycleDays);
                     completedCurrentCycle = now.isBefore(nextFillTime);
-                } else if (lastSubmitTime != null) {
+                } else if (lastSubmitTime != null && deadline != null) {
                     completedCurrentCycle = true;
                 }
             }
