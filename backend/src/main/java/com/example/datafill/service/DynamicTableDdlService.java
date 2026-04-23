@@ -1179,7 +1179,7 @@ public class DynamicTableDdlService {
                         nextFillTime = startTimeOfCycle.plusMonths(1);
                     }
                 }
-            } else if (lastSubmitTime != null) {
+            } else if (lastSubmitTime != null && deadline != null) {
                 completedCurrentCycle = true;
             }
 
