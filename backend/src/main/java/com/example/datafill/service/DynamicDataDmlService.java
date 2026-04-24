@@ -529,14 +529,14 @@ public class DynamicDataDmlService {
         }
 
         for (String col : CREATION_FIELDS) {
-            if (hasColumn(physicalColumns, col) && !rowData.containsKey(col)) {
+            if (hasColumn(physicalColumns, col)) {
                 columns.add("\"" + col + "\"");
                 placeholders.add("?");
                 args.add(now);
             }
         }
         for (String col : UPDATE_FIELDS) {
-            if (hasColumn(physicalColumns, col) && !rowData.containsKey(col)) {
+            if (hasColumn(physicalColumns, col)) {
                 columns.add("\"" + col + "\"");
                 placeholders.add("?");
                 args.add(now);
@@ -807,7 +807,7 @@ public class DynamicDataDmlService {
             args.add(val);
         }
         for (String col : UPDATE_FIELDS) {
-            if (hasColumn(physicalColumns, col) && !rowData.containsKey(col)) {
+            if (hasColumn(physicalColumns, col)) {
                 sets.add("\"" + col + "\" = CURRENT_TIMESTAMP");
             }
         }
