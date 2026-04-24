@@ -1105,6 +1105,21 @@ public class DynamicDataDmlService {
             args.add(operatorEmail);
         }
 
+        if (filters != null) {
+            for (Map.Entry<String, String> f : filters.entrySet()) {
+                if (f.getValue() == null || f.getValue().trim().isEmpty()) continue;
+                String physicalCol = resolvePhysicalColumn(physicalColumns, f.getKey());
+                if (physicalCol != null) {
+                    where.append(" AND CAST(\"").append(physicalCol).append("\" AS TEXT) = ?");
+                    args.add(f.getValue());
+                }
+            }
+        }
+
+        if (hasColumn(physicalColumns, "delete_flag") && !isHardDeleteMode) {
+            where.append(" AND \"delete_flag\" = FALSE ");
+        }
+
         // 删除前探测受影响的用户
         List<String> affectedUsers = new ArrayList<>();
         try {
