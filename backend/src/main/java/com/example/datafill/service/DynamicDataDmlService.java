@@ -826,7 +826,25 @@ public class DynamicDataDmlService {
             } else {
                 updateSql = String.format("UPDATE %s SET %s WHERE \"%s\" = ?", SqlUtil.quoteTable(fullTableName), sets.toString(), pk);
             }
-            jdbcTemplate.update(updateSql, args.toArray());
+
+            // --- Added: User permission check for non-admins ---
+            if (!isAdmin && hasColumn(physicalColumns, "load_user")) {
+                if (operatorEmail == null || operatorEmail.trim().isEmpty()) {
+                    throw new RuntimeException("为确保数据安全，非管理员操作必须识别用户信息，请重新登录。");
+                }
+                updateSql += " AND \"load_user\" = ?";
+                args.add(operatorEmail);
+            }
+
+            int rowsAffected = jdbcTemplate.update(updateSql, args.toArray());
+            if (rowsAffected == 0) {
+                // 如果没有行被更新，可能是 ID 不存在，或者是该行不属于当前用户（由于上面的 AND 限制）
+                if (!isAdmin && hasColumn(physicalColumns, "load_user")) {
+                    throw new RuntimeException("修改失败：记录不存在或您无权修改他人提交的数据。");
+                } else {
+                    throw new RuntimeException("修改失败：未找到对应的记录。");
+                }
+            }
 
             // 更新数据后同步快照
             String affectedUser = rowData.containsKey("load_user") ? rowData.get("load_user").toString()
@@ -929,24 +947,27 @@ public class DynamicDataDmlService {
             boolean completedCurrentCycle = false;
             LocalDateTime nextFillTime = null;
 
-            if ("WEEKLY".equalsIgnoreCase(mode) || "MONTHLY".equalsIgnoreCase(mode) || "DEADLINE".equalsIgnoreCase(mode)) {
+            if (("WEEKLY".equalsIgnoreCase(mode) || "MONTHLY".equalsIgnoreCase(mode) || "DEADLINE".equalsIgnoreCase(mode)) 
+                && (deadline != null || form.getReminderDateTime() != null)) {
                     LocalDateTime startTimeOfCycle = null;
                     if (form.getReminderDateTime() != null) {
                         startTimeOfCycle = form.getReminderDateTime().withNano(0);
-                    } else {
+                    } else if (deadline != null) {
                         startTimeOfCycle = deadline.minusHours((long) (remDays * 24)).with(rt).withNano(0);
                     }
 
-                    boolean isUpcoming = now.isBefore(startTimeOfCycle);
-                    lockStatusMap.put("isUpcoming", isUpcoming);
-                    lockStatusMap.put("startTimeOfCycle", startTimeOfCycle);
+                    if (startTimeOfCycle != null) {
+                        boolean isUpcoming = now.isBefore(startTimeOfCycle);
+                        lockStatusMap.put("isUpcoming", isUpcoming);
+                        lockStatusMap.put("startTimeOfCycle", startTimeOfCycle);
 
-                    if (lastSubmitTime != null && lastSubmitTime.isAfter(startTimeOfCycle)) {
-                        completedCurrentCycle = true;
-                        if ("WEEKLY".equalsIgnoreCase(mode)) {
-                            nextFillTime = startTimeOfCycle.plusDays(7);
-                        } else if ("MONTHLY".equalsIgnoreCase(mode)) {
-                            nextFillTime = startTimeOfCycle.plusMonths(1);
+                        if (lastSubmitTime != null && lastSubmitTime.isAfter(startTimeOfCycle)) {
+                            completedCurrentCycle = true;
+                            if ("WEEKLY".equalsIgnoreCase(mode)) {
+                                nextFillTime = startTimeOfCycle.plusDays(7);
+                            } else if ("MONTHLY".equalsIgnoreCase(mode)) {
+                                nextFillTime = startTimeOfCycle.plusMonths(1);
+                            }
                         }
                     }
             } else {
@@ -1055,13 +1076,25 @@ public class DynamicDataDmlService {
         }
 
         // 删除前识别受影响的用户，以便后续同步快照
+        // [修复]: 增加用户权限过滤，非管理员只能查询到自己有权删除的记录所属人
         List<String> affectedUsers = new ArrayList<>();
         try {
             String psPlaceholder = String.join(",", dataIds.stream().map(i -> "?").toArray(String[]::new));
-            String querySql = String.format("SELECT DISTINCT \"load_user\" FROM %s WHERE \"%s\" IN (%s)", 
-                    SqlUtil.quoteTable(fullTableName), pk, psPlaceholder);
-            affectedUsers = jdbcTemplate.queryForList(querySql, String.class, convertedIds.toArray());
+            StringBuilder querySql = new StringBuilder(String.format("SELECT DISTINCT \"load_user\" FROM %s WHERE \"%s\" IN (%s)", 
+                    SqlUtil.quoteTable(fullTableName), pk, psPlaceholder));
+            List<Object> queryArgs = new ArrayList<>(convertedIds);
+            
+            if (!isAdmin && hasColumn(physicalColumns, "load_user")) {
+                if (operatorEmail == null || operatorEmail.trim().isEmpty()) {
+                    throw new RuntimeException("未识别到用户信息，禁止执行批量删除操作。");
+                }
+                querySql.append(" AND \"load_user\" = ?");
+                queryArgs.add(operatorEmail);
+            }
+            
+            affectedUsers = jdbcTemplate.queryForList(querySql.toString(), String.class, queryArgs.toArray());
         } catch (Exception e) {
+            if (e instanceof RuntimeException) throw e;
             log.warn("探测受影响用户失败: {}", e.getMessage());
         }
 
@@ -1074,10 +1107,26 @@ public class DynamicDataDmlService {
             }
         }
         
+        // [修复]: 真正的删除/更新语句也要加上用户过滤
+        StringBuilder actionSql = new StringBuilder();
+        List<Object> actionArgs = new ArrayList<>(convertedIds);
+        
         if (hasDeleteFlag && !isHardDeleteMode) {
-            jdbcTemplate.update(String.format("UPDATE %s SET delete_flag=TRUE WHERE \"%s\" IN (%s)", SqlUtil.quoteTable(fullTableName), pk, ps), convertedIds.toArray());
+            actionSql.append(String.format("UPDATE %s SET delete_flag=TRUE WHERE \"%s\" IN (%s)", SqlUtil.quoteTable(fullTableName), pk, ps));
         } else {
-            jdbcTemplate.update(String.format("DELETE FROM %s WHERE \"%s\" IN (%s)", SqlUtil.quoteTable(fullTableName), pk, ps), convertedIds.toArray());
+            actionSql.append(String.format("DELETE FROM %s WHERE \"%s\" IN (%s)", SqlUtil.quoteTable(fullTableName), pk, ps));
+        }
+        
+        if (!isAdmin && hasColumn(physicalColumns, "load_user")) {
+            actionSql.append(" AND \"load_user\" = ?");
+            actionArgs.add(operatorEmail);
+        }
+        
+        int rowsDeleted = jdbcTemplate.update(actionSql.toString(), actionArgs.toArray());
+        if (rowsDeleted == 0 && !dataIds.isEmpty()) {
+            if (!isAdmin && hasColumn(physicalColumns, "load_user")) {
+                throw new RuntimeException("删除失败：您无权删除包含他人提交的记录，或者记录已被他人删除。");
+            }
         }
 
         // 删除后同步受影响用户的快照
@@ -1100,10 +1149,16 @@ public class DynamicDataDmlService {
 
         StringBuilder where = new StringBuilder(" WHERE 1=1 ");
         List<Object> args = new ArrayList<>();
-        if (!isAdmin && operatorEmail != null && hasColumn(physicalColumns, "load_user")) {
+        
+        // --- 核心修复：增加强制用户权限限制 ---
+        if (!isAdmin && hasColumn(physicalColumns, "load_user")) {
+            if (operatorEmail == null || operatorEmail.trim().isEmpty()) {
+                throw new RuntimeException("无法按条件清空数据：未识别到当前登录用户信息。");
+            }
             where.append(" AND \"load_user\" = ? ");
             args.add(operatorEmail);
         }
+        // ------------------------------------
 
         if (filters != null) {
             for (Map.Entry<String, String> f : filters.entrySet()) {
