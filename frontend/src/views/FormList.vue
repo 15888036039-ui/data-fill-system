@@ -37,8 +37,11 @@
               <div class="folder-node">
                 <div class="folder-node-main">
                   <el-icon class="folder-node-icon"><Folder /></el-icon>
-                  <span class="folder-node-name">{{ data.name }}</span>
-                  <el-tag size="small" round>{{ data.templateCount || 0 }}</el-tag>
+                  <!-- 增加 Tooltip：当目录名过长显示省略号时，悬停可查看完整名称 -->
+                  <el-tooltip :content="data.name" placement="top" :show-after="800" :disabled="!data.name">
+                    <span class="folder-node-name">{{ data.name }}</span>
+                  </el-tooltip>
+                  <el-tag size="small" round class="folder-count-tag">{{ data.templateCount || 0 }}</el-tag>
                 </div>
                 <div v-if="isAdmin && !data.systemNode" class="folder-node-actions">
                   <el-tooltip content="新增子目录" placement="top"><el-button link type="primary" icon="Plus" @click.stop="createFolder(data)" /></el-tooltip>
@@ -61,6 +64,9 @@
           <button class="context-menu-item" @click="handleContextMenuAction('rename')">重命名目录</button>
           <button class="context-menu-item danger" @click="handleContextMenuAction('delete')">删除目录</button>
         </div>
+
+        <!-- 侧边栏宽度调节手柄：位于卡片最右侧的透明条，允许鼠标拖拽缩放 -->
+        <div class="sidebar-resizer" @mousedown="startSidebarResize"></div>
       </el-card>
 
       <div class="content-panel">
@@ -329,6 +335,41 @@ const contextMenu = ref({
   y: 0,
   folder: null
 })
+
+// 侧边栏宽度动态调节逻辑
+const sidebarWidth = ref(280) // 初始宽度
+const isResizing = ref(false) // 是否正在调整大小
+
+// 鼠标按下缩放条时触发
+const startSidebarResize = (e) => {
+  isResizing.value = true
+  // 监听全局鼠标移动和松开事件
+  document.addEventListener('mousemove', handleSidebarResize)
+  document.addEventListener('mouseup', stopSidebarResize)
+  // 锁定光标样式并禁用文字选择
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
+
+// 鼠标移动时计算新宽度
+const handleSidebarResize = (e) => {
+  if (!isResizing.value) return
+  // 计算鼠标当前位置相对于页面的宽度（减去可能的左侧偏移量）
+  const newWidth = e.clientX - 24 
+  // 限制宽度范围：最小 180px，最大 600px
+  if (newWidth > 180 && newWidth < 600) {
+    sidebarWidth.value = newWidth
+  }
+}
+
+// 鼠标松开时移除监听，恢复页面状态
+const stopSidebarResize = () => {
+  isResizing.value = false
+  document.removeEventListener('mousemove', handleSidebarResize)
+  document.removeEventListener('mouseup', stopSidebarResize)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+}
 
 const filteredForms = computed(() => {
   const keyword = appliedSearchQuery.value.trim().toLowerCase()
@@ -740,7 +781,9 @@ onBeforeUnmount(() => {
 
 .folder-card {
   position: relative;
-  width: 280px;
+  width: v-bind('sidebarWidth + "px"');
+  min-width: 180px;
+  max-width: 600px;
   flex-shrink: 0;
   border-radius: 16px;
   overflow: hidden;
@@ -830,19 +873,38 @@ onBeforeUnmount(() => {
 }
 
 .folder-node-actions {
-  opacity: 0;
-  display: flex;
+  display: none; /* 默认隐藏操作按钮，腾出空间给名称 */
   align-items: center;
   gap: 2px;
   flex-shrink: 0;
-  transition: opacity 0.2s ease;
-  pointer-events: none;
   padding-left: 8px;
 }
 
+/* 仅在鼠标悬停在目录项上时显示按钮 */
 .folder-node:hover .folder-node-actions {
-  opacity: 1;
-  pointer-events: auto;
+  display: flex;
+}
+
+.folder-count-tag {
+  flex-shrink: 0; /* 防止数量标签被挤压 */
+}
+
+/* 侧边栏缩放手柄样式 */
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px; /* 响应区域宽度 */
+  height: 100%;
+  cursor: col-resize;
+  transition: background 0.2s;
+  z-index: 10;
+}
+
+/* 缩放手柄悬停或激活时的提示色 */
+.sidebar-resizer:hover, .sidebar-resizer:active {
+  background: var(--primary-color);
+  opacity: 0.3;
 }
 
 .folder-context-menu {
@@ -1034,11 +1096,12 @@ onBeforeUnmount(() => {
 }
 
 :deep(.el-tree) {
-  overflow-x: hidden;
+  overflow-x: auto;
 }
 
 :deep(.el-tree-node) {
-  overflow: hidden;
+  width: max-content;
+  min-width: 100%;
 }
 
 :deep(.el-tree-node > .el-tree-node__content) {
