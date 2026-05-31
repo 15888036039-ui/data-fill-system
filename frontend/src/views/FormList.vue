@@ -38,7 +38,7 @@
                 <div class="folder-node-main">
                   <el-icon class="folder-node-icon"><Folder /></el-icon>
                   <!-- 增加 Tooltip：当目录名过长显示省略号时，悬停可查看完整名称 -->
-                  <el-tooltip :content="data.name" placement="top" :show-after="800" :disabled="!data.name">
+                  <el-tooltip :content="data.name" placement="top" :show-after="200" :enterable="false" :disabled="!data.name">
                     <span class="folder-node-name">{{ data.name }}</span>
                   </el-tooltip>
                   <el-tag size="small" round class="folder-count-tag">{{ data.templateCount || 0 }}</el-tag>
@@ -1110,12 +1110,6 @@ onBeforeUnmount(() => {
 
 :deep(.el-tree .el-scrollbar__wrap) {
   overflow-x: hidden !important;
-}
-
-@media (max-width: 1400px) {
-  .folder-card {
-    width: 210px;
-  }
 }
 
 @media (max-width: 1280px) {

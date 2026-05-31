@@ -24,6 +24,13 @@ public class ExcelParseResult {
     
     private boolean hasIdConflict;
     private String conflictMessage;
+    
+    // 探测到的物理主键列
+    private String detectedPrimaryKey;
+    
+    // 是否为联合主键
+    @com.fasterxml.jackson.annotation.JsonProperty("isCompositePrimaryKey")
+    private boolean isCompositePrimaryKey;
 
     @Data
     @NoArgsConstructor

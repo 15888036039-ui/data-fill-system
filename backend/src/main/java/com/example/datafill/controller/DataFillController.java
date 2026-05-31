@@ -7,6 +7,7 @@ import com.example.datafill.service.DataFillFolderService;
 import com.example.datafill.service.DynamicTableDdlService;
 import com.example.datafill.service.DynamicDataDmlService;
 import com.example.datafill.service.ExcelService;
+import com.example.datafill.service.UserService;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -27,6 +28,7 @@ public class DataFillController {
     private final DataFillFormMapper formMapper;
     private final com.example.datafill.mapper.OperationLogMapper operationLogMapper;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final UserService userService;
 
     @org.springframework.beans.factory.annotation.Value("${data-fill.mail.admin-email:}")
     private String adminEmail;
@@ -38,7 +40,8 @@ public class DataFillController {
             DataFillFolderService folderService,
             DataFillFormMapper formMapper,
             com.example.datafill.mapper.OperationLogMapper operationLogMapper,
-            com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+            com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+            UserService userService) {
         this.tableDdlService = tableDdlService;
         this.dataDmlService = dataDmlService;
         this.excelService = excelService;
@@ -46,6 +49,7 @@ public class DataFillController {
         this.formMapper = formMapper;
         this.operationLogMapper = operationLogMapper;
         this.objectMapper = objectMapper;
+        this.userService = userService;
     }
 
     private boolean isUserAdmin(String email) {
@@ -73,20 +77,44 @@ public class DataFillController {
         if (userEmail == null || userEmail.trim().isEmpty()) {
             return false;
         }
+
+        boolean hasUserAccess = false;
+        boolean hasDeptAccess = false;
+        
         String fillEmails = form.getFillUserEmails();
-        if (fillEmails == null || fillEmails.trim().isEmpty()) {
-            return false;
+        if (fillEmails != null && !fillEmails.trim().isEmpty() && !"[]".equals(fillEmails.trim())) {
+            try {
+                List<String> allowed = objectMapper
+                        .readValue(fillEmails, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+                if (allowed != null && !allowed.isEmpty()) {
+                    if (allowed.stream().anyMatch(e -> e != null && e.equalsIgnoreCase(userEmail))) {
+                        hasUserAccess = true;
+                    }
+                }
+            } catch (Exception ignored) {}
         }
-        try {
-            List<String> allowed = objectMapper
-                    .readValue(fillEmails, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
-            if (allowed == null || allowed.isEmpty()) {
-                return false;
-            }
-            return allowed.stream().anyMatch(e -> e != null && e.equalsIgnoreCase(userEmail));
-        } catch (Exception e) {
-            return false;
+
+        String fillDepartments = form.getFillDepartments();
+        if (!hasUserAccess && fillDepartments != null && !fillDepartments.trim().isEmpty() && !"[]".equals(fillDepartments.trim())) {
+            try {
+                List<String> allowedDepts = objectMapper.readValue(fillDepartments, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+                if (allowedDepts != null && !allowedDepts.isEmpty()) {
+                    String userDept = userService.getUserDepartment(userEmail);
+                    if (userDept != null && allowedDepts.contains(userDept)) {
+                        hasDeptAccess = true;
+                    }
+                }
+            } catch (Exception ignored) {}
         }
+
+        boolean hasAnyConfig = (fillEmails != null && !fillEmails.trim().isEmpty() && !"[]".equals(fillEmails.trim()))
+                            || (fillDepartments != null && !fillDepartments.trim().isEmpty() && !"[]".equals(fillDepartments.trim()));
+
+        if (!hasAnyConfig) {
+            return false; // 两者均为空，仅管理员可见
+        }
+
+        return hasUserAccess || hasDeptAccess;
     }
 
     private void recordLog(String formId, String userEmail, String type, String desc) {
@@ -303,6 +331,16 @@ public class DataFillController {
         return dataDmlService.getTableDataPage(formId, page, size, null, userEmail, isAdmin);
     }
 
+    // [用户端核心]: 获取某张动态物理表中某个字段的历史去重值（下拉框筛选自动去重）
+    @GetMapping("/data/{formId}/distinct/{columnName}")
+    public List<String> getDistinctColumnValues(
+            @PathVariable String formId,
+            @PathVariable String columnName,
+            @RequestParam(required = false) String userEmail) {
+        boolean isAdmin = isUserAdmin(userEmail);
+        return dataDmlService.getDistinctColumnValues(formId, columnName, userEmail, isAdmin);
+    }
+
 
 
     /**
@@ -415,6 +453,25 @@ public class DataFillController {
     }
 
     /**
+     * 下载导入错误报告
+     */
+    @GetMapping("/import/error-report/{reportId}")
+    public void downloadErrorReport(@PathVariable String reportId, HttpServletResponse response) throws IOException {
+        String report = excelService.getErrorReport(reportId);
+        if (report == null) {
+            response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+            return;
+        }
+
+        String fileName = "导入错误报告_" + reportId.substring(0, 8) + ".txt";
+        String encodedFileName = URLEncoder.encode(fileName, "UTF-8");
+
+        response.setContentType("text/plain;charset=UTF-8");
+        response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encodedFileName);
+        response.getWriter().write(report);
+    }
+
+    /**
      * 快速导入 Excel 解析表头，生成字段配置
      */
     @PostMapping("/forms/parseExcel")
@@ -476,5 +533,54 @@ public class DataFillController {
             @RequestBody List<String> columns) {
         assertAdmin(userEmail);
         return tableDdlService.repairTableByName(schemaName, tableName, columns);
+    }
+
+    @PostMapping("/test-sql")
+    public Map<String, Object> testSql(
+            @RequestParam String sql,
+            @RequestParam String testValue,
+            @RequestParam(required = false) String userEmail) {
+        assertAdmin(userEmail);
+        return dataDmlService.testValidationSql(sql, testValue);
+    }
+
+    @GetMapping("/filter-options-sql")
+    public List<String> getFilterOptionsBySql(
+            @RequestParam String sql,
+            @RequestParam(required = false) String userEmail) {
+        assertAdmin(userEmail);
+        return dataDmlService.executeFilterOptionsSql(sql);
+    }
+
+    @GetMapping("/data/{formId}/filter-options-by-sql")
+    public List<String> getFilterOptionsForColumnBySql(
+            @PathVariable String formId,
+            @RequestParam String columnName,
+            @RequestParam(required = false) String userEmail) {
+        
+        DataFillForm form = formMapper.selectById(formId);
+        if (form == null || form.getForms() == null || form.getForms().isEmpty()) {
+            return java.util.Collections.emptyList();
+        }
+
+        try {
+            List<com.example.datafill.dto.FieldDef> fields = objectMapper.readValue(
+                    form.getForms(), 
+                    new com.fasterxml.jackson.core.type.TypeReference<List<com.example.datafill.dto.FieldDef>>() {}
+            );
+            
+            for (com.example.datafill.dto.FieldDef field : fields) {
+                if (columnName.equalsIgnoreCase(field.getColumnName())) {
+                    if (field.getFilterOptionsSql() != null && !field.getFilterOptionsSql().trim().isEmpty()) {
+                        return dataDmlService.executeFilterOptionsSql(field.getFilterOptionsSql());
+                    }
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            return java.util.Collections.emptyList();
+        }
+        
+        return java.util.Collections.emptyList();
     }
 }

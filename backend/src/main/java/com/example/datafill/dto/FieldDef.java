@@ -25,4 +25,13 @@ public class FieldDef {
     private Boolean hideInForm;  // 是否在填报模版/表单中隐藏
     private Boolean hideInList;  // 是否在列表展示中隐藏
     private Boolean systemLocked; // 是否为系统锁定字段 (禁止修改列名或删除)
+
+    // 进阶校验：自定义 SQL 校验 (维度表关联)
+    private String validationSql;    // 自定义校验 SQL，如：SELECT 1 FROM dim_table WHERE code = :val
+    private String validationSqlMsg; // 校验失败时的提示语
+
+    // 筛选器配置
+    private String filterType;       // 筛选控件类型：input(输入框), select(下拉框)
+    private List<String> filterOptions; // 筛选下拉框选项
+    private String filterOptionsSql;    // 筛选下拉选项 SQL
 }

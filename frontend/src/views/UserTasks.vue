@@ -7,9 +7,8 @@
     <div v-else class="task-content">
       <div class="page-layout">
         <el-card class="folder-card" shadow="never">
-          <div class="folder-card-header">
-            <div class="folder-title">任务目录</div>
-            <div class="folder-subtitle">仅展示你有权限查看的目录</div>
+          <div class="folder-header">
+            <div class="folder-header-title">任务目录</div>
           </div>
 
           <div class="folder-tree-panel" v-loading="folderLoading">
@@ -37,22 +36,27 @@
                 <div class="folder-node">
                   <div class="folder-node-main">
                     <el-icon class="folder-node-icon"><Folder /></el-icon>
-                    <span class="folder-node-name">{{ data.name }}</span>
+                    <el-tooltip :content="data.name" placement="top" :show-after="200" :enterable="false" :disabled="!data.name">
+                      <span class="folder-node-name">{{ data.name }}</span>
+                    </el-tooltip>
                   </div>
-                  <el-tag size="small" round>{{ data.templateCount || 0 }}</el-tag>
+                  <el-tag size="small" round class="folder-count-tag">{{ data.templateCount || 0 }}</el-tag>
                 </div>
               </template>
             </el-tree>
 
             <el-empty v-else-if="!folderLoading" description="暂无目录" :image-size="72" />
           </div>
+
+          <div class="sidebar-resizer" @mousedown="startSidebarResize"></div>
         </el-card>
 
         <div class="content-panel">
           <div class="view-header">
             <div class="view-header-left">
               <div class="view-title-row">
-                <span class="view-title">{{ selectedFolderId ? selectedFolderLabel : '全部任务' }}</span>
+                <!-- 这里的标题固定为全部任务，对齐管理员端风格 -->
+                <span class="view-title">全部任务</span>
                 <el-tag type="success" effect="plain" round size="small" class="count-tag">
                   共 {{ filteredTasks.length }} 个任务
                 </el-tag>
@@ -105,10 +109,12 @@
 
               <el-table-column prop="folderPath" label="所属目录" min-width="120">
                 <template #default="scope">
-                  <div class="folder-path-cell">
-                    <el-icon size="12"><Folder /></el-icon>
-                    <span class="folder-path-text">{{ scope.row.folderPath || '默认' }}</span>
-                  </div>
+                  <el-tooltip :content="scope.row.folderPath || '默认'" placement="top" :show-after="200">
+                    <div class="folder-path-cell">
+                      <el-icon size="12"><Folder /></el-icon>
+                      <span class="folder-path-text">{{ scope.row.folderPath || '默认' }}</span>
+                    </div>
+                  </el-tooltip>
                 </template>
               </el-table-column>
 
@@ -207,7 +213,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch, inject, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, onUnmounted, watch, inject, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import axios from 'axios'
@@ -230,57 +236,73 @@ const pageSize = ref(10)
 
 const allTasks = ref([])
 const folderTree = ref([])
-const folderPathMap = computed(() => {
-  const map = {}
-  const walk = (nodes, parents = []) => {
-    ;(nodes || []).forEach(node => {
-      const nextParents = [...parents, node.name]
-      map[node.id] = nextParents
-      walk(node.children, nextParents)
-    })
+
+// 侧边栏宽度动态调节逻辑 (同步管理员端)
+const sidebarWidth = ref(280) // 初始宽度
+const isResizing = ref(false) // 是否正在调整大小
+
+const startSidebarResize = (e) => {
+  isResizing.value = true
+  document.addEventListener('mousemove', handleSidebarResize)
+  document.addEventListener('mouseup', stopSidebarResize)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
+
+const handleSidebarResize = (e) => {
+  if (!isResizing.value) return
+  const newWidth = e.clientX - 24 
+  if (newWidth > 180 && newWidth < 600) {
+    sidebarWidth.value = newWidth
   }
-  walk(folderTree.value)
-  return map
-})
-const selectedFolderCrumbs = computed(() => {
-  if (!selectedFolderId.value) return []
-  const segments = folderPathMap.value[selectedFolderId.value] || ['默认']
-  return segments.map((name, index) => ({
-    id: index === segments.length - 1 ? selectedFolderId.value : findFolderIdByPath(segments.slice(0, index + 1)),
-    name
-  })).filter(item => item.id)
-})
-const selectedFolderLabel = computed(() => {
-  if (!selectedFolderId.value) return ''
-  if (selectedFolderId.value === '__uncategorized__') return '默认'
-  return (folderPathMap.value[selectedFolderId.value] || []).join(' / ')
-})
+}
+
+const stopSidebarResize = () => {
+  isResizing.value = false
+  document.removeEventListener('mousemove', handleSidebarResize)
+  document.removeEventListener('mouseup', stopSidebarResize)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+}
+
+// 递归获取所有子孙目录 ID 的方法
+const getAllDescendantIds = (folderId, nodes) => {
+  let ids = [folderId];
+  const findInTree = (treeNodes) => {
+    for (const node of treeNodes) {
+      if (node.id === folderId) {
+        const collect = (children) => {
+          children.forEach(child => {
+            ids.push(child.id);
+            if (child.children) collect(child.children);
+          });
+        };
+        if (node.children) collect(node.children);
+        return true;
+      }
+      if (node.children && findInTree(node.children)) return true;
+    }
+    return false;
+  };
+  findInTree(nodes);
+  return ids;
+};
 
 const loadTasks = async () => {
-  if (!userEmail.value) {
-    return
-  }
-  
+  if (!userEmail.value) return
   loading.value = true
   try {
-    const params = {
-      userEmail: userEmail.value
-    }
-    if (route.query.groupTag) {
-      params.groupTag = route.query.groupTag
-    }
-    
+    const params = { userEmail: userEmail.value }
+    if (route.query.groupTag) params.groupTag = route.query.groupTag
     const res = await axios.get('/api/fill/user/tasks', { params })
     const pending = res.data.pending || []
     const completed = res.data.completed || []
     const expired = res.data.expired || []
-    
     allTasks.value = [
       ...pending,
       ...completed.map(t => ({...t, taskStatus: 'completed'})),
       ...expired.map(t => ({...t, taskStatus: 'expired'}))
     ]
-    
     handleFilter()
   } catch (e) {
     ElMessage.error('无法同步任务列表，请检查网络')
@@ -293,12 +315,8 @@ const loadFolders = async () => {
   if (!userEmail.value) return
   folderLoading.value = true
   try {
-    const params = {
-      userEmail: userEmail.value
-    }
-    if (route.query.groupTag) {
-      params.groupTag = route.query.groupTag
-    }
+    const params = { userEmail: userEmail.value }
+    if (route.query.groupTag) params.groupTag = route.query.groupTag
     const res = await axios.get('/api/fill/folders/tree', { params })
     folderTree.value = res.data || []
   } catch (e) {
@@ -315,12 +333,13 @@ const handleFilter = () => {
     const matchesSearch = !searchQuery.value || 
       task.name.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
       (task.folderPath || '默认').toLowerCase().includes(searchQuery.value.toLowerCase())
-      
     const matchesStatus = !statusFilter.value || task.taskStatus === statusFilter.value
+    
+    // 递归筛选逻辑
     const matchesFolder = !selectedFolderId.value ||
       (selectedFolderId.value === '__uncategorized__'
         ? (!task.folderId || task.folderId === '')
-        : task.folderId === selectedFolderId.value)
+        : getAllDescendantIds(selectedFolderId.value, folderTree.value).includes(task.folderId))
     
     return matchesSearch && matchesStatus && matchesFolder
   })
@@ -339,9 +358,7 @@ const paginatedTasks = computed(() => {
   return filteredTasks.value.slice(start, end)
 })
 
-const handlePaginationChange = () => {
-  // purely distinct frontend pagination, computed handles it automatically
-}
+const handlePaginationChange = () => {}
 
 watch(userEmail, (newEmail) => {
   if (newEmail) {
@@ -368,6 +385,11 @@ onMounted(() => {
   }, 1000)
 })
 
+onBeforeUnmount(() => {
+  document.removeEventListener('mousemove', handleSidebarResize)
+  document.removeEventListener('mouseup', stopSidebarResize)
+})
+
 onUnmounted(() => {
   if (timer) clearInterval(timer)
 })
@@ -377,19 +399,9 @@ const selectAllFolders = () => {
   handleFilter()
 }
 
-const selectFolderById = (folderId) => {
-  selectedFolderId.value = folderId
-  handleFilter()
-}
-
 const handleFolderSelect = (data) => {
-  selectFolderById(data.id)
-}
-
-const findFolderIdByPath = (segments) => {
-  const pathText = segments.join(' / ')
-  const target = Object.entries(folderPathMap.value).find(([, value]) => value.join(' / ') === pathText)
-  return target?.[0] || ''
+  selectedFolderId.value = data.id
+  handleFilter()
 }
 
 const formatTimeLeft = (seconds) => {
@@ -399,7 +411,6 @@ const formatTimeLeft = (seconds) => {
   const hours = Math.floor((seconds % 86400) / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
   const secs = Math.floor(seconds % 60)
-  
   if (days > 0) return `${days}天 ${hours}小时`
   if (hours > 0) return `${hours}小时 ${minutes}分 ${secs}秒`
   if (minutes > 0) return `${minutes}分钟 ${secs}秒`
@@ -426,7 +437,10 @@ const formatTimeLeft = (seconds) => {
 }
 
 .folder-card {
-  width: 280px;
+  position: relative;
+  width: v-bind('sidebarWidth + "px"');
+  min-width: 180px;
+  max-width: 600px;
   flex-shrink: 0;
   border-radius: 16px;
   overflow: hidden;
@@ -439,21 +453,20 @@ const formatTimeLeft = (seconds) => {
   box-shadow: 0 12px 24px -10px rgba(15, 23, 42, 0.1);
 }
 
-.folder-card-header {
+.folder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 16px 12px 12px;
   border-bottom: 1px solid #f1f5f9;
   margin-bottom: 8px;
 }
 
-.folder-title {
+.folder-header-title {
   font-size: 14px;
   font-weight: 700;
   color: #1e293b;
   letter-spacing: 0.5px;
-}
-
-.folder-subtitle {
-  display: none; /* 精简 UI */
 }
 
 .folder-tree-panel {
@@ -509,6 +522,7 @@ const formatTimeLeft = (seconds) => {
 
 .folder-node-icon {
   color: #94a3b8;
+  font-size: 16px;
 }
 
 .folder-node-name {
@@ -519,6 +533,22 @@ const formatTimeLeft = (seconds) => {
   overflow: hidden;
   text-overflow: ellipsis;
   color: #334155;
+}
+
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  transition: background 0.2s;
+  z-index: 10;
+}
+
+.sidebar-resizer:hover, .sidebar-resizer:active {
+  background: var(--primary-color);
+  opacity: 0.3;
 }
 
 .content-panel {
@@ -569,20 +599,8 @@ const formatTimeLeft = (seconds) => {
   width: 240px;
 }
 
-.search-input-compact :deep(.el-input__wrapper) {
-  box-shadow: none !important;
-  background: #f1f5f9;
-  border-radius: 8px;
-}
-
 .status-select-compact {
   width: 110px;
-}
-
-.status-select-compact :deep(.el-input__wrapper) {
-  box-shadow: none !important;
-  background: #f1f5f9;
-  border-radius: 8px;
 }
 
 .divider {
@@ -607,6 +625,11 @@ const formatTimeLeft = (seconds) => {
   background-color: #f8fafc !important;
 }
 
+.modern-table-row:hover .icon-avatar {
+  background: #e2e8f0;
+  color: var(--primary-color);
+}
+
 .icon-avatar {
   width: 32px;
   height: 32px;
@@ -618,11 +641,6 @@ const formatTimeLeft = (seconds) => {
   color: #64748b;
   flex-shrink: 0;
   transition: all 0.2s;
-}
-
-.modern-table-row:hover .icon-avatar {
-  background: #e2e8f0;
-  color: var(--primary-color);
 }
 
 .form-name-cell {
@@ -708,7 +726,7 @@ const formatTimeLeft = (seconds) => {
     align-items: stretch;
   }
   .folder-card {
-    width: 100%;
+    width: 100% !important;
     margin-bottom: 16px;
   }
   .folder-tree-panel {

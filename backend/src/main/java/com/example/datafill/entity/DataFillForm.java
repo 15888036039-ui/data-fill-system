@@ -55,6 +55,10 @@ public class DataFillForm {
     @TableField(updateStrategy = FieldStrategy.IGNORED)
     private String fillUserEmails;
 
+    /** 允许填报的部门列表 JSON 字符串，如 ["技术部","财务部"] */
+    @TableField(updateStrategy = FieldStrategy.IGNORED)
+    private String fillDepartments;
+
     /** 填报周期天数（例如 1=每天可填一次；7=每7天可填一次；为空或<=0 表示只需填报一次） */
     @TableField(updateStrategy = FieldStrategy.IGNORED)
     private Integer cycleDays;

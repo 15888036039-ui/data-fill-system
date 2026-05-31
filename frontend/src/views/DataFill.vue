@@ -523,14 +523,59 @@ const formFields = computed(() => {
 // 兼容旧逻辑名（如果其他地方引用了 schemaFields）
 const schemaFields = formFields
 
+const dynamicFilterOptions = ref({})
+
+const loadDynamicFilterOptions = async () => {
+  if (!formMeta.value || !formMeta.value.forms) return
+  try {
+    const allFields = JSON.parse(formMeta.value.forms)
+    const targetFields = allFields.filter(f => 
+      f.filterable && 
+      f.filterType === 'select' && 
+      (!f.filterOptions || f.filterOptions.length === 0) && 
+      (!f.options || f.options.length === 0)
+    )
+    
+    await Promise.all(targetFields.map(async (f) => {
+      try {
+        if (f.filterOptionsSql && f.filterOptionsSql.trim()) {
+          const res = await axios.get(`/api/fill/data/${formId}/filter-options-by-sql`, {
+            params: {
+              columnName: f.columnName,
+              userEmail: userEmail.value
+            }
+          })
+          dynamicFilterOptions.value[f.columnName] = res.data || []
+        } else {
+          const res = await axios.get(`/api/fill/data/${formId}/distinct/${f.columnName}?userEmail=${userEmail.value}&isAdmin=${isAdmin.value}`)
+          dynamicFilterOptions.value[f.columnName] = res.data || []
+        }
+      } catch (err) {
+        console.warn(`Failed to fetch dynamic filter options for column: ${f.columnName}`, err)
+      }
+    }))
+  } catch (e) {
+    console.error('Error parsing forms for dynamic filter options', e)
+  }
+}
+
 const filterFields = computed(() => {
   const filterable = tableFields.value.filter(f => f.filterable)
-  if (filterable.length > 0) return filterable
+  let fieldsToUse = filterable.length > 0 ? filterable : []
+  if (fieldsToUse.length === 0) {
+    const policy = formMeta.value?.defaultFilterPolicy
+    if (policy !== 'NONE') {
+      fieldsToUse = tableFields.value.slice(0, 3)
+    }
+  }
   
-  const policy = formMeta.value?.defaultFilterPolicy
-  if (policy === 'NONE') return []
-  // 默认策略或 FIRST_THREE：取前三个可见字段
-  return tableFields.value.slice(0, 3)
+  return fieldsToUse.map(f => {
+    const copy = { ...f }
+    if (copy.filterType === 'select' && (!copy.filterOptions || copy.filterOptions.length === 0) && (!copy.options || copy.options.length === 0)) {
+      copy.filterOptions = dynamicFilterOptions.value[copy.columnName] || []
+    }
+    return copy
+  })
 })
 
 const loadFormMeta = async () => {
@@ -538,6 +583,7 @@ const loadFormMeta = async () => {
     const res = await axios.get(`/api/fill/forms/${formId}`)
     formMeta.value = res.data
     await loadTableData()
+    await loadDynamicFilterOptions()
   } catch (e) {
     ElMessage.error('加载任务配置失败')
   } finally {
@@ -694,6 +740,24 @@ const handleImportSuccess = (response) => {
   if (response.success) {
     ElMessage.success(`成功导入 ${response.count} 条记录`)
     loadTableData()
+  } else if (response.hasValidationErrors) {
+    // 处理大批量数据的校验错误提示
+    const summary = `检测到共 <strong style="color: #ef4444; font-size: 15px;">${response.errorCount}</strong> 处数据不合规。为了保障数据一致性，本次导入已全部安全回滚（未向数据库写入任何记录）。`
+    const downloadUrl = `/api/fill/import/error-report/${response.reportId}`
+    
+    ElMessageBox.confirm(
+      `${summary}<br/><br/><span style="color: #64748b; font-size: 13px; font-weight: 500;">请下载详细错误清单，修改后重新上传。</span>`,
+      '导入校验失败',
+      {
+        confirmButtonText: '下载错误清单',
+        cancelButtonText: '关闭',
+        type: 'error',
+        dangerouslyUseHTMLString: true,
+        distinguishCancelAndClose: true
+      }
+    ).then(() => {
+      window.open(downloadUrl)
+    }).catch(() => {})
   } else {
     ElMessage.error(response.message || '导入失败，请检查文件格式')
   }

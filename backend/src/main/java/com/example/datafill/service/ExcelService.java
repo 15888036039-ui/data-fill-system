@@ -60,9 +60,21 @@ import net.sourceforge.pinyin4j.format.HanyuPinyinToneType;
 
 @Service
 @RequiredArgsConstructor
-
 public class ExcelService {
     private static final Logger log = LoggerFactory.getLogger(ExcelService.class);
+    // 使用具有 LRU (Least Recently Used) 淘汰机制的线程安全 Map，防止 OOM。最多保留 50 个最近的报错报告。
+    private final java.util.Map<String, String> errorReportCache = java.util.Collections.synchronizedMap(
+        new java.util.LinkedHashMap<String, String>(64, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(java.util.Map.Entry<String, String> eldest) {
+                return size() > 50;
+            }
+        }
+    );
+
+    public String getErrorReport(String reportId) {
+        return errorReportCache.get(reportId);
+    }
     private static final String EXCEL_ROW_META_KEY = "__excel_row_num__";
     private static final java.util.regex.Pattern NUMBER_PATTERN = java.util.regex.Pattern
             .compile("^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$");
@@ -559,7 +571,8 @@ public class ExcelService {
 
     }
 
-    /**
+    
+	/**
      * 
      * 6. 解析上传Excel，将每一行作为一条填报记录写入动态物理表
      * 
@@ -567,7 +580,7 @@ public class ExcelService {
 
     /**
      * 6. 将 Excel 数据批量导入物理表
-     * 优化：元数据计算外提，分片分批入库
+     * 优化：硬盘暂存缓冲区 + 原子事务 COPY
      */
     @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
     public Map<String, Object> importData(String formId, MultipartFile file, String mode, String creator, boolean isAdmin)
@@ -584,7 +597,7 @@ public class ExcelService {
         List<FieldDef> fields;
         try {
             fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {
-            });
+			});
         } catch (JsonProcessingException e) {
             throw new RuntimeException("表单解析错误", e);
         }
@@ -608,8 +621,18 @@ public class ExcelService {
             }
         }
 
-        // 参考模板创建的表单需要额外支持“上传文件原始表头 -> 数据库字段”的映射，
-        // 否则像 "Billing Source" 这类英文头会落不到 billing_source，最终掉进 extra_data。
+        // --- 增强：识别物理列属性，用于处理自增主键 ---
+        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
+        java.util.Map<String, String> physicalColumns = dataDmlService.loadPhysicalColumns(schema, form.getTableName());
+        String pk = (form.getPkColumn() != null && !form.getPkColumn().isEmpty()) ? form.getPkColumn() : "id";
+        String pkType = physicalColumns.get(pk.toLowerCase());
+        boolean isNumericPk = dataDmlService.isNumericType(pkType);
+        boolean hasPkCol = physicalColumns.containsKey(pk.toLowerCase());
+
+        // 检测主键是否为数据库自增主键，非自增则不排除，允许显式导入
+        boolean isAutoIncrement = dataDmlService.isColumnAutoIncrement(schema, form.getTableName(), pk);
+        boolean shouldExcludePk = hasPkCol && isNumericPk && isAutoIncrement;
+
         if (form.getReferenceTemplateConfig() != null && !form.getReferenceTemplateConfig().trim().isEmpty()) {
             try {
                 Map<String, Object> referenceConfig = objectMapper.readValue(
@@ -635,6 +658,7 @@ public class ExcelService {
                         boolean jsonMapped = jsonMappedObj instanceof Boolean
                                 ? (Boolean) jsonMappedObj
                                 : Boolean.parseBoolean(String.valueOf(jsonMappedObj));
+
                         if (excelHeader.trim().isEmpty() || columnName.trim().isEmpty()) {
                             continue;
                         }
@@ -646,7 +670,7 @@ public class ExcelService {
                     }
                 }
             } catch (Exception e) {
-                // 保留回退行为，但输出日志方便排查“有数据却映射不到列”的问题
+                // 保留旧退行行为，但输出日志方便排查“有数据却映射不到列”的问题
                 log.warn("解析 referenceTemplateConfig.headerMappings 失败, formId={}", form.getId(), e);
             }
         }
@@ -655,6 +679,9 @@ public class ExcelService {
         java.util.Set<String> unresolvedHeaders = new java.util.LinkedHashSet<>();
         int skippedUnmappedRowCount = 0;
         Integer firstSkippedUnmappedRowNum = null;
+        List<String> validationErrors = new ArrayList<>();
+        int maxErrorsToCollect = 100;
+        Map<String, String> sqlResultCache = new HashMap<>();
 
         try (Workbook workbook = StreamingReader.builder()
                 .rowCacheSize(1000)
@@ -932,279 +959,354 @@ public class ExcelService {
                     activeKVPairs = new ArrayList<>(precisePairMap.values());
                 }
             }
+			java.io.File tempFile = null;
+            java.io.BufferedWriter writer = null;
+            Set<Integer> consumed = new HashSet<>();
+            try {
+                tempFile = java.io.File.createTempFile("import_staging_", ".tsv");
+                writer = new java.io.BufferedWriter(new java.io.OutputStreamWriter(new java.io.FileOutputStream(tempFile), StandardCharsets.UTF_8));
 
-            while (rowIterator.hasNext()) {
-                Row row = rowIterator.next();
-                if (row == null)
-                    continue;
-
-                if (!checkedTemplate && row.getRowNum() == 1) {
-                    checkedTemplate = true;
-                    int matchCount = 0;
-                    boolean isSecondHeader = false;
-                    for (int c = 0; c < lastCol; c++) {
-                        Cell cell = row.getCell(c);
-                        if (cell != null) {
-                            String val = dataFormatter.formatCellValue(cell).trim();
-                            if (!val.isEmpty() && fields.stream().anyMatch(f -> val.equalsIgnoreCase(f.getName()) || val.equalsIgnoreCase(f.getColumnName()))) {
+                while (rowIterator.hasNext()) {
+                    Row row = rowIterator.next();
+                    if (row == null) 
+                        continue;
+                    
+                    if (!checkedTemplate && row.getRowNum() == 1) {
+                        checkedTemplate = true;
+                        int matchCount = 0;
+                        for (int c = 0; c < lastCol; c++) {
+                            Cell cell = row.getCell(c);
+                            if (cell != null) {
+                                String val = dataFormatter.formatCellValue(cell).trim();
+                                if (!val.isEmpty() && fields.stream().anyMatch(f -> val.equalsIgnoreCase(f.getName()) || val.equalsIgnoreCase(f.getColumnName()))) {
                                 matchCount++;
                             }
                         }
                     }
                     // 只有当超过 1 个单元格匹配到字段名（中文或英文）时，才认为它是第二个表头行。
                     // 仅 1 个匹配极其容易与真实数据冲突（如某个单元格恰好填了与字段名相同的单词）。
-                    if (matchCount > 1) {
-                        isSecondHeader = true;
+
+					if (matchCount > 1) {
+                            startRow = 2;
+                            continue;
+                        }
                     }
-                    if (isSecondHeader) {
-                        startRow = 2;
+                    if (row.getRowNum() < startRow) 
                         continue;
-                    }
-                }
+                    
 
-                if (row.getRowNum() < startRow)
-                    continue;
-                Map<String, Object> rowData = new LinkedHashMap<>();
-                Map<String, Map<String, Object>> dynamicExtras = new LinkedHashMap<>();
-                Map<String, Object> defaultExtra = new LinkedHashMap<>();
-                boolean empty = true;
-                Set<Integer> consumed = new HashSet<>();
+                    Map<String, Object> rowData = new LinkedHashMap<>();
+                    Map<String, Map<String, Object>> dynamicExtras = new LinkedHashMap<>();
+                    Map<String, Object> defaultExtra = new LinkedHashMap<>();
+                    boolean empty = true;
+                    consumed.clear();
 
-                for (KVPairConfig pc : activeKVPairs) {
-                    Cell kc = row.getCell(pc.fk()), vc = row.getCell(pc.fv());
-                    String kvStr = (kc == null) ? null : dataFormatter.formatCellValue(kc).trim();
-                    Object vvObj = null;
-                    if (vc != null) {
-                        if (vc.getCellType() == org.apache.poi.ss.usermodel.CellType.NUMERIC) {
-                            int vCol = pc.fv();
-                            if (!dateColumnChecked[vCol]) {
-                                isDateColumn[vCol] = org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(vc);
-                                dateColumnChecked[vCol] = true;
-                            }
-                            if (isDateColumn[vCol]) {
-                                vvObj = vc.getDateCellValue();
-                            } else {
-                                double dVal = vc.getNumericCellValue();
-                                vvObj = new java.math.BigDecimal(String.valueOf(dVal)).stripTrailingZeros().toPlainString();
-                            }
-                        } else {
-                            String s = dataFormatter.formatCellValue(vc).trim();
-                            // Handle formatted numbers like "1,875.00"
-                            if (s.contains(",") && s.replace(",", "").matches("-?\\d*\\.?\\d+")) {
-                                try {
-                                    vvObj = new java.math.BigDecimal(s.replace(",", "")).stripTrailingZeros().toPlainString();
-                                } catch (Exception e) {
-                                    vvObj = s;
+                    for (KVPairConfig pc : activeKVPairs) {
+                        Cell kc = row.getCell(pc.fk()), vc = row.getCell(pc.fv());
+                        String kvStr = (kc == null) ? null : dataFormatter.formatCellValue(kc).trim();
+                        Object vvObj = null;
+                        if (vc != null) {
+                            if (vc.getCellType() == org.apache.poi.ss.usermodel.CellType.NUMERIC) {
+                                int vCol = pc.fv();
+                                if (!dateColumnChecked[vCol]) {
+                                    isDateColumn[vCol] = org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(vc);
+                                    dateColumnChecked[vCol] = true;
+                                }
+                                if (isDateColumn[vCol]) {
+                                    vvObj = vc.getDateCellValue();
+                                } else {
+                                    double dVal = vc.getNumericCellValue();
+                                    vvObj = new java.math.BigDecimal(String.valueOf(dVal)).stripTrailingZeros().toPlainString();
                                 }
                             } else {
-                                vvObj = s;
+                                String s = dataFormatter.formatCellValue(vc).trim();
+                                // Handle formatted numbers like "1,875.00"
+                                if (s.contains(",") && s.replace(",", "").matches("-?\\d*\\.?\\d+")) {
+                                    try {
+                                        vvObj = new java.math.BigDecimal(s.replace(",", "")).stripTrailingZeros().toPlainString();
+                                    } catch (Exception e) {
+                                        vvObj = s;
+                                    }
+                                } else {
+                                    vvObj = s;
+                                }
                             }
                         }
-                    }
-                    if (kvStr != null && !kvStr.isEmpty() && vvObj != null && !"".equals(vvObj)) {
-                        dynamicExtras.computeIfAbsent(pc.targetJsonCol(), k -> new LinkedHashMap<>()).put(kvStr, vvObj);
-                        consumed.add(pc.fk());
-                        consumed.add(pc.fv());
-                    }
-                }
 
-                boolean hasMappedBusinessValue = false;
-                for (int c = 0; c < lastCol; c++) {
-                    if (consumed.contains(c) || headers[c] == null)
-                        continue;
-                    Cell cell = row.getCell(c);
-                    if (cell == null || cell.getCellType() == org.apache.poi.ss.usermodel.CellType.BLANK)
-                        continue;
-                    Object val = null;
-                    org.apache.poi.ss.usermodel.CellType type = cell.getCellType();
-
-                    if (type == org.apache.poi.ss.usermodel.CellType.STRING) {
-                        val = cell.getStringCellValue();
-                    } else if (type == org.apache.poi.ss.usermodel.CellType.NUMERIC) {
-                        double dVal = cell.getNumericCellValue();
-                        if (!dateColumnChecked[c]) {
-                            isDateColumn[c] = org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell);
-                            dateColumnChecked[c] = true;
+                        if (kvStr != null && !kvStr.isEmpty() && vvObj != null && !"".equals(vvObj)) {
+                            dynamicExtras.computeIfAbsent(pc.targetJsonCol(), k -> new LinkedHashMap<>()).put(kvStr,vvObj);
+                            consumed.add(pc.fk());
+                            consumed.add(pc.fv());
                         }
+                    }
+
+                    boolean hasMappedBusinessValue = false;
+                    for (int c = 0; c < lastCol; c++) {
+                        if (consumed.contains(c) || (c < cachedPinyinHeaders.length && cachedPinyinHeaders[c] == null))
+                            continue;
+
+                        Cell cell = row.getCell(c);
+                        if (cell == null || cell.getCellType() == org.apache.poi.ss.usermodel.CellType.BLANK)
+                            continue;
+
+                        Object val = null;
+                        org.apache.poi.ss.usermodel.CellType type = cell.getCellType();
+
+                        if (type == org.apache.poi.ss.usermodel.CellType.STRING) {
+                            val = cell.getStringCellValue();
+                        } else if (type == org.apache.poi.ss.usermodel.CellType.NUMERIC) {
+                            double dVal = cell.getNumericCellValue();
+                            if (!dateColumnChecked[c]) {
+                                isDateColumn[c] = org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell);
+                                dateColumnChecked[c] = true;
+                            }
                         // 动态复查：Excel 允许同一列不同单元格有不同格式，不能只依赖第一行的缓存
                         boolean isDate = isDateColumn[c]
                                 || org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell);
 
-                        if (isDate && dVal > 0 && dVal < 3000000) {
-                            // 对于在合法范围内的正常 Excel 日期（如 46082），直接获取原生的 java.util.Date 对象。
-                            // 避免使用 DataFormatter，因为它极易受到服务器或 Excel locale 的影响而输出如 "3/1/26 5:45"
-                            // 的奇葩文本导致后端入库截断报错，
-                            // 返回原生 Date 可以保证系统底层使用统一的 "yyyy-MM-dd HH:mm:ss" 进行高质量落表。
-                            val = cell.getDateCellValue();
-                        } else {
-                            // 对于超出合法范围的数字（如直接填在日期栏的 20260312），当做纯阿拉伯数字字符串处理并拦截
-                            val = new java.math.BigDecimal(dVal).stripTrailingZeros().toPlainString();
-                        }
-                    } else if (type == org.apache.poi.ss.usermodel.CellType.BOOLEAN) {
-                        val = cell.getBooleanCellValue();
-                    } else if (type == org.apache.poi.ss.usermodel.CellType.FORMULA) {
-                        try {
-                            val = cell.getStringCellValue();
-                        } catch (Exception e) {
-                            double dVal = cell.getNumericCellValue();
-                            val = new java.math.BigDecimal(String.valueOf(dVal)).stripTrailingZeros().toPlainString();
-                        }
-                    } else {
-                        String s = dataFormatter.formatCellValue(cell).trim();
-                        // Handle formatted numbers like "1,875.00"
-                        if (s.contains(",") && s.replace(",", "").matches("-?\\d*\\.?\\d+")) {
+
+						if (isDate && dVal > 0 && dVal < 3000000) {
+                                // 对于在合法范围内的正常 Excel 日期（如 46082），直接获取原生的 java.util.Date 对象。
+                                // 避免使用 DataFormatter，因为它极易受到服务器 Excel locale 的影响而输出如 "3/1/26 5:45"
+                                // 的奇葩文本导致后期入库解析报错。
+                                // 返回原生 Date 可以保证系统底层使用统一的 "yyyy-MM-dd HH:mm:ss" 进行高质量存表。
+                                val = cell.getDateCellValue();
+                            } else {
+                                // 对于超出合法范围的数字（如直接填在日期栏的 20260312），当做纯阿拉伯数字字符串处理并拦截
+                                val = new java.math.BigDecimal(dVal).stripTrailingZeros().toPlainString();
+                            }
+                        } else if (type == org.apache.poi.ss.usermodel.CellType.BOOLEAN) {
+                            val = cell.getBooleanCellValue();
+                        } else if (type == org.apache.poi.ss.usermodel.CellType.FORMULA) {
                             try {
-                                val = new java.math.BigDecimal(s.replace(",", "")).stripTrailingZeros().toPlainString();
+                                val = cell.getStringCellValue();
                             } catch (Exception e) {
+                                double dVal = cell.getNumericCellValue();
+                                val = new java.math.BigDecimal(String.valueOf(dVal)).stripTrailingZeros().toPlainString();
+                            }
+                        } else {
+                            String s = dataFormatter.formatCellValue(cell).trim();
+                            // Handle formatted numbers like "1,875.00"
+                            if (s.contains(",") && s.replace(",", "").matches("-?\\d*\\.?\\d+")) {
+                                try {
+                                    val = new java.math.BigDecimal(s.replace(",", "")).stripTrailingZeros().toPlainString();
+                                } catch (Exception e) {
+                                    val = s;
+                                }
+                            } else {
                                 val = s;
                             }
-                        } else {
-                            val = s;
                         }
-                    }
-                    if (val != null && !"".equals(val)) {
-                        empty = false;
-                        String dbCol = cachedDbCols[c];
-                        if (dbCol != null) {
-                            if (cachedIsJsonCol[c]) {
-                                dynamicExtras.computeIfAbsent(dbCol, k -> new LinkedHashMap<>()).put(cachedJsonKeys[c],
-                                        val);
+
+                        if (val != null && !"".equals(val)) {
+                            empty = false;
+                            String dbCol = cachedDbCols[c];
+                            if (dbCol != null) {
+                                if (cachedIsJsonCol[c]) {
+                                    dynamicExtras.computeIfAbsent(dbCol, k -> new LinkedHashMap<>()).put(cachedJsonKeys[c], 
+											val);
+                                } else {
+                                    rowData.put(dbCol, val);
+                                    if (cachedIsBusinessCol[c]) 
+                                        hasMappedBusinessValue = true;
+                                    }
+                                
                             } else {
-                                rowData.put(dbCol, val);
-                                if (cachedIsBusinessCol[c])
-                                    hasMappedBusinessValue = true;
+                                defaultExtra.put(cachedPinyinHeaders[c], val);
                             }
-                        } else
-                            defaultExtra.put(cachedPinyinHeaders[c], val);
+                        } else {
+                            // 即使值为空，如果表头未映射，也要记录到 unresolvedHeaders 中用于报错提示
+                            String dbCol = cachedDbCols[c];
+                            if (hasReferenceMappings && dbCol == null && headers[c] != null
+                                    && !headers[c].trim().isEmpty()) {
+                                unresolvedHeaders.add(headers[c].trim());
+                            }
+                        }
+                        
                     }
-                }
 
-                if (empty && dynamicExtras.isEmpty() && defaultExtra.isEmpty())
-                    continue;
 
-                // 合并所有其它的到 extra_data
-                // 若模板已定义了业务 JSON 字段（如 xxx_json），默认不再把剩余列强行并入 extra_data。
-                // 只有当表单字段中显式存在 extra_data 时，才把 defaultExtra 合并进去。
-                if (!defaultExtra.isEmpty() && fieldColumnNames.contains("extra_data")) {
-                    dynamicExtras.computeIfAbsent("extra_data", k -> new LinkedHashMap<>()).putAll(defaultExtra);
-                }
+                    if (empty && dynamicExtras.isEmpty() && defaultExtra.isEmpty())
+                        continue;
 
-                // 将所有 JSON 列转换为字符串并加入 rowData
-                for (Map.Entry<String, Map<String, Object>> exEntry : dynamicExtras.entrySet()) {
-                    Map<String, Object> extraMap = exEntry.getValue();
-                    if (extraMap.isEmpty()) {
-                        rowData.put(exEntry.getKey(), "{}");
+
+                    // 合并所有其它的到 extra_data
+                    // 若模板已定义了业务 JSON 字段 (如 xxx_json)，默认不再把剩余列强行并入 extra_data.
+                    // 只有当表单中显式存在 extra_data 时，才把 defaultExtra 合并进去。
+                    if (!defaultExtra.isEmpty() && fieldColumnNames.contains("extra_data")) {
+                        dynamicExtras.computeIfAbsent("extra_data", k -> new LinkedHashMap<>()).putAll(defaultExtra);
+                    }
+                    // 将所有的 JSON 列表转换为字符串并存入 rowData
+                    for (Map.Entry<String, Map<String, Object>> exEntry : dynamicExtras.entrySet()) {
+                        Map<String, Object> extraMap = exEntry.getValue();
+                        if (extraMap.isEmpty()) {
+                            rowData.put(exEntry.getKey(), "{}");
+                            continue;
+                        }
+
+                        // Fast JSON building for simple maps
+                        StringBuilder jsonSb = new StringBuilder(extraMap.size() * 64);
+                        jsonSb.append("{");
+                        boolean first = true;
+                        for (Map.Entry<String, Object> entry : extraMap.entrySet()) {
+                            if (!first)
+                                jsonSb.append(",");
+
+                            first = false;
+                            jsonSb.append("\"").append(entry.getKey().replace("\"", "\\\"")).append("\":");
+                            Object v = entry.getValue();
+
+                            if (v == null) 
+                                jsonSb.append("null");
+                             else if (v instanceof Number || v instanceof Boolean) 
+                                jsonSb.append(v.toString());
+                             else {
+                                String s = v.toString();
+                                if (NUMBER_PATTERN.matcher(s).matches()) {
+                                    jsonSb.append(s);
+                                } else {
+                                    jsonSb.append("\"")
+                                            .append(s.replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r"))
+                                            .append("\"");
+                                }
+                            }
+                        }
+                        jsonSb.append("}");
+                        rowData.put(exEntry.getKey(), jsonSb.toString());
+                    }
+
+                    hasMappedBusinessValue = hasMappedBusinessValue || !rowData.isEmpty();
+                    if (!hasMappedBusinessValue && !explicitExtraDataField) {
+                        skippedUnmappedRowCount++;
+                        if (firstSkippedUnmappedRowNum == null) {
+                            firstSkippedUnmappedRowNum = row.getRowNum() + 1;
+                        }
                         continue;
                     }
-                    // Fast JSON building for simple maps
-                    StringBuilder jsonSb = new StringBuilder(extraMap.size() * 64);
-                    jsonSb.append("{");
-                    boolean first = true;
-                    for (Map.Entry<String, Object> entry : extraMap.entrySet()) {
-                        if (!first)
-                            jsonSb.append(",");
-                        first = false;
-                        jsonSb.append("\"").append(entry.getKey().replace("\"", "\\\"")).append("\":");
-                        Object v = entry.getValue();
-                        if (v == null)
-                            jsonSb.append("null");
-                        else if (v instanceof Number || v instanceof Boolean)
-                            jsonSb.append(v.toString());
-                        else {
-                            String s = v.toString();
-                            if (NUMBER_PATTERN.matcher(s).matches()) {
-                                jsonSb.append(s);
+
+                    if (!requiredFieldDisplayByColumn.isEmpty()) {
+                        List<String> missingRequired = new ArrayList<>();
+                        for (Map.Entry<String, String> requiredEntry : requiredFieldDisplayByColumn.entrySet()) {
+                            String requiredCol = requiredEntry.getKey();
+                            if (isBlankValue(rowData.get(requiredCol))) {
+                                missingRequired.add(requiredEntry.getValue() + "(" + requiredCol + ")");
+                            }
+                        }
+                        if (!missingRequired.isEmpty())
+                            throw new RuntimeException(
+                                    "导入失败: 第 " + (row.getRowNum() + 1) + " 行缺少必填字段: " + String.join(", ", missingRequired));
+                    }
+
+                    for (FieldDef f : fields) {
+                        if (f.getColumnName() == null || Boolean.TRUE.equals(f.getHideInForm())) {
+                            continue;
+                        }
+                        Object val = rowData.get(f.getColumnName());
+                        String displayName = (f.getName() == null || f.getName().trim().isEmpty()) ? f.getColumnName()
+                                : f.getName();
+                        if (isBlankValue(val)) {
+                            continue;
+                        }
+                        String valStr = val.toString();
+                        validateFieldFormat(row, f, valStr, displayName, validationErrors);
+                        if (f.getValidationSql() != null && !f.getValidationSql().trim().isEmpty()) {
+                            validateSqlDimension(f, valStr, displayName, row.getRowNum() + 1, validationErrors,
+                                    sqlResultCache);
+                        }
+                    }
+
+                    if (fieldColumnNames.contains("ctime") && !rowData.containsKey("ctime")) {
+                        rowData.put("ctime", LocalDateTime.now());
+                    }
+                    if (fieldColumnNames.contains("mtime") && !rowData.containsKey("mtime")) {
+                        rowData.put("mtime", LocalDateTime.now());
+                    }
+
+                    rowData.put(EXCEL_ROW_META_KEY, row.getRowNum() + 1);
+                    if (creator != null && !creator.trim().isEmpty()) 
+                        rowData.put("creator", creator);
+                    
+                    // 如果是手动管理的主键（非自增），且 Excel 中没填，自动为新插入行生成唯一主键值，防止报错
+                    if (hasPkCol && !isAutoIncrement) {
+                        Object providedPk = null;
+                        for (String key : rowData.keySet()) {
+                            if (key.equalsIgnoreCase(pk)) {
+                                providedPk = rowData.get(key);
+                                break;
+                            }
+                        }
+                        if (providedPk == null || providedPk.toString().trim().isEmpty()) {
+                            if (isNumericPk) {
+                                rowData.put(pk, System.currentTimeMillis() * 1000L + (long)(Math.random() * 1000L));
                             } else {
-                                jsonSb.append("\"")
-                                        .append(s.replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r"))
-                                        .append("\"");
+                                rowData.put(pk, java.util.UUID.randomUUID().toString().replace("-", ""));
                             }
                         }
                     }
-                    jsonSb.append("}");
-                    rowData.put(exEntry.getKey(), jsonSb.toString());
-                }
 
-                if (!hasMappedBusinessValue && !explicitExtraDataField) {
-                    skippedUnmappedRowCount++;
-                    if (firstSkippedUnmappedRowNum == null) {
-                        firstSkippedUnmappedRowNum = row.getRowNum() + 1;
-                    }
-                    continue;
-                }
-
-                if (!requiredFieldDisplayByColumn.isEmpty()) {
-                    List<String> missingRequired = new ArrayList<>();
-                    for (Map.Entry<String, String> requiredEntry : requiredFieldDisplayByColumn.entrySet()) {
-                        String requiredCol = requiredEntry.getKey();
-                        if (isBlankValue(rowData.get(requiredCol))) {
-                            missingRequired.add(requiredEntry.getValue() + "(" + requiredCol + ")");
-                        }
-                    }
-                    if (!missingRequired.isEmpty()) {
-                        throw new RuntimeException(
-                                "导入失败：第 " + (row.getRowNum() + 1) + " 行缺少必填字段: " + String.join(", ", missingRequired));
+                    writeRowToStaging(writer, rowData, fields, pk, shouldExcludePk, hasPkCol, creator, row.getRowNum() + 1);
+                    totalCount++;
+                    if (validationErrors.size() >= maxErrorsToCollect) {
+                        break;
                     }
                 }
 
-                if (fieldColumnNames.contains("ctime") && !rowData.containsKey("ctime")) {
-                    rowData.put("ctime", LocalDateTime.now());
+                writer.flush();
+                writer.close();
+
+                if (!validationErrors.isEmpty()) {
+                    return generateValidationErrorReport(formId, validationErrors);
                 }
-                if (fieldColumnNames.contains("mtime") && !rowData.containsKey("mtime")) {
-                    rowData.put("mtime", LocalDateTime.now());
+
+                if (totalCount == 0 && skippedUnmappedRowCount > 0) {
+                    String unresolvedHint = unresolvedHeaders.isEmpty() ? ""
+                            : (": 未匹配表头示例: " + String.join(", ",
+                                    unresolvedHeaders.stream().limit(8).collect(java.util.stream.Collectors.toList())));
+                    throw new RuntimeException("导入失败：检测到 " + skippedUnmappedRowCount
+                            + " 行数据未映射到业务字段（首行: 第 " + firstSkippedUnmappedRowNum + " 行）"
+                            + "，请确认上传文件表头与模板一致" + unresolvedHint);
                 }
 
-                rowData.put(EXCEL_ROW_META_KEY, row.getRowNum() + 1);
-                if (creator != null && !creator.trim().isEmpty())
-                    rowData.put("creator", creator);
-                buffer.add(rowData);
+                if (totalCount > 0) {
+                    executeAtomicCopy(formId, tempFile, fields, pk, shouldExcludePk, hasPkCol, creator, isAdmin);
 
-                if (buffer.size() >= BATCH_SIZE) {
-                    flushImportBuffer(formId, buffer, isAdmin);
-                    totalCount += buffer.size();
-                    buffer.clear();
+                    try {
+                        UserFillLog fillLog = new UserFillLog();
+                        fillLog.setFormId(formId);
+                        fillLog.setUserEmail(creator);
+                        fillLog.setSubmitTime(LocalDateTime.now());
+                        fillLog.setDataId("IMPORT " + java.util.UUID.randomUUID().toString().substring(0, 8));
+                        userFillLogMapper.insert(fillLog);
+                    } catch (Exception e) {
+                        log.warn("写入填报日志失败, formId={}, user={}", formId, creator, e);
+                    }
+                } else {
+                    throw new RuntimeException("导入失败：未识别到有效业务数据");
+                }
+            } finally {
+                if (writer != null) {
+                    try {
+                        writer.close();
+                    } catch (Exception ignored) {
+                    }
+                }
+                if (tempFile != null && tempFile.exists()) {
+                    tempFile.delete();
                 }
             }
 
-            if (!buffer.isEmpty()) {
-                flushImportBuffer(formId, buffer, isAdmin);
-                totalCount += buffer.size();
-                buffer.clear();
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("count", totalCount);
+            if (!unresolvedHeaders.isEmpty()) {
+                result.put("unresolvedHints", String.join(", ", unresolvedHeaders));
             }
-
-            if (totalCount == 0 && skippedUnmappedRowCount > 0) {
-                String unresolvedHint = unresolvedHeaders.isEmpty()
-                        ? ""
-                        : ("；未匹配表头示例: " + String.join(", ",
-                                unresolvedHeaders.stream().limit(8).collect(java.util.stream.Collectors.toList())));
-                throw new RuntimeException("导入失败：检测到 " + skippedUnmappedRowCount
-                        + " 行数据未映射到业务字段（首行: 第 " + firstSkippedUnmappedRowNum + " 行）"
-                        + "，请确认上传文件表头与模板一致" + unresolvedHint);
-            }
-
+            return result;
         }
-
-        if (totalCount > 0) {
-            try {
-                UserFillLog fillLog = new UserFillLog();
-                fillLog.setFormId(formId);
-                fillLog.setUserEmail(creator);
-                fillLog.setSubmitTime(LocalDateTime.now());
-                fillLog.setDataId("IMPORT_" + java.util.UUID.randomUUID().toString().substring(0, 8));
-                userFillLogMapper.insert(fillLog);
-            } catch (Exception e) {
-                log.warn("写入填报日志失败, formId={}, user={}", formId, creator, e);
-            }
-        }
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("success", true);
-        result.put("count", totalCount);
-        if (!unresolvedHeaders.isEmpty()) {
-            result.put("unresolvedHints", String.join(", ", unresolvedHeaders));
-        }
-        return result;
     }
+
+
+
 
     private void flushImportBuffer(String formId, List<Map<String, Object>> rows, boolean isAdmin) {
         try {
@@ -1221,7 +1323,7 @@ public class ExcelService {
                         Object excelRowObj = rows.get(idx).get(EXCEL_ROW_META_KEY);
                         Integer excelRow = asInteger(excelRowObj);
                         if (excelRow != null && excelRow > 0) {
-                            throw new RuntimeException("导入失败：Excel 第 " + excelRow + " 行写库失败。原始错误：" + msg, e);
+                            throw new RuntimeException("导入失败：Excel 第 " + excelRow + " 行入库失败，原始错误：" + msg, e);
                         }
                     }
                 } catch (Exception ignored) {
@@ -1233,9 +1335,7 @@ public class ExcelService {
     }
 
     /**
-     * 
-     * 7. 解析上传Excel 表头，生成字段定义列(增强
-     * 
+     * 7. 解析上传Excel 表头，生成字段定义序列(增强
      */
 
     public com.example.datafill.dto.ReferenceTemplateParseResult parseReferenceTemplate(MultipartFile file)
@@ -2228,31 +2328,52 @@ public class ExcelService {
             if (h != null) physicalColumns.add(h.toLowerCase());
         }
 
+        // 查找物理表的主键列
+        String pkSql = "SELECT a.attname AS pk_column " +
+                       "FROM pg_index i " +
+                       "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) " +
+                       "JOIN pg_catalog.pg_namespace ns ON ns.oid = (SELECT relnamespace FROM pg_class WHERE oid = i.indrelid) " +
+                       "JOIN pg_catalog.pg_class cls ON cls.oid = i.indrelid " +
+                       "WHERE ns.nspname = ? AND cls.relname = ? AND i.indisprimary";
+        List<String> pkColumns = jdbcTemplate.query(pkSql, (rs, rowNum) -> rs.getString("pk_column"), schemaName, tableName);
+        boolean isComposite = pkColumns.size() > 1;
+        result.setCompositePrimaryKey(isComposite);
+        String detectedPk = pkColumns.isEmpty() ? null : (isComposite ? String.join(", ", pkColumns) : pkColumns.get(0));
+        result.setDetectedPrimaryKey(detectedPk);
+
         List<String> missing = new ArrayList<>();
-        if (physicalColumns.contains("id")) {
-            // [强约束] 只要物理表有 id，就触发冲突标记，引导用户去重命名/删除以让出主键控制权
-            result.setHasIdConflict(true);
-            result.setConflictMessage("检测到物理表已存在 id 字段。为保证系统自动分配主键，请管理员先在数据库中删除或重命名该列，然后再次识别并点击‘一键补齐’。");
-            
-            boolean isStandardId = false;
-            for (Map<String, Object> r : rows) {
-                if ("id".equalsIgnoreCase(asText(r.get("column_name")))) {
-                    String udtLabel = lower(asText(r.get("udt_name")));
-                    String isIdent = asText(r.get("is_identity"));
-                    String colDef = asText(r.get("column_default"));
-                    if ("int4".equals(udtLabel)) {
-                        if ("YES".equalsIgnoreCase(isIdent) || (colDef != null && colDef.contains("nextval"))) {
-                            isStandardId = true;
-                        }
-                    }
-                    break;
-                }
-            }
-            if (!isStandardId) {
+        if (detectedPk != null) {
+            // 已有物理主键，但若物理表中完全不包含 id 列，依然提供补齐为系统默认主键的机会
+            if (!physicalColumns.contains("id")) {
                 missing.add("id");
             }
         } else {
-            missing.add("id");
+            // 没有物理主键时，检查是否已经有 id 列，否则标记缺失
+            if (physicalColumns.contains("id")) {
+                // [强约束] 只要物理表有 id，就触发冲突标记，引导用户去重命名/删除以让出主键控制权
+                result.setHasIdConflict(true);
+                result.setConflictMessage("检测到物理表已存在 id 字段。为保证系统自动分配主键，请管理员先在数据库中删除或重命名该列，然后再次识别并点击‘一键补齐’。");
+                
+                boolean isStandardId = false;
+                for (Map<String, Object> r : rows) {
+                    if ("id".equalsIgnoreCase(asText(r.get("column_name")))) {
+                        String udtLabel = lower(asText(r.get("udt_name")));
+                        String isIdent = asText(r.get("is_identity"));
+                        String colDef = asText(r.get("column_default"));
+                        if ("int4".equals(udtLabel)) {
+                            if ("YES".equalsIgnoreCase(isIdent) || (colDef != null && colDef.contains("nextval"))) {
+                                isStandardId = true;
+                            }
+                        }
+                        break;
+                    }
+                }
+                if (!isStandardId) {
+                    missing.add("id");
+                }
+            } else {
+                missing.add("id");
+            }
         }
 
         String dInsert = detectRole(physicalColumns, INSERT_AUDIT_LEXICON);
@@ -2887,4 +3008,264 @@ public class ExcelService {
         }
         return result.replaceAll("_+", "_").replaceAll("^_+|_+$", "") + "_json";
     }
+
+    private void parseRowToMap(Row row, Map<String, Object> rowData, int lastCol, String[] cachedDbCols, 
+                               boolean[] cachedIsJsonCol, String[] cachedJsonKeys, String[] cachedPinyinHeaders, 
+                               Set<String> businessFieldColumns, Set<String> fieldColumnNames, 
+                               DataFormatter dataFormatter, boolean[] dateColumnChecked, boolean[] isDateColumn, 
+                               List<KVPairConfig> activeKVPairs, Set<Integer> consumed, 
+                               Map<String, String> headerMap, Map<String, String> normalizedHeaderMap, 
+                               Map<String, Integer> actualHeaderIndexMap) {
+        Map<String, Map<String, Object>> dynamicExtras = new LinkedHashMap<>();
+        Map<String, Object> defaultExtra = new LinkedHashMap<>();
+        boolean empty = true;
+        consumed.clear();
+
+        for (KVPairConfig pc : activeKVPairs) {
+            Cell kc = row.getCell(pc.fk()), vc = row.getCell(pc.fv());
+            String kvStr = (kc == null) ? null : dataFormatter.formatCellValue(kc).trim();
+            Object vvObj = parseCellValue(vc, pc.fv(), dateColumnChecked, isDateColumn, dataFormatter);
+            if (kvStr != null && !kvStr.isEmpty() && vvObj != null && !"".equals(vvObj)) {
+                dynamicExtras.computeIfAbsent(pc.targetJsonCol(), k -> new LinkedHashMap<>()).put(kvStr, vvObj);
+                consumed.add(pc.fk()); consumed.add(pc.fv());
+            }
+        }
+
+        for (int c = 0; c < lastCol; c++) {
+            if (consumed.contains(c) || (c < cachedPinyinHeaders.length && cachedPinyinHeaders[c] == null)) continue;
+            Cell cell = row.getCell(c);
+            Object val = parseCellValue(cell, c, dateColumnChecked, isDateColumn, dataFormatter);
+            if (val != null && !"".equals(val)) {
+                empty = false;
+                String dbCol = cachedDbCols[c];
+                if (dbCol != null) {
+                    if (cachedIsJsonCol[c]) {
+                        dynamicExtras.computeIfAbsent(dbCol, k -> new LinkedHashMap<>()).put(cachedJsonKeys[c], val);
+                    } else {
+                        rowData.put(dbCol, val);
+                    }
+                } else {
+                    defaultExtra.put(cachedPinyinHeaders[c], val);
+                }
+            }
+        }
+
+        if (empty && dynamicExtras.isEmpty() && defaultExtra.isEmpty()) return;
+
+        if (!defaultExtra.isEmpty() && fieldColumnNames.contains("extra_data")) {
+            dynamicExtras.computeIfAbsent("extra_data", k -> new LinkedHashMap<>()).putAll(defaultExtra);
+        }
+
+        serializeJsonColumns(rowData, dynamicExtras);
+    }
+
+    private Object parseCellValue(Cell cell, int colIdx, boolean[] dateColumnChecked, boolean[] isDateColumn, DataFormatter dataFormatter) {
+        if (cell == null || cell.getCellType() == org.apache.poi.ss.usermodel.CellType.BLANK) return null;
+        org.apache.poi.ss.usermodel.CellType type = cell.getCellType();
+        if (type == org.apache.poi.ss.usermodel.CellType.STRING) return cell.getStringCellValue();
+        if (type == org.apache.poi.ss.usermodel.CellType.NUMERIC) {
+            double dVal = cell.getNumericCellValue();
+            if (!dateColumnChecked[colIdx]) {
+                isDateColumn[colIdx] = org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell);
+                dateColumnChecked[colIdx] = true;
+            }
+            if (isDateColumn[colIdx]) return cell.getDateCellValue();
+            return new java.math.BigDecimal(dVal).stripTrailingZeros().toPlainString();
+        }
+        if (type == org.apache.poi.ss.usermodel.CellType.BOOLEAN) return cell.getBooleanCellValue();
+        return dataFormatter.formatCellValue(cell).trim();
+    }
+
+    private void serializeJsonColumns(Map<String, Object> rowData, Map<String, Map<String, Object>> dynamicExtras) {
+        for (Map.Entry<String, Map<String, Object>> exEntry : dynamicExtras.entrySet()) {
+            Map<String, Object> extraMap = exEntry.getValue();
+            if (extraMap.isEmpty()) { rowData.put(exEntry.getKey(), "{}"); continue; }
+            StringBuilder jsonSb = new StringBuilder();
+            jsonSb.append("{");
+            boolean first = true;
+            for (Map.Entry<String, Object> entry : extraMap.entrySet()) {
+                if (!first) jsonSb.append(","); first = false;
+                jsonSb.append("\"").append(entry.getKey().replace("\"", "\\\"")).append("\":");
+                Object v = entry.getValue();
+                if (v == null) jsonSb.append("null");
+                else if (v instanceof Number || v instanceof Boolean) jsonSb.append(v.toString());
+                else jsonSb.append("\"").append(v.toString().replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")).append("\"");
+            }
+            jsonSb.append("}");
+            rowData.put(exEntry.getKey(), jsonSb.toString());
+        }
+    }
+
+    private void validateFieldFormat(Row row, FieldDef f, String valStr, String displayName, List<String> validationErrors) {
+        if (f.getMin() != null || f.getMax() != null) {
+            try {
+                double dVal = Double.parseDouble(valStr);
+                if (f.getMin() != null && dVal < f.getMin()) validationErrors.add("第 " + (row.getRowNum() + 1) + " 行 [" + displayName + "] (内容: \"" + valStr + "\") 需 ≥ " + f.getMin());
+                if (f.getMax() != null && dVal > f.getMax()) validationErrors.add("第 " + (row.getRowNum() + 1) + " 行 [" + displayName + "] (内容: \"" + valStr + "\") 需 ≤ " + f.getMax());
+            } catch (Exception e) {
+                validationErrors.add("第 " + (row.getRowNum() + 1) + " 行 [" + displayName + "] (内容: \"" + valStr + "\") 格式错误，应为数字");
+            }
+        }
+        if (f.getMinLength() != null && valStr.length() < f.getMinLength()) validationErrors.add("第 " + (row.getRowNum() + 1) + " 行 [" + displayName + "] (内容: \"" + valStr + "\") 长度需 ≥ " + f.getMinLength());
+        if (f.getMaxLength() != null && valStr.length() > f.getMaxLength()) validationErrors.add("第 " + (row.getRowNum() + 1) + " 行 [" + displayName + "] (内容: \"" + valStr + "\") 长度需 ≤ " + f.getMaxLength());
+        if (f.getPattern() != null && !f.getPattern().trim().isEmpty()) {
+            try {
+                if (!valStr.matches(f.getPattern())) {
+                    String msg = (f.getPatternMsg() != null && !f.getPatternMsg().trim().isEmpty()) ? f.getPatternMsg() : "格式不符合要求";
+                    validationErrors.add("第 " + (row.getRowNum() + 1) + " 行 [" + displayName + "] (内容: \"" + valStr + "\") " + msg);
+                }
+            } catch (Exception e) {
+                log.warn("正则失败: pattern={}, val={}", f.getPattern(), valStr);
+            }
+        }
+    }
+
+    private void validateSqlDimension(FieldDef f, String valStr, String displayName, int rowNum, List<String> validationErrors, Map<String, String> cache) {
+        String cacheKey = f.getColumnName() + "_sql_val_" + valStr;
+        String cached = cache.get(cacheKey);
+        if ("VALID".equals(cached)) return;
+        if (cached != null && cached.startsWith("INVALID:")) {
+            validationErrors.add("第 " + rowNum + " 行 [" + displayName + "] " + cached.substring(8));
+            return;
+        }
+        
+        String sql = f.getValidationSql() != null ? f.getValidationSql().trim() : "";
+        if (sql.contains(";")) {
+            validationErrors.add("第 " + rowNum + " 行 [" + displayName + "] 校验 SQL 不允许包含分号 (;)");
+            return;
+        }
+        
+        try {
+            String limitedSql = "SELECT * FROM (" + sql + ") AS tmp LIMIT 1";
+            org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate namedJdbcTemplate = new org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate(jdbcTemplate);
+            Map<String, Object> params = new HashMap<>();
+            params.put("val", valStr);
+            List<Map<String, Object>> rows = namedJdbcTemplate.queryForList(limitedSql, params);
+            
+            if (rows != null && !rows.isEmpty()) {
+                cache.put(cacheKey, "VALID");
+            } else {
+                String msg = (f.getValidationSqlMsg() != null && !f.getValidationSqlMsg().trim().isEmpty()) ? f.getValidationSqlMsg() : "不在合法的维度范围内";
+                String fullMsg = "(内容: \"" + valStr + "\") " + msg;
+                cache.put(cacheKey, "INVALID:" + fullMsg);
+                validationErrors.add("第 " + rowNum + " 行 [" + displayName + "] " + fullMsg);
+            }
+        } catch (Exception e) {
+            log.warn("SQL校验失败: col={}, val={}", f.getColumnName(), valStr, e);
+            validationErrors.add("第 " + rowNum + " 行 [" + displayName + "] 维度校验系统异常");
+        }
+    }
+
+    private void writeRowToStaging(java.io.BufferedWriter writer, Map<String, Object> rowData, List<FieldDef> fields, String pk, boolean isNumericPk, boolean hasPkCol, String creator, int rowNum) throws java.io.IOException {
+        StringBuilder sb = new StringBuilder();
+        boolean first = true;
+        for (FieldDef f : fields) {
+            String colName = f.getColumnName();
+            if (colName == null || colName.trim().isEmpty()) continue;
+            
+            // 如果是自增数字主键，则不写入，由数据库生成
+            if (hasPkCol && isNumericPk && colName.equalsIgnoreCase(pk)) continue;
+
+            if (!first) sb.append("\t"); first = false;
+            
+            Object val = rowData.get(colName);
+            if (val == null) {
+                if ("load_user".equalsIgnoreCase(colName) || "creator".equalsIgnoreCase(colName)) val = creator;
+                else if ("w_insert_dt".equalsIgnoreCase(colName) || "create_time".equalsIgnoreCase(colName)) val = LocalDateTime.now();
+                else if ("w_update_dt".equalsIgnoreCase(colName) || "update_time".equalsIgnoreCase(colName)) val = LocalDateTime.now();
+                else if ("delete_flag".equalsIgnoreCase(colName)) val = false;
+            }
+            
+            if (val == null) {
+                sb.append("\\N");
+            } else {
+                String s;
+                if (val instanceof LocalDateTime) {
+                    s = ((LocalDateTime) val).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+                } else if (val instanceof java.util.Date) {
+                    s = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format((java.util.Date) val);
+                } else if (val instanceof Double || val instanceof Float || val instanceof java.math.BigDecimal) {
+                    s = new java.math.BigDecimal(val.toString()).stripTrailingZeros().toPlainString();
+                } else {
+                    s = val.toString();
+                }
+                
+                // 转义特殊字符
+                for (int i = 0; i < s.length(); i++) {
+                    char c = s.charAt(i);
+                    if (c == '\\') sb.append("\\\\");
+                    else if (c == '\t') sb.append("\\t");
+                    else if (c == '\n') sb.append("\\n");
+                    else if (c == '\r') sb.append("\\r");
+                    else sb.append(c);
+                }
+            }
+        }
+        writer.write(sb.toString());
+        writer.newLine();
+    }
+
+    private Map<String, Object> generateValidationErrorReport(String formId, List<String> errors) {
+        String reportId = java.util.UUID.randomUUID().toString();
+        StringBuilder sb = new StringBuilder("数据填报导入错误报告\n时间: " + LocalDateTime.now() + "\n表单ID: " + formId + "\n总计错误数: " + errors.size() + "\n--------------------------------------------------\n\n");
+        for (String err : errors) sb.append(err).append("\n");
+        errorReportCache.put(reportId, sb.toString());
+        Map<String, Object> res = new HashMap<>();
+        res.put("success", false); res.put("hasValidationErrors", true); res.put("errorCount", errors.size());
+        res.put("reportId", reportId); res.put("message", "检测到共 " + errors.size() + " 处数据不合规。为了保障数据一致性，本次导入已全部安全回滚（未写入任何记录）。请下载详细错误清单，修改后重新上传。");
+        return res;
+    }
+
+    private void executeAtomicCopy(String formId, java.io.File tempFile, List<FieldDef> fields, String pk, boolean isNumericPk, boolean hasPkCol, String creator, boolean isAdmin) {
+        DataFillForm form = formMapper.selectById(formId);
+        if (form == null) throw new RuntimeException("表单不存在");
+        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
+        String tableName = schema + "." + form.getTableName();
+        String quotedTableName = com.example.datafill.util.SqlUtil.quoteTable(tableName);
+
+        List<String> cols = new ArrayList<>();
+        for (FieldDef f : fields) {
+            String colName = f.getColumnName();
+            if (colName != null && !colName.trim().isEmpty()) {
+                // 如果是自增数字主键，则不加入 COPY 列名列表
+                if (hasPkCol && isNumericPk && colName.equalsIgnoreCase(pk)) continue;
+                cols.add("\"" + colName + "\"");
+            }
+        }
+        String sql = "COPY " + quotedTableName + " (" + String.join(",", cols) + ") FROM STDIN WITH (FORMAT text, DELIMITER '\t', NULL '\\N', ENCODING 'UTF8')";
+        
+        jdbcTemplate.execute((org.springframework.jdbc.core.ConnectionCallback<Object>) con -> {
+            try {
+                org.postgresql.PGConnection pgCon = con.unwrap(org.postgresql.PGConnection.class);
+                try (java.io.InputStream in = new java.io.FileInputStream(tempFile)) {
+                    pgCon.getCopyAPI().copyIn(sql, in);
+                }
+                return null;
+            } catch (Exception e) {
+                String errorMsg = e.getMessage();
+                if (errorMsg != null && errorMsg.contains("duplicate key value")) {
+                    throw new RuntimeException("导入失败：数据中存在重复的主键，或与数据库中已有的主键发生冲突，请检查后再试。");
+                }
+                throw new RuntimeException("数据库原子写入失败: " + errorMsg, e);
+            }
+        });
+    }
+
+    private void logSubmitActivity(String formId, String user, int count) {
+        try {
+            UserFillLog fillLog = new UserFillLog();
+            fillLog.setFormId(formId); fillLog.setUserEmail(user); fillLog.setSubmitTime(LocalDateTime.now());
+            fillLog.setDataId("IMPORT_" + java.util.UUID.randomUUID().toString().substring(0, 8));
+            userFillLogMapper.insert(fillLog);
+            
+            // 同步受影响用户的填报快照
+            dataDmlService.refreshUserCompletionSnapshot(user, formId);
+        } catch (Exception e) { log.warn("日志或快照同步失败", e); }
+    }
+
+    private static record KVPairConfig(int fk, int fv, String targetJsonCol) {}
+
+
+
+
 }

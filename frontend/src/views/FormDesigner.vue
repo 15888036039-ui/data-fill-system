@@ -473,6 +473,29 @@
                             </div>
                           </el-col>
                         </el-row>
+                        
+                        <div style="border: 1px solid #e2e8f0; padding: 16px; border-radius: 8px; margin-top: 16px; margin-bottom: 16px; background-color: #ffffff;">
+                          <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                            <span style="font-weight: 600; font-size: 13px; color: #1e293b; display: flex; align-items: center;">
+                              进阶：自定义 SQL 校验 (维度表关联) 
+                              <el-tooltip content="用于关联维度表进行校验，占位符为 :val" placement="top">
+                                <el-icon style="margin-left: 4px; color: #3b82f6;"><InfoFilled /></el-icon>
+                              </el-tooltip>
+                            </span>
+                            <el-input v-model="props.row._testSqlValue" placeholder="测试值" size="small" style="width: 150px;" />
+                            <el-button type="primary" size="small" @click="testSql(props.row)" :loading="props.row._testingSql">点击测试 SQL</el-button>
+                          </div>
+                          <el-input 
+                            v-model="props.row.validationSql" 
+                            type="textarea" 
+                            :rows="3" 
+                            placeholder="例: SELECT distinct third_sort_desc FROM dim.dim_product WHERE third_sort_desc = :val" 
+                            style="font-family: monospace;"
+                          />
+                        </div>
+                        <el-form-item label="维度校验失败提示语">
+                          <el-input v-model="props.row.validationSqlMsg" placeholder="例如: 数据错误，未在维度表中找到该值" />
+                        </el-form-item>
                       </el-form>
                     </div>
                   </template>
@@ -481,7 +504,8 @@
                   <template #default="scope">
                     <div style="display: flex; align-items: center; gap: 8px;">
                       <el-input v-model="scope.row.name" placeholder="字段标题" />
-                      <el-tag v-if="scope.row.systemLocked" size="small" type="info" effect="plain" style="flex-shrink: 0;">系统</el-tag>
+                      <el-tag v-if="(scope.row.columnName || '').toLowerCase() === (formMeta.pkColumn || 'id').toLowerCase()" size="small" type="warning" effect="dark" style="flex-shrink: 0; background-color: #f59e0b; border-color: #d97706; color: #ffffff; font-weight: bold;">主键</el-tag>
+                      <el-tag v-else-if="scope.row.systemLocked" size="small" type="info" effect="plain" style="flex-shrink: 0;">系统</el-tag>
                     </div>
                   </template>
                 </el-table-column>
@@ -546,9 +570,75 @@
                     />
                   </template>
                 </el-table-column>
-                <el-table-column label="筛选" width="80" align="center">
+                <el-table-column label="筛选" width="100" align="center">
                   <template #default="scope">
-                    <el-switch v-model="scope.row.filterable" />
+                    <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                      <el-switch v-model="scope.row.filterable" />
+                      <el-popover
+                        v-if="scope.row.filterable"
+                        placement="left"
+                        title="筛选器配置"
+                        :width="420"
+                        trigger="click"
+                      >
+                        <template #reference>
+                          <el-button 
+                            type="primary" 
+                            link 
+                            size="small" 
+                            icon="Setting"
+                            style="margin-top: 2px;"
+                          >配置</el-button>
+                        </template>
+                        <div style="display: flex; gap: 16px; padding: 4px 0; align-items: flex-start;">
+                          <div style="flex: 1; min-width: 120px;">
+                            <span style="font-size: 13px; color: #64748b; font-weight: 500; display: block; margin-bottom: 6px;">筛选控件类型</span>
+                            <el-select v-model="scope.row.filterType" size="small" style="width: 100%;" :teleported="false">
+                              <el-option label="输入框" value="input" />
+                              <el-option label="下拉选择" value="select" />
+                            </el-select>
+                          </div>
+                          <div v-if="scope.row.filterType === 'select'" style="flex: 2;">
+                            <span style="font-size: 13px; color: #64748b; font-weight: 500; display: block; margin-bottom: 6px;">选项来源</span>
+                            <el-radio-group v-model="scope.row._filterSource" size="small" style="margin-bottom: 8px;" @change="(val) => { if(val==='manual') scope.row.filterOptionsSql = ''; else scope.row.filterOptions = []; }">
+                              <el-radio-button label="manual">手动输入/表单去重</el-radio-button>
+                              <el-radio-button label="sql">SQL 维度查询</el-radio-button>
+                            </el-radio-group>
+                            
+                            <div v-if="scope.row._filterSource !== 'sql'">
+                              <el-input 
+                                :model-value="Array.isArray(scope.row.filterOptions) ? scope.row.filterOptions.join(',') : (scope.row.filterOptions || '')"
+                                @update:model-value="(val) => { scope.row.filterOptions = val ? val.split(',').map(s => s.trim()).filter(Boolean) : [] }"
+                                placeholder="例如: A,B,C" 
+                                size="small" 
+                                type="textarea"
+                                :rows="2"
+                              />
+                              <span style="font-size: 11px; color: #94a3b8; margin-top: 6px; display: block; line-height: 1.4;">
+                                💡 如果为空则遍历表单数据后去重
+                              </span>
+                            </div>
+                            
+                            <div v-else>
+                              <el-input 
+                                v-model="scope.row.filterOptionsSql"
+                                placeholder="例: SELECT DISTINCT category FROM dim.dim_product ORDER BY category" 
+                                size="small" 
+                                type="textarea"
+                                :rows="3"
+                                style="font-family: monospace;"
+                              />
+                              <div style="margin-top: 6px; display: flex; justify-content: space-between; align-items: center;">
+                                <span style="font-size: 11px; color: #94a3b8; line-height: 1.4;">
+                                  💡 仅支持 SELECT 语句，取结果集第一列
+                                </span>
+                                <el-button type="primary" link size="small" @click="testFilterOptionsSql(scope.row)" :loading="scope.row._testingFilterSql">测试 SQL</el-button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </el-popover>
+                    </div>
                   </template>
                 </el-table-column>
                 <el-table-column label="操作" width="80" align="center">
@@ -628,7 +718,7 @@
                 filterable
                 default-first-option
                 :reserve-keyword="false"
-                placeholder="选择或搜索用户，留空表示仅管理员可见"
+                placeholder="选择或搜索用户"
                 style="width: 100%"
                 :loading="userListLoading"
               >
@@ -639,7 +729,26 @@
                   :value="u.value"
                 />
               </el-select>
-              <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">不选择任何用户 = 只有管理员可以查看和填报</div>
+            </el-form-item>
+            <el-form-item label="授权部门列表">
+              <el-select
+                v-model="fillDepartmentList"
+                multiple
+                filterable
+                default-first-option
+                :reserve-keyword="false"
+                placeholder="选择授权访问的部门"
+                style="width: 100%"
+                :loading="departmentListLoading"
+              >
+                <el-option
+                  v-for="d in allDepartments"
+                  :key="d.value"
+                  :label="d.label"
+                  :value="d.value"
+                />
+              </el-select>
+              <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;">若用户和部门都不选择，则只有管理员可以查看和填报</div>
             </el-form-item>
           </el-form>
         </el-card>
@@ -749,6 +858,156 @@
     </el-dialog>
 
     <el-dialog
+      v-model="pkConflictDialogVisible"
+      :title="pkConflictInfo.hasExistingId ? '🛠️ 已有物理表 id 字段冲突确认与选择' : '🛠️ 物理表主键绑定与系统审计列补齐选择'"
+      width="620px"
+      :close-on-click-modal="false"
+      class="custom-dialog pk-conflict-dialog"
+    >
+      <div style="padding: 10px 0;">
+        <!-- 情况一：物理表已存在 id 列（冲突） -->
+        <div v-if="pkConflictInfo.hasExistingId" style="background-color: #fffaf0; border: 1px solid #ffe3b3; border-radius: 8px; padding: 14px; margin-bottom: 20px; display: flex; align-items: flex-start; gap: 12px;">
+          <el-icon style="font-size: 24px; color: #e6a23c; flex-shrink: 0; margin-top: 2px;"><WarningFilled /></el-icon>
+          <div>
+            <div style="font-size: 14px; font-weight: bold; color: #c27d1a; margin-bottom: 6px;">检测到物理表已存在 id 字段</div>
+            <div style="font-size: 13px; color: #666; line-height: 1.5;">
+              系统默认会在您的物理表中自动创建和管理标准的自增 <code>id</code> 主键列。为了保证这一机制最佳运行，如果您决定使用系统分配的标准 <code>id</code> 列，<b>请先去数据库中删除该 id 列</b>！
+            </div>
+          </div>
+        </div>
+
+        <!-- 情况二：物理表缺少 id 审计列（缺失） -->
+        <div v-else style="background-color: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 14px; margin-bottom: 20px; display: flex; align-items: flex-start; gap: 12px;">
+          <el-icon style="font-size: 24px; color: #ef4444; flex-shrink: 0; margin-top: 2px;"><CircleCloseFilled /></el-icon>
+          <div>
+            <div style="font-size: 14px; font-weight: bold; color: #b91c1c; margin-bottom: 6px;">
+              {{ pkConflictInfo.isCompositePrimaryKey ? '检测到物理表为主键配置受限' : '检测到物理表缺少系统必要的审计字段 [id]' }}
+            </div>
+            <div style="font-size: 13px; color: #666; line-height: 1.5;">
+              <span v-if="pkConflictInfo.isCompositePrimaryKey">
+                检测到该物理表已在数据库中设定为联合主键 <strong>[{{ pkConflictInfo.detectedPrimaryKey }}]</strong>。由于数据更新和删除需要单行精准定位，系统不支持直接绑定。请选择下方一键自动补齐标准的自增 <code>id</code> 列。<br/>
+              </span>
+              <span v-else>
+                <span v-if="pkConflictInfo.detectedPrimaryKey">
+                  已成功识别物理表结构！检测到该物理表在数据库中已设定主键字段为：<strong>[{{ pkConflictInfo.detectedPrimaryKey }}]</strong>。<br/>
+                </span>
+                为了确保表单数据在进行更新、删除、填报记录时正常运作，强烈建议您在物理表中补齐标准的自增 <code>id</code> 主键列！
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div style="font-size: 14px; font-weight: bold; color: #334155; margin-bottom: 12px;">
+          {{ pkConflictInfo.hasExistingId ? '如果您不想去数据库删除该 id 列，系统支持以下绑定方式，请选择：' : '请选择您的主键绑定与补齐方式：' }}
+        </div>
+        
+        <div class="choice-cards-container">
+          <!-- 情况一：缺少 id 时的两个最精简选项 -->
+          <template v-if="!pkConflictInfo.hasExistingId">
+            <!-- 选项 1：一键自动补齐 (推荐!) -->
+            <div 
+              class="choice-card"
+              :class="{ active: pkConflictSelectedOption === 'auto_repair_id' }"
+              @click="pkConflictSelectedOption = 'auto_repair_id'"
+            >
+              <div class="choice-card-header">
+                <span class="choice-title">⚡ 一键自动补齐标准的自增 id 主键 (推荐)</span>
+                <el-tag size="small" type="success" effect="dark">极速补齐</el-tag>
+              </div>
+              <div class="choice-description">
+                系统将自动在您的数据库物理表中添加自增 <code>id</code> 列并设为表单主键，完美支持所有功能。
+              </div>
+            </div>
+
+            <!-- 选项 2：有物理主键时绑定物理主键，无物理主键时选择暂不处理 -->
+            <div 
+              v-if="pkConflictInfo.detectedPrimaryKey && !pkConflictInfo.isCompositePrimaryKey"
+              class="choice-card"
+              :class="{ active: pkConflictSelectedOption === 'detected_pk' }"
+              @click="pkConflictSelectedOption = 'detected_pk'"
+            >
+              <div class="choice-card-header">
+                <span class="choice-title">💎 直接绑定物理主键 [{{ pkConflictInfo.detectedPrimaryKey }}]</span>
+                <el-tag size="small" type="success" effect="dark">当前主键</el-tag>
+              </div>
+              <div class="choice-description">
+                直接绑定使用物理表中已设定的主键作为表单主键，系统将暂不补齐 <code>id</code> 列。
+              </div>
+            </div>
+
+            <div 
+              v-else
+              class="choice-card"
+              :class="{ active: pkConflictSelectedOption === 'just_skip' }"
+              @click="pkConflictSelectedOption = 'just_skip'"
+            >
+              <div class="choice-card-header">
+                <span class="choice-title">📦 稍后手动配置 / 暂不处理</span>
+                <el-tag size="small" type="info" effect="plain">暂不处理</el-tag>
+              </div>
+              <div class="choice-description">
+                先完成表结构识别，稍后在左侧配置面板中手动设定或补齐主键。
+              </div>
+            </div>
+          </template>
+
+          <!-- 情况二：已有 id 冲突时的两个最精简选项 -->
+          <template v-else>
+            <!-- 选项 1：去数据库删除 id -->
+            <div 
+              class="choice-card"
+              :class="{ active: pkConflictSelectedOption === 'delete_db_id' }"
+              @click="pkConflictSelectedOption = 'delete_db_id'"
+            >
+              <div class="choice-card-header">
+                <span class="choice-title">🔄 去数据库删除 id (由系统自动重建)</span>
+                <el-tag size="small" type="info" effect="plain">推荐重建</el-tag>
+              </div>
+              <div class="choice-description">
+                手工删除或重命名已有的 <code>id</code> 字段，由系统重新创建标准的自增主键，兼容性最佳。
+              </div>
+            </div>
+
+            <!-- 选项 2：有物理主键时绑定物理主键，无物理主键时选择直接使用现有 id -->
+            <div 
+              v-if="pkConflictInfo.detectedPrimaryKey && !pkConflictInfo.isCompositePrimaryKey"
+              class="choice-card"
+              :class="{ active: pkConflictSelectedOption === 'detected_pk' }"
+              @click="pkConflictSelectedOption = 'detected_pk'"
+            >
+              <div class="choice-card-header">
+                <span class="choice-title">💎 直接绑定物理主键 [{{ pkConflictInfo.detectedPrimaryKey }}]</span>
+                <el-tag size="small" type="success" effect="dark">当前主键</el-tag>
+              </div>
+              <div class="choice-description">
+                使用当前物理主键作为表单主键继续绑定，保留原有的 <code>id</code> 作为普通数据列。
+              </div>
+            </div>
+
+            <div 
+              v-else
+              class="choice-card"
+              :class="{ active: pkConflictSelectedOption === 'existing_id' }"
+              @click="pkConflictSelectedOption = 'existing_id'"
+            >
+              <div class="choice-card-header">
+                <span class="choice-title">📦 直接使用表内现有 id 字段做为主键</span>
+                <el-tag size="small" type="warning" effect="dark">自备主键</el-tag>
+              </div>
+              <div class="choice-description">
+                直接使用数据库物理表中当前已有的 <code>id</code> 字段做为表单主键，不再对其进行删除或重建。
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="handlePkConflictCancel">取消返回</el-button>
+        <el-button type="primary" @click="handlePkConflictConfirm" :disabled="!pkConflictSelectedOption">确认并继续</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-model="pairConfirmDialogVisible"
       title="智能配对确认"
       width="600px"
@@ -835,7 +1094,7 @@ const formMeta = reactive({
 
 let _fieldUidCounter = 1
 const fields = ref([
-  { _uid: _fieldUidCounter++, name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, hideInForm: false, hideInList: false, systemLocked: false, pattern: '', patternMsg: '', min: null, max: null, minLength: null, maxLength: null }
+  { _uid: _fieldUidCounter++, name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, filterType: 'input', filterOptions: [], filterOptionsSql: '', _filterSource: 'manual', hideInForm: false, hideInList: false, systemLocked: false, pattern: '', patternMsg: '', min: null, max: null, minLength: null, maxLength: null, validationSql: '', validationSqlMsg: '' }
 ])
 
 const importDialogVisible = ref(false)
@@ -854,6 +1113,181 @@ const importConfig = reactive({
 })
 const isParsing = ref(false)
 const pairConfirmDialogVisible = ref(false)
+
+const pkConflictDialogVisible = ref(false)
+const pkConflictSelectedOption = ref('')
+const pkConflictInfo = ref({
+  hasExistingId: false,
+  detectedPrimaryKey: '',
+  isCompositePrimaryKey: false,
+  fields: [],
+  schemaName: '',
+  tableName: '',
+  missingColumns: [],
+  resData: null
+})
+
+const handlePkConflictCancel = () => {
+  pkConflictDialogVisible.value = false
+  isInspectingExistingTable.value = false
+  ElMessage.info('已取消识别。')
+}
+
+const handlePkConflictConfirm = async () => {
+  pkConflictDialogVisible.value = false
+  const info = pkConflictInfo.value
+  const res = info.resData
+  
+  let targetPk = 'id'
+  let needAutoRepair = false
+  
+  if (pkConflictSelectedOption.value === 'detected_pk') {
+    targetPk = info.detectedPrimaryKey || 'id'
+  } else if (pkConflictSelectedOption.value === 'delete_db_id') {
+    ElMessage.warning('请先去数据库手动删除或重命名已有的 id 列，然后重试。')
+    isInspectingExistingTable.value = false
+    return
+  } else if (pkConflictSelectedOption.value === 'auto_repair_id') {
+    targetPk = 'id'
+    needAutoRepair = true
+  } else if (pkConflictSelectedOption.value === 'just_skip') {
+    targetPk = info.detectedPrimaryKey || ''
+  }
+  
+  try {
+    let mappedFields = res.fields.map(f => ({
+      _uid: _fieldUidCounter++,
+      ...f,
+      required: f.required || false,
+      filterable: f.filterable || false,
+      filterType: f.filterType || 'input',
+      filterOptions: f.filterOptions || [],
+      filterOptionsSql: f.filterOptionsSql || '',
+      _filterSource: f.filterOptionsSql ? 'sql' : 'manual',
+      hideInForm: f.hideInForm || false,
+      hideInList: f.hideInList || false,
+      systemLocked: isSystemManagedField(f)
+    }))
+    
+    mappedFields.sort((a, b) => {
+      const aName = (a.columnName || '').toLowerCase()
+      const bName = (b.columnName || '').toLowerCase()
+      if (aName === 'id') return -1
+      if (bName === 'id') return 1
+      return 0
+    })
+    
+    fields.value = mappedFields
+    
+    formMeta.tableName = info.tableName
+    formMeta.schemaName = info.schemaName
+    bindExistingTableMode.value = true
+    existingTableDialogVisible.value = false
+    missingColumns.value = res.missingColumns || []
+    
+    formMeta.insertDtColumn = res.detectedInsertDt
+    formMeta.updateDtColumn = res.detectedUpdateDt
+    formMeta.deleteFlagColumn = res.detectedDeleteFlag
+    
+    formMeta.pkColumn = targetPk
+    
+    if (needAutoRepair) {
+      ElMessage.success('表结构识别成功，正在后台为您自动补齐自增 id 主键...')
+      setTimeout(async () => {
+        try {
+          isRepairing.value = true
+          const url = `/api/fill/forms/repairTableByName?schemaName=${formMeta.schemaName}&tableName=${formMeta.tableName}&userEmail=${currentUser.value}`
+          const repairRes = await axios.post(url, ['id'])
+          if (repairRes.data.success && repairRes.data.success.length > 0) {
+            ElMessage.success('🎉 自增 id 主键已成功自动补齐到物理表中！')
+            await inspectExistingTable(formMeta.schemaName, formMeta.tableName, true)
+          } else {
+            ElMessage.error('自动补齐失败，请在页面手动点击「一键补齐」')
+          }
+        } catch (e) {
+          ElMessage.error('自动补齐过程中发生网络错误')
+        } finally {
+          isRepairing.value = false
+        }
+      }, 300)
+    } else {
+      ElMessage.success(`已成功识别表结构，主键已绑定为: [${formMeta.pkColumn}]`)
+    }
+  } catch (e) {
+    ElMessage.error('字段绑定失败')
+  } finally {
+    isInspectingExistingTable.value = false
+  }
+}
+
+const testSql = async (row) => {
+  if (!row.validationSql) {
+    ElMessage.warning('请先输入校验 SQL')
+    return
+  }
+  if (!row._testSqlValue) {
+    ElMessage.warning('请先输入测试值')
+    return
+  }
+  row._testingSql = true
+  try {
+    const res = await axios.post(`/api/fill/test-sql`, null, {
+      params: {
+        sql: row.validationSql,
+        testValue: row._testSqlValue,
+        userEmail: currentUser.value
+      }
+    })
+    if (res.data && res.data.success) {
+      if (res.data.passed) {
+        ElMessage.success(res.data.message || '测试通过')
+      } else {
+        ElMessage.warning(res.data.message || '测试未查得结果')
+      }
+    } else {
+      ElMessage.error(res.data?.message || '测试失败')
+    }
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || e.message || '网络或服务端异常')
+  } finally {
+    row._testingSql = false
+  }
+}
+
+const testFilterOptionsSql = async (row) => {
+  if (!row.filterOptionsSql || !row.filterOptionsSql.trim()) {
+    ElMessage.warning('请输入获取下拉选项的 SQL 语句')
+    return
+  }
+  
+  row._testingFilterSql = true
+  try {
+    const res = await axios.get('/api/fill/filter-options-sql', {
+      params: {
+        sql: row.filterOptionsSql.trim(),
+        userEmail: currentUser.value
+      }
+    })
+    
+    if (Array.isArray(res.data)) {
+      if (res.data.length === 0) {
+        ElMessage.warning('测试成功，但该 SQL 未查得任何数据')
+      } else {
+        ElMessageBox.alert(`成功获取到 ${res.data.length} 条选项，前 5 条预览：<br/>${res.data.slice(0, 5).join('<br/>')}`, 'SQL 测试成功', {
+          dangerouslyUseHTMLString: true,
+          type: 'success'
+        })
+      }
+    } else {
+      ElMessage.error('SQL 测试返回格式异常')
+    }
+  } catch (e) {
+    ElMessage.error(e.response?.data?.message || 'SQL 测试失败，请检查语句')
+  } finally {
+    row._testingFilterSql = false
+  }
+}
+
 const confirmingPairs = ref([])
 const lastParseResult = ref(null)
 const lastFileName = ref('')
@@ -868,6 +1302,9 @@ const isRepairing = ref(false)
 const isSyncingColumns = ref(false)
 
 const displayMissingColumns = computed(() => {
+  if (formMeta.pkColumn && formMeta.pkColumn !== 'id') {
+    return missingColumns.value.filter(col => col !== 'id')
+  }
   return missingColumns.value
 })
 
@@ -943,6 +1380,10 @@ const initDragSort = () => {
 }
 
 const tableRowClassName = ({ row }) => {
+  const isPk = (row.columnName || '').toLowerCase() === (formMeta.pkColumn || 'id').toLowerCase()
+  if (isPk) {
+    return 'pk-row'
+  }
   return row.systemLocked ? 'system-locked-row' : ''
 }
 
@@ -970,6 +1411,22 @@ const loadSchemas = async () => {
 const allUsers = ref([])
 const fillUserList = ref([])
 const userListLoading = ref(false)
+
+const allDepartments = ref([])
+const fillDepartmentList = ref([])
+const departmentListLoading = ref(false)
+
+const loadDepartmentList = async () => {
+  departmentListLoading.value = true
+  try {
+    const res = await axios.get('/api/user/departments')
+    allDepartments.value = res.data || []
+  } catch (e) {
+    allDepartments.value = []
+  } finally {
+    departmentListLoading.value = false
+  }
+}
 
 const loadUserList = async () => {
   userListLoading.value = true
@@ -1068,7 +1525,7 @@ const formatSuffixSummary = (suffixes = []) => {
 }
 
 const addField = () => {
-  fields.value.push({ _uid: _fieldUidCounter++, name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, hideInForm: false, hideInList: false, systemLocked: false, pattern: '', patternMsg: '', min: null, max: null, minLength: null, maxLength: null })
+  fields.value.push({ _uid: _fieldUidCounter++, name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, filterType: 'input', filterOptions: [], filterOptionsSql: '', _filterSource: 'manual', hideInForm: false, hideInList: false, systemLocked: false, pattern: '', patternMsg: '', min: null, max: null, minLength: null, maxLength: null, validationSql: '', validationSqlMsg: '' })
 }
 
 const handleDbTypeChange = (dbType, row) => {
@@ -1221,32 +1678,54 @@ const inspectExistingTable = async (sName, tName, silent = false) => {
       }
     })
     
-    // [新逻辑] 检查主键冲突 (仅在非静默模式下弹出，补齐后的刷新应避开弹窗)
-    if (res.data.hasIdConflict && !silent) {
-      ElMessageBox.alert(
-        res.data.conflictMessage || '检测到物理表已存在 id 字段。为了由系统统一管理主键并确保 COPY 导入性能，请管理员先在数据库中删除或重命名物理表的 id 列，然后再次识别。',
-        '物理表主键冲突',
-        { type: 'error', confirmButtonText: '知道了' }
-      )
-      // 停止后续识别逻辑，强制用户去删列
-      isInspectingExistingTable.value = false
+    // 检查物理表中是否已存在 id 字段及是否缺失
+    const hasExistingId = res.data.fields && res.data.fields.some(f => (f.columnName || '').toLowerCase() === 'id')
+    const isMissingId = res.data.missingColumns && res.data.missingColumns.includes('id')
+    
+    if ((hasExistingId || isMissingId) && !silent) {
+      // 触发精美的大弹窗，将解析结果存入 pkConflictInfo 等待用户决定
+      pkConflictInfo.value = {
+        hasExistingId: hasExistingId,
+        detectedPrimaryKey: res.data.detectedPrimaryKey || '',
+        isCompositePrimaryKey: res.data.isCompositePrimaryKey || res.data.compositePrimaryKey || false,
+        fields: res.data.fields || [],
+        schemaName: schemaName,
+        tableName: tableName,
+        missingColumns: res.data.missingColumns || [],
+        resData: res.data
+      }
+      
+      // 默认选中策略：
+      if (hasExistingId) {
+        if (res.data.detectedPrimaryKey && !res.data.isCompositePrimaryKey && !res.data.compositePrimaryKey) {
+          pkConflictSelectedOption.value = 'detected_pk'
+        } else {
+          pkConflictSelectedOption.value = 'existing_id'
+        }
+      } else {
+        pkConflictSelectedOption.value = 'auto_repair_id' // 强烈推荐自动补齐标准的自增 id 主键
+      }
+      
+      pkConflictDialogVisible.value = true
       return
     }
 
-    // 后端返回的是 ExcelParseResult 对象，其 fields 属性才是字段数组
+    // 没有冲突也没有缺失 id 时，按标准流程直接导入绑定
     if (res.data && res.data.fields && res.data.fields.length > 0) {
-      // 1. 映射字段并设置系统锁定状态
       let mappedFields = res.data.fields.map(f => ({
         _uid: _fieldUidCounter++,
         ...f,
         required: f.required || false,
         filterable: f.filterable || false,
+        filterType: f.filterType || 'input',
+        filterOptions: f.filterOptions || [],
+        filterOptionsSql: f.filterOptionsSql || '',
+        _filterSource: f.filterOptionsSql ? 'sql' : 'manual',
         hideInForm: f.hideInForm || false,
         hideInList: f.hideInList || false,
         systemLocked: isSystemManagedField(f)
       }))
       
-      // 2. 排序：将 id 放在第一行，其余按原顺序
       mappedFields.sort((a, b) => {
         const aName = (a.columnName || '').toLowerCase()
         const bName = (b.columnName || '').toLowerCase()
@@ -1263,20 +1742,13 @@ const inspectExistingTable = async (sName, tName, silent = false) => {
       existingTableDialogVisible.value = false
       missingColumns.value = res.data.missingColumns || []
       
-      // 保存识别到的审计列角色
       formMeta.insertDtColumn = res.data.detectedInsertDt
       formMeta.updateDtColumn = res.data.detectedUpdateDt
       formMeta.deleteFlagColumn = res.data.detectedDeleteFlag
       
-      formMeta.pkColumn = 'id'
+      formMeta.pkColumn = res.data.detectedPrimaryKey || 'id'
 
-      if (missingColumns.value.length > 0 && !silent) {
-        ElMessageBox.alert(
-          `已识别表结构，但检测到物理表缺少审计列：[${missingColumns.value.join(', ')}]。建议先补齐审计列，否则删除和更新功能将受限。`,
-          '配置风险提示',
-          { type: 'warning', confirmButtonText: '知道了' }
-        )
-      } else if (!silent) {
+      if (!silent) {
         ElMessage.success('已识别已有表结构，发布时将直接绑定该表')
       }
     } else {
@@ -1349,6 +1821,10 @@ const syncUntrackedColumns = async () => {
           currentFields.push({
             _uid: _fieldUidCounter++,
             ...colDef,
+            filterType: colDef.filterType || 'input',
+            filterOptions: colDef.filterOptions || [],
+            filterOptionsSql: colDef.filterOptionsSql || '',
+            _filterSource: colDef.filterOptionsSql ? 'sql' : 'manual',
             originalColumnName: colDef.columnName || '',
             systemLocked: isSystemManagedField(colDef)
           })
@@ -1453,7 +1929,7 @@ const finalizeFields = () => {
   // 必须从解析出的基础字段开始，而不是从 fields.value (因为这时候 fields.value 可能还没更新)
   const finalFields = lastParseResult.value.fields ? [...lastParseResult.value.fields] : []
   
-  // 1. 处理拒绝的配对：将被排除的原始列还原成标准字段
+  // 1. 处理拒绝 of 配对：将被排除的原始列还原成标准字段
   rejectedPairs.forEach(p => {
     const allIdx = [...(p.keyIndices || []), ...(p.valueIndices || [])]
     allIdx.forEach(idx => {
@@ -1466,13 +1942,17 @@ const finalizeFields = () => {
           type: 'input',
           dbType: 'VARCHAR(255)',
           required: false,
-          filterable: false
+          filterable: false,
+          filterType: 'input',
+          filterOptions: [],
+          filterOptionsSql: '',
+          _filterSource: 'manual'
         })
       }
     })
   })
 
-  // 2. 处理确认的配对：添加虚拟 JSON 字段
+  // 2. 处理确认 of 配对：添加虚拟 JSON 字段
   activePairs.forEach(p => {
     const colName = p.suggestedColumnName || 'extra_data'
     // 允许通过显示名区分，或者是唯一的列名
@@ -1484,6 +1964,10 @@ const finalizeFields = () => {
         dbType: 'JSONB',
         required: false,
         filterable: false,
+        filterType: 'input',
+        filterOptions: [],
+        filterOptionsSql: '',
+        _filterSource: 'manual',
         id_mark: true // 标记为虚拟/既有
       })
     }
@@ -1548,6 +2032,10 @@ const applyParsedResults = (data) => {
       dbType: f.dbType || 'VARCHAR(255)',
       required: f.required || false,
       filterable: f.filterable || false,
+      filterType: f.filterType || 'input',
+      filterOptions: f.filterOptions || [],
+      filterOptionsSql: f.filterOptionsSql || '',
+      _filterSource: f.filterOptionsSql ? 'sql' : 'manual',
       hideInForm: f.hideInForm || false,
       hideInList: f.hideInList || false,
       systemLocked: isSystemManagedField(f)
@@ -1626,7 +2114,7 @@ const submitFormAndCreateTable = async () => {
         // 更新全局状态以便列表展示
         missingColumns.value = currentMissing
         
-        const needsId = currentMissing.includes('id')
+        const needsId = currentMissing.includes('id') && (!formMeta.pkColumn || formMeta.pkColumn === 'id')
         const missingDeleteFlag = currentMissing.includes('delete_flag') && !formMeta.hardDelete
         
         if (needsId || missingDeleteFlag) {
@@ -1674,9 +2162,13 @@ const submitFormAndCreateTable = async () => {
     dbType: f.dbType,
     required: f.required,
     filterable: f.filterable,
+    filterType: f.filterType || 'input',
+    filterOptions: f.filterOptions || [],
+    filterOptionsSql: f.filterOptionsSql || '',
+    _filterSource: f.filterOptionsSql ? 'sql' : 'manual',
     hideInForm: f.hideInForm,
     hideInList: f.hideInList,
-    options: null
+    options: f.options || null
   }))
 
   const payload = {
@@ -1684,6 +2176,7 @@ const submitFormAndCreateTable = async () => {
     deadline: formMeta.reminderMode === 'DEADLINE' ? (formMeta.deadline || null) : null,
     recipientEmails: recipientList.value.length > 0 ? JSON.stringify(recipientList.value) : null,
     fillUserEmails: fillUserList.value.length > 0 ? JSON.stringify(fillUserList.value) : null,
+    fillDepartments: fillDepartmentList.value.length > 0 ? JSON.stringify(fillDepartmentList.value) : null,
     forms: JSON.stringify(formattedFields),
     folderId: formMeta.folderId || null,
     kvConfig: formMeta.kvConfig,
@@ -1719,12 +2212,19 @@ const loadFormForEdit = async () => {
     if (res.data.fillUserEmails) {
         try { fillUserList.value = JSON.parse(res.data.fillUserEmails) } catch (e) { fillUserList.value = [] }
     }
+    if (res.data.fillDepartments) {
+        try { fillDepartmentList.value = JSON.parse(res.data.fillDepartments) } catch (e) { fillDepartmentList.value = [] }
+    }
     if (res.data.forms) {
         const parsed = JSON.parse(res.data.forms)
         fields.value = parsed.map(f => ({
           _uid: _fieldUidCounter++,
           ...f,
           originalColumnName: f.columnName || '',
+          filterType: f.filterType || 'input',
+          filterOptions: f.filterOptions || [],
+          filterOptionsSql: f.filterOptionsSql || '',
+          _filterSource: f.filterOptionsSql ? 'sql' : 'manual',
           systemLocked: isSystemManagedField(f)
         }))
     }
@@ -1770,6 +2270,7 @@ const updateFormMeta = async () => {
     ...formMeta,
     recipientEmails: recipientList.value.length > 0 ? JSON.stringify(recipientList.value) : null,
     fillUserEmails: fillUserList.value.length > 0 ? JSON.stringify(fillUserList.value) : null,
+    fillDepartments: fillDepartmentList.value.length > 0 ? JSON.stringify(fillDepartmentList.value) : null,
     folderId: formMeta.folderId || null,
     forms: JSON.stringify(fields.value.map(f => {
       const { id_mark, systemLocked, ...rest } = f
@@ -1795,6 +2296,7 @@ const updateFormMeta = async () => {
 onMounted(() => {
   loadSchemas()
   loadUserList()
+  loadDepartmentList()
   loadFolderTree()
   if (isEditMode.value) {
     loadFormForEdit().then(() => {
@@ -2168,5 +2670,63 @@ onMounted(() => {
 
 :deep(.system-locked-row.el-table__row) {
   cursor: not-allowed !important;
+}
+
+:deep(.pk-row) {
+  background-color: #fffbeb !important; /* Soft, modern amber/yellow highlight */
+}
+
+:deep(.pk-row td) {
+  border-bottom: 1px dashed #fbd38d !important;
+}
+:deep(.pk-row .el-input__inner) {
+  background-color: #fffdf5 !important;
+}
+
+.choice-cards-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.choice-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  background-color: #f8fafc;
+}
+.choice-card:hover {
+  border-color: #cbd5e1;
+  background-color: #f1f5f9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05);
+}
+.choice-card.active {
+  border-color: #3b82f6;
+  background-color: #eff6ff;
+  box-shadow: 0 4px 12px -2px rgb(59 130 246 / 0.15);
+}
+.choice-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.choice-title {
+  font-size: 14px;
+  font-weight: bold;
+  color: #1e293b;
+}
+.choice-card.active .choice-title {
+  color: #1d4ed8;
+}
+.choice-description {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.5;
+}
+.choice-card.active .choice-description {
+  color: #2563eb;
 }
 </style>

@@ -130,6 +130,65 @@ public class UserService {
         }
     }
 
+    /**
+     * 获取所有不为空的部门列表
+     */
+    public List<java.util.Map<String, String>> getAllDepartments() {
+        String sql = "SELECT dept, MAX(position) as pos FROM etl_manage.report_department_user_list WHERE dept IS NOT NULL AND dept != '' GROUP BY dept ORDER BY dept";
+        try {
+            List<java.util.Map<String, Object>> rows = jdbcTemplate.queryForList(sql);
+            List<java.util.Map<String, String>> result = new ArrayList<>();
+            for (java.util.Map<String, Object> row : rows) {
+                String dept = (String) row.get("dept");
+                String pos = (String) row.get("pos");
+                String label = dept;
+                if (pos != null) {
+                    int idx = pos.indexOf(dept);
+                    if (idx >= 0) {
+                        label = pos.substring(0, idx + dept.length());
+                    }
+                }
+                java.util.Map<String, String> map = new java.util.HashMap<>();
+                map.put("value", dept);
+                map.put("label", label);
+                result.add(map);
+            }
+            return result;
+        } catch (Exception e) {
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * 根据邮箱或用户名获取用户所在部门
+     */
+    public String getUserDepartment(String userIdentifier) {
+        if (userIdentifier == null || userIdentifier.isBlank()) {
+            return null;
+        }
+        
+        // 优先按 email 查
+        String sql = "SELECT dept FROM etl_manage.report_department_user_list WHERE email = ? LIMIT 1";
+        try {
+            List<String> depts = jdbcTemplate.queryForList(sql, String.class, userIdentifier.trim());
+            if (depts != null && !depts.isEmpty() && depts.get(0) != null) {
+                return depts.get(0).trim();
+            }
+        } catch (Exception ignored) { }
+
+        // 再按 username 查（兜底）
+        String sqlByName = "SELECT dept FROM etl_manage.report_department_user_list WHERE username = ? LIMIT 1";
+        try {
+            List<String> depts = jdbcTemplate.queryForList(sqlByName, String.class, userIdentifier.trim());
+            if (depts != null && !depts.isEmpty() && depts.get(0) != null) {
+                return depts.get(0).trim();
+            }
+        } catch (Exception e) {
+            return null;
+        }
+        return null;
+    }
+
     private boolean columnExists(String tableName, String columnName) {
         // This method is kept for compatibility but no longer used for the primary view
         DataSource dataSource = jdbcTemplate.getDataSource();

@@ -50,6 +50,7 @@
             placeholder="请选择"
             style="width: 100%"
             clearable
+            filterable
           >
             <el-option 
               v-for="opt in field.options" 

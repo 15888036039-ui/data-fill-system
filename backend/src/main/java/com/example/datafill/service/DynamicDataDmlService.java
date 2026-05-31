@@ -25,6 +25,7 @@ import java.util.*;
 public class DynamicDataDmlService {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(DynamicDataDmlService.class);
     private static final java.util.regex.Pattern NUMBER_PATTERN = java.util.regex.Pattern.compile("^-?\\d*\\.?\\d+(?:[eE][-+]?\\d+)?$");
+    private static final java.util.concurrent.atomic.AtomicLong PK_SEQ = new java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis() * 1000L);
 
     private final DataFillFormMapper formMapper;
 
@@ -51,7 +52,7 @@ public class DynamicDataDmlService {
         "w_update_dt", "update_time", "updated_at"
     ));
 
-    private java.util.Map<String, String> loadPhysicalColumns(String schema, String table) {
+    java.util.Map<String, String> loadPhysicalColumns(String schema, String table) {
         if (schema == null || schema.trim().isEmpty()) {
             schema = SqlUtil.extractSchema(table);
             if (schema == null) {
@@ -97,10 +98,20 @@ public class DynamicDataDmlService {
         return null;
     }
 
-    private boolean isNumericType(String dbType) {
+    boolean isNumericType(String dbType) {
         if (dbType == null) return false;
         String type = dbType.toLowerCase();
         return type.contains("int") || type.contains("numeric") || type.contains("decimal") || type.contains("real") || type.contains("double") || type.contains("float") || type.contains("serial") || type.equals("smallint") || type.equals("bigint");
+    }
+
+    boolean isColumnAutoIncrement(String schema, String table, String columnName) {
+        try {
+            String sql = "SELECT COUNT(1) FROM information_schema.columns WHERE table_schema = ? AND table_name = ? AND column_name = ? AND (column_default IS NOT NULL OR is_identity = 'YES')";
+            Integer count = jdbcTemplate.queryForObject(sql, Integer.class, schema, table, columnName);
+            return count != null && count > 0;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private void checkAddPermission(DataFillForm form, boolean isAdmin) {
@@ -125,6 +136,10 @@ public class DynamicDataDmlService {
     }
 
     private void validateRecord(DataFillForm form, Map<String, Object> rowData, Map<String, String> physicalColumns) {
+        validateRecord(form, rowData, physicalColumns, null);
+    }
+
+    private void validateRecord(DataFillForm form, Map<String, Object> rowData, Map<String, String> physicalColumns, Map<String, Map<String, Boolean>> validationCache) {
         List<FieldDef> fields;
         try {
             fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
@@ -134,8 +149,10 @@ public class DynamicDataDmlService {
 
         for (FieldDef field : fields) {
             String colName = field.getColumnName();
-            if (colName == null) continue;
-            
+            if (colName == null || Boolean.TRUE.equals(field.getHideInForm()) || Boolean.TRUE.equals(field.getSystemLocked())) {
+                continue;
+            }
+
             Object val = rowData.get(colName);
             if (val == null) {
                 for (String key : rowData.keySet()) {
@@ -146,46 +163,54 @@ public class DynamicDataDmlService {
                 }
             }
 
-            // 1. Required Check
+            // 1. 必填校验
             if (Boolean.TRUE.equals(field.getRequired())) {
                 if (val == null || (val instanceof String && ((String) val).trim().isEmpty())) {
                     throw new RuntimeException("字段「" + field.getName() + "」为必填项");
                 }
             }
 
-            if (val == null || (val instanceof String && ((String) val).trim().isEmpty())) continue;
+            if (val == null || (val instanceof String && ((String) val).trim().isEmpty())) {
+                continue;
+            }
 
             String dbType = physicalColumns.get(colName.toLowerCase());
-            
-            // 2. Type & Value Check
+            if (dbType == null) {
+                dbType = "";
+            }
+
+            String strVal = (val == null) ? null : String.valueOf(val);
+            // 2. 类型转换与基础校验
             try {
                 Object converted = convertValueForDb(val, dbType);
-                
                 if (isNumericType(dbType) && converted instanceof String) {
-                     throw new RuntimeException("字段「" + field.getName() + "」需为数字类型");
+                    throw new RuntimeException("字段「" + field.getName() + "」需为数字类型");
                 }
+
+                // 日期格式强校验
                 if ((dbType.contains("timestamp") || dbType.contains("date")) && converted instanceof String) {
-                    String strVal = (String) converted;
-                    if (strVal.contains("(纯数字，缺少日期分隔符)")) {
-                        throw new RuntimeException("数据格式不匹配：存在格式问题 (异常内容：\"" + strVal + "\")。请检查对应列是否为正确的日期格式，切勿混用。");
+                    String sv = (String) converted;
+                    if (sv.contains("(纯数字")) {
+                        throw new RuntimeException("数据格式不匹配：字段「" + field.getName() + "」日期格式不正确（异常内容：\"" + sv + "\"）。请确保包含日期分隔符（如 - 或 /）。");
                     }
-                    throw new RuntimeException("数据格式不匹配：字段「" + field.getName() + "」日期格式不正确 (异常内容：\"" + strVal + "\")。请检查对应列是否为正确的日期格式，切勿混用。");
+                    throw new RuntimeException("数据格式不匹配：字段「" + field.getName() + "」日期格式不正确（异常内容：\"" + sv + "\"）。");
                 }
-                
+
                 if (converted instanceof java.math.BigDecimal || converted instanceof Number) {
                     double numVal = (converted instanceof java.math.BigDecimal) ? ((java.math.BigDecimal) converted).doubleValue() : ((Number) converted).doubleValue();
                     if (field.getMin() != null && numVal < field.getMin()) {
-                        throw new RuntimeException("字段「" + field.getName() + "」数值不能小于 " + field.getMin());
+                        throw new RuntimeException("字段「" + field.getName() + "」数值需 ≥ " + field.getMin());
                     }
                     if (field.getMax() != null && numVal > field.getMax()) {
-                        throw new RuntimeException("字段「" + field.getName() + "」数值不能大于 " + field.getMax());
+                        throw new RuntimeException("字段「" + field.getName() + "」数值需 ≤ " + field.getMax());
                     }
                 }
-                
-                String strVal = null;
+
+                // 派生用于正则和长度校验的字符串值 (strVal)
                 if (val instanceof String) {
                     strVal = (String) val;
                 } else if ((field.getPattern() != null && !field.getPattern().trim().isEmpty()) || field.getMinLength() != null || field.getMaxLength() != null) {
+                    // 只有在需要校验正则或长度时，才进行复杂的数值转字符串逻辑
                     if (val instanceof Double) {
                         double d = (Double) val;
                         if (Math.abs(d - (long) d) < 1e-9) {
@@ -211,31 +236,74 @@ public class DynamicDataDmlService {
                     } else {
                         strVal = String.valueOf(val);
                     }
+                } else {
+                    strVal = String.valueOf(val);
                 }
 
-                if (strVal != null) {
-                    if (field.getMinLength() != null && strVal.length() < field.getMinLength()) {
-                         throw new RuntimeException("字段「" + field.getName() + "」长度不能少于 " + field.getMinLength() + " 个字符");
-                    }
-                    if (field.getMaxLength() != null && strVal.length() > field.getMaxLength()) {
-                         throw new RuntimeException("字段「" + field.getName() + "」长度不能超过 " + field.getMaxLength() + " 个字符");
-                    }
-                    if (field.getPattern() != null && !field.getPattern().trim().isEmpty()) {
-                        if (!strVal.matches(field.getPattern())) {
-                            String msg;
-                            if (field.getPatternMsg() != null && !field.getPatternMsg().trim().isEmpty()) {
-                                msg = field.getPatternMsg();
-                            } else {
-                                msg = "字段「" + field.getName() + "」校验未通过，请按照标准格式填写（" + translatePatternToHint(field.getPattern()) + "）";
-                            }
-                            throw new RuntimeException(msg + " (该行读到的异常内容：\"" + strVal + "\")");
-                        }
+                if (field.getMinLength() != null && strVal.length() < field.getMinLength()) {
+                    throw new RuntimeException("字段「" + field.getName() + "」长度需 ≥ " + field.getMinLength());
+                }
+                if (field.getMaxLength() != null && strVal.length() > field.getMaxLength()) {
+                    throw new RuntimeException("字段「" + field.getName() + "」长度需 ≤ " + field.getMaxLength());
+                }
+                
+                if (field.getPattern() != null && !field.getPattern().trim().isEmpty()) {
+                    if (!strVal.matches(field.getPattern())) {
+                        String msg = (field.getPatternMsg() != null && !field.getPatternMsg().trim().isEmpty()) ? field.getPatternMsg() : "字段「" + field.getName() + "」格式不正确";
+                        throw new RuntimeException(msg + " (内容: \"" + strVal + "\")");
                     }
                 }
-            } catch (RuntimeException e) {
-                throw e;
+            } catch (RuntimeException re) {
+                throw re;
             } catch (Exception e) {
-                throw new RuntimeException("字段「" + field.getName() + "」格式错误");
+                log.warn("数据校验转换失败: col={}, val={}", colName, val, e);
+            }
+
+            // 3. 进阶维度 SQL 校验
+            if (field.getValidationSql() != null && !field.getValidationSql().trim().isEmpty()) {
+                String sql = field.getValidationSql().trim();
+                if (sql.contains(";")) {
+                    throw new RuntimeException("校验 SQL 不允许包含分号 (;)");
+                }
+                
+                String cacheKey = field.getColumnName() + "::" + sql;
+                if (validationCache != null) {
+                    validationCache.putIfAbsent(cacheKey, new HashMap<>());
+                    Map<String, Boolean> valueCache = validationCache.get(cacheKey);
+                    if (valueCache.containsKey(strVal)) {
+                        if (!valueCache.get(strVal)) {
+                            String msg = (field.getValidationSqlMsg() != null && !field.getValidationSqlMsg().trim().isEmpty()) ? field.getValidationSqlMsg() : "不在合法的维度范围内";
+                            String fieldName = (field.getName() != null && !field.getName().trim().isEmpty()) ? field.getName() : field.getColumnName();
+                            throw new RuntimeException("字段「" + fieldName + "」校验不通过: " + msg + " (当前内容: \"" + strVal + "\")");
+                        }
+                        continue; // 从缓存命中合法性，直接跳过数据库查询
+                    }
+                }
+
+                try {
+                    String limitedSql = "SELECT * FROM (" + sql + ") AS tmp LIMIT 1";
+                    org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate namedJdbcTemplate = new org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate(jdbcTemplate);
+                    Map<String, Object> params = new HashMap<>();
+                    params.put("val", strVal);
+                    List<Map<String, Object>> rows = namedJdbcTemplate.queryForList(limitedSql, params);
+                    boolean isValid = (rows != null && !rows.isEmpty());
+                    
+                    if (validationCache != null) {
+                        validationCache.get(cacheKey).put(strVal, isValid);
+                    }
+                    
+                    if (!isValid) {
+                        String msg = (field.getValidationSqlMsg() != null && !field.getValidationSqlMsg().trim().isEmpty()) ? field.getValidationSqlMsg() : "不在合法的维度范围内";
+                        String fieldName = (field.getName() != null && !field.getName().trim().isEmpty()) ? field.getName() : field.getColumnName();
+                        throw new RuntimeException("字段「" + fieldName + "」校验不通过: " + msg + " (当前内容: \"" + strVal + "\")");
+                    }
+                } catch (RuntimeException re) {
+                    throw re;
+                } catch (Exception e) {
+                    log.error("手动填报维度校验失败: sql={}, val={}", sql, strVal, e);
+                    String fieldName = (field.getName() != null && !field.getName().trim().isEmpty()) ? field.getName() : field.getColumnName();
+                    throw new RuntimeException("字段「" + fieldName + "」系统维度校验异常，请联系管理员");
+                }
             }
         }
     }
@@ -513,10 +581,21 @@ public class DynamicDataDmlService {
         boolean pkInserted = false;
 
         if (hasColumn(physicalColumns, pk)) {
-            if (!isNumericPk) {
+            boolean isAutoIncrement = isColumnAutoIncrement(schema, tableName, pk);
+            if (!isAutoIncrement) {
                 columns.add("\"" + pk + "\"");
                 placeholders.add("?");
-                args.add(rowId);
+                Object providedPk = null;
+                for (String key : rowData.keySet()) {
+                    if (key.equalsIgnoreCase(pk)) {
+                        providedPk = rowData.get(key);
+                        break;
+                    }
+                }
+                Object pkVal = (providedPk != null && !providedPk.toString().trim().isEmpty()) 
+                        ? convertValueForDb(providedPk, pkType)
+                        : (isNumericPk ? PK_SEQ.incrementAndGet() : rowId);
+                args.add(pkVal);
                 pkInserted = true;
             }
         }
@@ -613,10 +692,13 @@ public class DynamicDataDmlService {
             fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
         } catch (Exception e) { throw new RuntimeException(e); }
 
+        // 引入本地缓存，避免同一批次内的相同值反复执行 validationSql 产生 N+1 查询风暴
+        Map<String, Map<String, Boolean>> validationCache = new HashMap<>();
+        
         // 修正：在大批量导入场景下，parallelStream 可能导致 ForkJoinPool 任务堆积及对象大量产生，改为普通 stream 以获取更平稳的内存表现
         rows.stream().forEach(row -> {
             try {
-                validateRecord(form, row, physicalColumns);
+                validateRecord(form, row, physicalColumns, validationCache);
             } catch (Exception e) {
                 Object excelRowObj = row.get("__excel_row_num__");
                 String prefix = (excelRowObj != null) ? "数据格式错误（第 " + excelRowObj + " 行）：" : "";
@@ -629,7 +711,10 @@ public class DynamicDataDmlService {
         String pkType = physicalColumns.get(pk.toLowerCase());
         boolean isNumericPk = isNumericType(pkType);
 
-        if (hasColumn(physicalColumns, pk) && !isNumericPk) columns.add("\"" + pk + "\"");
+        boolean isAutoIncrement = isColumnAutoIncrement(schema, tableName, pk);
+        boolean shouldExplicitlyInsertPk = hasColumn(physicalColumns, pk) && (!isNumericPk || !isAutoIncrement);
+
+        if (shouldExplicitlyInsertPk) columns.add("\"" + pk + "\"");
         for (String col : CREATION_FIELDS) {
             if (hasColumn(physicalColumns, col)) columns.add("\"" + col + "\"");
         }
@@ -667,7 +752,24 @@ public class DynamicDataDmlService {
                     StringBuilder tsv = new StringBuilder(1024 * 1024 * 2);
                     int batchCount = 0;
                     for (Map<String, Object> row : rows) {
-                        if (hasColumn(physicalColumns, pk) && !isNumericPk) appendTsv(tsv, java.util.UUID.randomUUID().toString().replace("-", ""));
+                        if (shouldExplicitlyInsertPk) {
+                            Object providedPk = null;
+                            for (String key : row.keySet()) {
+                                if (key.equalsIgnoreCase(pk)) {
+                                    providedPk = row.get(key);
+                                    break;
+                                }
+                            }
+                            if (providedPk != null && !providedPk.toString().trim().isEmpty()) {
+                                appendTsv(tsv, convertValueForDb(providedPk, pkType));
+                            } else {
+                                if (isNumericPk) {
+                                    appendTsv(tsv, PK_SEQ.incrementAndGet());
+                                } else {
+                                    appendTsv(tsv, java.util.UUID.randomUUID().toString().replace("-", ""));
+                                }
+                            }
+                        }
                         for (String col : CREATION_FIELDS) {
                             if (hasColumn(physicalColumns, col)) appendTsv(tsv, now);
                         }
@@ -786,7 +888,7 @@ public class DynamicDataDmlService {
         for (Map.Entry<String, Object> entry : rowData.entrySet()) {
             String key = entry.getKey();
             String lowerKey = key.toLowerCase();
-            // 核心修复：过滤系统审计列与物理主键标识列，防止重复更新主键或导致 SQL 语法错误
+            // 核心修复：过滤系统审计列与主键列，防止误改主键导致数据关联破坏
             if (lowerKey.equals(pk.toLowerCase()) || SYSTEM_FIELDS.contains(lowerKey) || !hasColumn(physicalColumns, key)) continue;
             
             String colType = physicalColumns.get(lowerKey);
@@ -1094,7 +1196,9 @@ public class DynamicDataDmlService {
             
             affectedUsers = jdbcTemplate.queryForList(querySql.toString(), String.class, queryArgs.toArray());
         } catch (Exception e) {
-            if (e instanceof RuntimeException) throw e;
+            if (e instanceof RuntimeException) {
+                throw e;
+            }
             log.warn("探测受影响用户失败: {}", e.getMessage());
         }
 
@@ -1124,9 +1228,7 @@ public class DynamicDataDmlService {
         
         int rowsDeleted = jdbcTemplate.update(actionSql.toString(), actionArgs.toArray());
         if (rowsDeleted == 0 && !dataIds.isEmpty()) {
-            if (!isAdmin && hasColumn(physicalColumns, "load_user")) {
-                throw new RuntimeException("删除失败：您无权删除包含他人提交的记录，或者记录已被他人删除。");
-            }
+            throw new RuntimeException("删除失败：未找到对应的记录，可能已被删除或无权操作。");
         }
 
         // 删除后同步受影响用户的快照
@@ -1201,4 +1303,137 @@ public class DynamicDataDmlService {
     }
 
     private void checkFillLock(String formId, String userEmail, boolean isAdmin) {}
+
+    /**
+     * 测试自定义 SQL 校验
+     */
+    public Map<String, Object> testValidationSql(String sql, String testValue) {
+        Map<String, Object> result = new HashMap<>();
+        if (sql == null || sql.trim().isEmpty()) {
+            result.put("success", false);
+            result.put("message", "SQL 语句不能为空");
+            return result;
+        }
+        if (sql.contains(";")) {
+            result.put("success", false);
+            result.put("message", "SQL 不允许包含分号 (;)");
+            return result;
+        }
+        try {
+            // 安全限制：仅允许 SELECT
+            String upperSql = sql.trim().toUpperCase();
+            if (!upperSql.startsWith("SELECT")) {
+                throw new RuntimeException("校验 SQL 仅允许 SELECT 语句");
+            }
+            if (upperSql.matches("(?s).*\\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER)\\b.*")) {
+                 throw new RuntimeException("检测到非法关键字，校验 SQL 仅允许只读查询");
+            }
+
+            // 包装一层，限制最大返回行数，防止全表扫拉取所有数据导致 OOM
+            String limitedSql = "SELECT * FROM (" + sql + ") AS tmp LIMIT 1";
+            org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate namedJdbcTemplate = new org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate(jdbcTemplate);
+            Map<String, Object> params = new HashMap<>();
+            params.put("val", testValue);
+            List<Map<String, Object>> rows = namedJdbcTemplate.queryForList(limitedSql, params);
+            int count = (rows == null) ? 0 : rows.size();
+            
+            boolean passed = (count > 0);
+            result.put("success", true);
+            result.put("passed", passed);
+            result.put("count", count);
+            result.put("message", passed ? "校验通过" : "校验不通过 (未查得结果)");
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", "SQL 执行错误: " + e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * 执行 SQL 查询并返回第一列结果作为下拉选项
+     */
+    public List<String> executeFilterOptionsSql(String sql) {
+        if (sql == null || sql.trim().isEmpty()) {
+            return Collections.emptyList();
+        }
+        if (sql.contains(";")) {
+            throw new RuntimeException("SQL 仅允许单条语句，不允许包含分号 (;)");
+        }
+        
+        // 安全限制：仅允许 SELECT
+        String upperSql = sql.trim().toUpperCase();
+        if (!upperSql.startsWith("SELECT")) {
+            throw new RuntimeException("SQL 仅允许 SELECT 语句");
+        }
+        if (upperSql.matches("(?s).*\\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER)\\b.*")) {
+             throw new RuntimeException("检测到非法关键字，SQL 仅允许只读查询");
+        }
+
+        try {
+            // 包装一层，限制最大返回行数，防止全表扫导致内存溢出
+            String limitedSql = "SELECT * FROM (" + sql + ") AS tmp LIMIT 1000";
+            
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(limitedSql);
+            if (rows == null || rows.isEmpty()) {
+                return Collections.emptyList();
+            }
+            
+            List<String> result = new ArrayList<>();
+            // 取结果集的第一列
+            String firstKey = rows.get(0).keySet().iterator().next();
+            
+            for (Map<String, Object> row : rows) {
+                Object val = row.get(firstKey);
+                if (val != null && !val.toString().trim().isEmpty()) {
+                    result.add(val.toString().trim());
+                }
+            }
+            return result;
+        } catch (Exception e) {
+            log.error("Failed to execute filter options sql: " + sql, e);
+            throw new RuntimeException("SQL 执行错误: 请联系管理员检查语法");
+        }
+    }
+
+    public List<String> getDistinctColumnValues(String formId, String columnName, String userEmail, boolean isAdmin) {
+        DataFillForm form = formMapper.selectById(formId);
+        if (form == null) {
+            return Collections.emptyList();
+        }
+        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
+        String fullTableName = schema + "." + form.getTableName();
+        java.util.Map<String, String> physicalColumns = loadPhysicalColumns(schema, form.getTableName());
+        String physicalCol = resolvePhysicalColumn(physicalColumns, columnName);
+        if (physicalCol == null) {
+            return Collections.emptyList();
+        }
+
+        StringBuilder sql = new StringBuilder("SELECT DISTINCT \"").append(physicalCol).append("\" FROM ").append(SqlUtil.quoteTable(fullTableName));
+        StringBuilder where = new StringBuilder(" WHERE 1=1 ");
+        List<Object> args = new ArrayList<>();
+        if (hasColumn(physicalColumns, "delete_flag")) {
+            where.append(" AND \"delete_flag\" = FALSE ");
+        }
+        if (!isAdmin && userEmail != null && hasColumn(physicalColumns, "load_user")) {
+            where.append(" AND (\"load_user\" = ? OR \"load_user\" IS NULL) ");
+            args.add(userEmail);
+        }
+        where.append(" AND \"").append(physicalCol).append("\" IS NOT NULL ");
+        
+        sql.append(where).append(" ORDER BY \"").append(physicalCol).append("\" ASC");
+
+        try {
+            List<String> list = jdbcTemplate.queryForList(sql.toString(), String.class, args.toArray());
+            List<String> result = new ArrayList<>();
+            for (String val : list) {
+                if (val != null && !val.trim().isEmpty()) {
+                    result.add(val.trim());
+                }
+            }
+            return result;
+        } catch (Exception e) {
+            log.error("Failed to query distinct values for column: " + columnName, e);
+            return Collections.emptyList();
+        }
+    }
 }
