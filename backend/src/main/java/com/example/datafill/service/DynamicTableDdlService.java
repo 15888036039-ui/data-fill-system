@@ -827,6 +827,21 @@ public class DynamicTableDdlService {
 
                 java.util.Set<String> physicalCols = loadPhysicalColumns(schema, exist.getTableName());
 
+                Map<String, String> dbNullableMap = new HashMap<>();
+                try {
+                    String nullableSql = "SELECT column_name, is_nullable FROM information_schema.columns WHERE table_schema = ? AND table_name = ?";
+                    List<Map<String, Object>> colRows = jdbcTemplate.queryForList(nullableSql, schema, exist.getTableName());
+                    for (Map<String, Object> colRow : colRows) {
+                        String cn = (String) colRow.get("column_name");
+                        String isNullable = (String) colRow.get("is_nullable");
+                        if (cn != null && isNullable != null) {
+                            dbNullableMap.put(cn.toLowerCase(), isNullable);
+                        }
+                    }
+                } catch (Exception ex) {
+                    log.warn("无法加载物理表 {} 的列非空属性: {}", exist.getTableName(), ex.getMessage());
+                }
+
                 for (FieldDef nf : newFields) {
                     String colName = nf.getColumnName();
                     if (colName == null)
@@ -928,6 +943,29 @@ public class DynamicTableDdlService {
                                             + " USING \"" + physicalColName + "\"::" + newDbType);
                         }
 
+                        // C: 检查并更新必填属性 (required) 到数据库实际的非空约束
+                        boolean newRequired = nf.getRequired() != null && nf.getRequired();
+                        String dbIsNullable = dbNullableMap.get(physicalColName.toLowerCase());
+                        if (dbIsNullable != null) {
+                            boolean dbNotNull = "NO".equalsIgnoreCase(dbIsNullable);
+                            if (dbNotNull != newRequired) {
+                                log.info("表单 {} 字段 {} 数据库实际非空约束为 {}, 期望约束为 {}", exist.getName(), physicalColName, dbNotNull, newRequired);
+                                String alterRequiredSql = "ALTER TABLE " + SqlUtil.quoteTable(fullTableName) 
+                                        + " ALTER COLUMN \"" + physicalColName + "\" " 
+                                        + (newRequired ? "SET NOT NULL" : "DROP NOT NULL");
+                                try {
+                                    jdbcTemplate.execute(alterRequiredSql);
+                                } catch (Exception reqEx) {
+                                    log.error("更新字段 {} 必填约束失败", physicalColName, reqEx);
+                                    if (newRequired) {
+                                        throw new RuntimeException("修改必填失败: 无法将该字段设为必填，可能由于表中已有历史记录包含空值，请先清理历史数据后再试！");
+                                    } else {
+                                        throw new RuntimeException("取消必填失败: " + reqEx.getMessage());
+                                    }
+                                }
+                            }
+                        }
+
                         // B: 现有字段 -> 检查名称是否改变，更新备注
                         if (!java.util.Objects.equals(nf.getName(), of.getName())) {
                             log.info("表单 {} 字段 {} 名称由 {} 改为 {}, 更新备注", exist.getName(), colName, of.getName(),
@@ -1024,6 +1062,204 @@ public class DynamicTableDdlService {
         // 1.8 更新元数据
         formMapper.updateById(exist);
 
+    }
+
+    @Transactional(value = "dynamicTransactionManager", rollbackFor = Exception.class)
+    public void syncFormMetaWithPhysicalTable(DataFillForm form) {
+        if (form == null || form.getTableName() == null || form.getTableName().trim().isEmpty()) {
+            return;
+        }
+        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty())
+                ? form.getSchemaName().trim()
+                : "public";
+        String table = form.getTableName().trim();
+
+        if (!physicalTableExists(schema, table)) {
+            return;
+        }
+
+        try {
+            // 1. 获取物理表的所有字段信息
+            String sql = "SELECT c.ordinal_position, c.column_name, c.data_type, c.udt_name, " +
+                    "c.character_maximum_length, c.numeric_precision, c.numeric_scale, c.is_nullable, " +
+                    "c.column_default, c.is_identity, " +
+                    "COALESCE(pgd.description, '') AS column_comment " +
+                    "FROM information_schema.columns c " +
+                    "INNER JOIN pg_catalog.pg_namespace ns ON ns.nspname = c.table_schema " +
+                    "INNER JOIN pg_catalog.pg_class cls ON cls.relname = c.table_name AND cls.relnamespace = ns.oid " +
+                    "LEFT JOIN pg_catalog.pg_description pgd ON pgd.objoid = cls.oid AND pgd.objsubid = c.ordinal_position " +
+                    "WHERE c.table_schema = ? AND c.table_name = ?";
+            List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, schema, table);
+            if (rows.isEmpty()) {
+                return;
+            }
+
+            // 2. 解析当前表单元数据中的字段定义
+            List<FieldDef> currentFields = parseFields(form.getForms());
+            if (currentFields == null || currentFields.isEmpty()) {
+                return;
+            }
+
+            // 3. 构建物理库列名 -> 列详细信息的映射
+            Map<String, Map<String, Object>> dbColumnsMap = new HashMap<>();
+            for (Map<String, Object> row : rows) {
+                String colName = (String) row.get("column_name");
+                if (colName != null) {
+                    dbColumnsMap.put(colName.toLowerCase(), row);
+                }
+            }
+
+            boolean changed = false;
+
+            // 4. 只针对“页面已存在的字段”进行属性（必填、数据类型、注释名称）同步
+            for (FieldDef existingField : currentFields) {
+                if (existingField.getColumnName() == null) continue;
+                String lowerColName = existingField.getColumnName().toLowerCase();
+
+                Map<String, Object> row = dbColumnsMap.get(lowerColName);
+                if (row != null) {
+                    boolean isNullable = "YES".equalsIgnoreCase((String) row.get("is_nullable"));
+                    String comment = (String) row.get("column_comment");
+                    String dbType = buildPgTypeLocal(row);
+
+                    // 4.1 同步必填约束 (如果数据库为 NOT NULL，必须必填)
+                    boolean requiredInDb = !isNullable;
+                    if (existingField.getRequired() == null || existingField.getRequired() != requiredInDb) {
+                        existingField.setRequired(requiredInDb);
+                        changed = true;
+                    }
+
+                    // 4.2 同步物理数据库类型 (dbType)
+                    if (existingField.getDbType() == null || !existingField.getDbType().equalsIgnoreCase(dbType)) {
+                        String oldTypeCategory = getGeneralTypeCategoryLocal(existingField.getDbType());
+                        String newTypeCategory = getGeneralTypeCategoryLocal(dbType);
+
+                        existingField.setDbType(dbType);
+                        // 如果物理分类变了 (比如从 VARCHAR 改为 INT)，才更新前端展示的逻辑类型，避免误杀用户的 select/textarea 等定制类型
+                        if (!oldTypeCategory.equals(newTypeCategory)) {
+                            applyFieldTypeByDbTypeLocal(existingField, dbType);
+                        }
+                        changed = true;
+                    }
+
+                    // 4.3 同步物理表中的字段注释为“中文显示名”（如果数据库注释不为空且与页面不同）
+                    if (comment != null && !comment.trim().isEmpty() && !comment.trim().equalsIgnoreCase(existingField.getName())) {
+                        existingField.setName(comment.trim());
+                        changed = true;
+                    }
+                }
+            }
+
+            if (changed) {
+                form.setForms(writeFieldsJson(currentFields));
+                formMapper.updateById(form); // 必须持久化保存同步后的元数据！
+                log.info("表单 {} 元数据与物理表属性同步成功（已同步必填、类型及注释）", form.getTableName());
+            }
+        } catch (Exception e) {
+            log.warn("无法同步表单 {} 与物理表的元数据: {}", form.getTableName(), e.getMessage(), e);
+        }
+    }
+
+    private String buildPgTypeLocal(Map<String, Object> row) {
+        String dataType = (String) row.get("data_type");
+        String udtName = (String) row.get("udt_name");
+        dataType = dataType != null ? dataType.toLowerCase() : "";
+        udtName = udtName != null ? udtName.toLowerCase() : "";
+
+        Integer charLength = asIntegerLocal(row.get("character_maximum_length"));
+        Integer precision = asIntegerLocal(row.get("numeric_precision"));
+        Integer scale = asIntegerLocal(row.get("numeric_scale"));
+
+        if ("character varying".equals(dataType) || "varchar".equals(dataType)) {
+            return charLength != null && charLength > 0 ? "varchar(" + charLength + ")" : "varchar(255)";
+        }
+        if ("character".equals(dataType) || "bpchar".equals(udtName)) {
+            return charLength != null && charLength > 0 ? "char(" + charLength + ")" : "char(1)";
+        }
+        if ("text".equals(dataType)) {
+            return "text";
+        }
+        if ("integer".equals(dataType) || "int4".equals(dataType) || "int4".equals(udtName)) {
+            return "int4";
+        }
+        if ("bigint".equals(dataType) || "int8".equals(dataType) || "int8".equals(udtName)) {
+            return "int8";
+        }
+        if ("smallint".equals(dataType) || "int2".equals(dataType) || "int2".equals(udtName)) {
+            return "int2";
+        }
+        if ("boolean".equals(dataType) || "bool".equals(dataType) || "bool".equals(udtName)) {
+            return "bool";
+        }
+        if ("date".equals(dataType)) {
+            return "date";
+        }
+        if ("timestamp without time zone".equals(dataType) || "timestamp with time zone".equals(dataType)
+                || "timestamp".equals(dataType) || "timestamptz".equals(udtName)) {
+            return "timestamp";
+        }
+        if ("jsonb".equals(dataType) || "jsonb".equals(udtName)) {
+            return "jsonb";
+        }
+        if ("json".equals(dataType) || "json".equals(udtName)) {
+            return "json";
+        }
+        if ("numeric".equals(dataType) || "decimal".equals(dataType) || "numeric".equals(udtName)) {
+            if (precision != null && scale != null) {
+                return "numeric(" + precision + ", " + scale + ")";
+            }
+            return "numeric";
+        }
+        if ("double precision".equals(dataType) || "float8".equals(udtName)) {
+            return "float8";
+        }
+        if ("real".equals(dataType) || "float4".equals(udtName)) {
+            return "float4";
+        }
+        return !udtName.isEmpty() ? udtName : (!dataType.isEmpty() ? dataType : "varchar(255)");
+    }
+
+    private String getGeneralTypeCategoryLocal(String dbType) {
+        if (dbType == null) return "text";
+        String t = dbType.toUpperCase();
+        if (t.contains("INT") || t.contains("NUMERIC") || t.contains("DECIMAL") || t.contains("DOUBLE") || t.contains("REAL") || t.contains("FLOAT")) {
+            return "number";
+        }
+        if (t.contains("TIMESTAMP") || t.contains("DATE") || t.contains("TIME")) {
+            return "date";
+        }
+        if (t.contains("BOOL")) {
+            return "boolean";
+        }
+        return "text";
+    }
+
+    private void applyFieldTypeByDbTypeLocal(FieldDef field, String dbType) {
+        String typeStr = dbType == null ? "" : dbType.toUpperCase();
+        if (typeStr.contains("TIMESTAMP") || "DATE".equals(typeStr) || typeStr.contains("TIME")) {
+            field.setType("datetime");
+        } else if (typeStr.contains("INT") || typeStr.contains("NUMERIC") || typeStr.contains("DECIMAL")
+                || typeStr.contains("DOUBLE") || typeStr.contains("REAL")) {
+            field.setType("number");
+        } else if (typeStr.contains("TEXT") || typeStr.contains("JSON")) {
+            field.setType("textarea");
+        } else if (typeStr.contains("BOOL")) {
+            field.setType("switch");
+        } else {
+            field.setType("input");
+        }
+    }
+
+    private Integer asIntegerLocal(Object value) {
+        if (value == null) return null;
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**

@@ -980,7 +980,12 @@
                 <el-tag size="small" type="success" effect="dark">当前主键</el-tag>
               </div>
               <div class="choice-description">
-                使用当前物理主键作为表单主键继续绑定，保留原有的 <code>id</code> 作为普通数据列。
+                <span v-if="(pkConflictInfo.detectedPrimaryKey || '').toLowerCase() === 'id'">
+                  使用当前物理主键 <code>id</code> 作为表单主键继续绑定，不进行重建或删除。
+                </span>
+                <span v-else>
+                  直接使用物理表已有主键 <code>[{{ pkConflictInfo.detectedPrimaryKey }}]</code> 作为表单主键，表内的 <code>id</code> 字段将作为普通的非主键数据列保留。
+                </span>
               </div>
             </div>
 

@@ -255,7 +255,11 @@ public class DataFillController {
     // 根据ID获取某个表单的配置
     @GetMapping("/forms/{id}")
     public DataFillForm getFormById(@PathVariable String id) {
-        return formMapper.selectById(id);
+        DataFillForm form = formMapper.selectById(id);
+        if (form != null) {
+            tableDdlService.syncFormMetaWithPhysicalTable(form);
+        }
+        return form;
     }
 
     // [管理端核心]: 删除表单模板（根据参数决定是重命名备份还是彻底删除物理表）
