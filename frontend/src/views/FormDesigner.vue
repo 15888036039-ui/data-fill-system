@@ -496,6 +496,33 @@
                         <el-form-item label="维度校验失败提示语">
                           <el-input v-model="props.row.validationSqlMsg" placeholder="例如: 数据错误，未在维度表中找到该值" />
                         </el-form-item>
+
+                        <div style="border: 1px solid #e2e8f0; padding: 16px; border-radius: 8px; margin-top: 16px; margin-bottom: 8px; background-color: #ffffff;">
+                          <div style="font-weight: 600; font-size: 13px; color: #1e293b; margin-bottom: 12px; display: flex; align-items: center;">
+                            填报可见权限控制
+                            <el-tooltip content="配置允许填报/查看此字段的用户邮箱列表。若不配置，则所有人均可填报/查看。" placement="top">
+                              <el-icon style="margin-left: 4px; color: #3b82f6;"><InfoFilled /></el-icon>
+                            </el-tooltip>
+                          </div>
+                          <el-form-item label="可见用户邮箱">
+                            <el-select
+                              v-model="props.row.visibleEmails"
+                              multiple
+                              filterable
+                              allow-create
+                              default-first-option
+                              placeholder="请选择或输入邮箱地址"
+                              style="width: 100%"
+                            >
+                              <el-option
+                                v-for="item in recipientOptions"
+                                :key="item.value"
+                                :label="item.label"
+                                :value="item.value"
+                              />
+                            </el-select>
+                          </el-form-item>
+                        </div>
                       </el-form>
                     </div>
                   </template>
@@ -596,6 +623,7 @@
                             <el-select v-model="scope.row.filterType" size="small" style="width: 100%;" :teleported="false">
                               <el-option label="输入框" value="input" />
                               <el-option label="下拉选择" value="select" />
+                              <el-option label="日期范围" value="daterange" />
                             </el-select>
                           </div>
                           <div v-if="scope.row.filterType === 'select'" style="flex: 2;">
@@ -1099,7 +1127,7 @@ const formMeta = reactive({
 
 let _fieldUidCounter = 1
 const fields = ref([
-  { _uid: _fieldUidCounter++, name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, filterType: 'input', filterOptions: [], filterOptionsSql: '', _filterSource: 'manual', hideInForm: false, hideInList: false, systemLocked: false, pattern: '', patternMsg: '', min: null, max: null, minLength: null, maxLength: null, validationSql: '', validationSqlMsg: '' }
+  { _uid: _fieldUidCounter++, name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, filterType: 'input', filterOptions: [], filterOptionsSql: '', _filterSource: 'manual', hideInForm: false, hideInList: false, systemLocked: false, pattern: '', patternMsg: '', min: null, max: null, minLength: null, maxLength: null, validationSql: '', validationSqlMsg: '', visibleEmails: [], visibleEmailsStr: '' }
 ])
 
 const importDialogVisible = ref(false)
@@ -1171,6 +1199,8 @@ const handlePkConflictConfirm = async () => {
       _filterSource: f.filterOptionsSql ? 'sql' : 'manual',
       hideInForm: f.hideInForm || false,
       hideInList: f.hideInList || false,
+      visibleEmails: f.visibleEmails || [],
+      visibleEmailsStr: f.visibleEmails ? f.visibleEmails.join(', ') : '',
       systemLocked: isSystemManagedField(f)
     }))
     
@@ -1530,7 +1560,7 @@ const formatSuffixSummary = (suffixes = []) => {
 }
 
 const addField = () => {
-  fields.value.push({ _uid: _fieldUidCounter++, name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, filterType: 'input', filterOptions: [], filterOptionsSql: '', _filterSource: 'manual', hideInForm: false, hideInList: false, systemLocked: false, pattern: '', patternMsg: '', min: null, max: null, minLength: null, maxLength: null, validationSql: '', validationSqlMsg: '' })
+  fields.value.push({ _uid: _fieldUidCounter++, name: '', columnName: '', originalColumnName: '', type: 'input', dbType: 'VARCHAR(255)', optionsStr: '', required: false, filterable: false, filterType: 'input', filterOptions: [], filterOptionsSql: '', _filterSource: 'manual', hideInForm: false, hideInList: false, systemLocked: false, pattern: '', patternMsg: '', min: null, max: null, minLength: null, maxLength: null, validationSql: '', validationSqlMsg: '', visibleEmails: [], visibleEmailsStr: '' })
 }
 
 const handleDbTypeChange = (dbType, row) => {
@@ -1728,6 +1758,8 @@ const inspectExistingTable = async (sName, tName, silent = false) => {
         _filterSource: f.filterOptionsSql ? 'sql' : 'manual',
         hideInForm: f.hideInForm || false,
         hideInList: f.hideInList || false,
+        visibleEmails: f.visibleEmails || [],
+        visibleEmailsStr: f.visibleEmails ? f.visibleEmails.join(', ') : '',
         systemLocked: isSystemManagedField(f)
       }))
       
@@ -2043,6 +2075,8 @@ const applyParsedResults = (data) => {
       _filterSource: f.filterOptionsSql ? 'sql' : 'manual',
       hideInForm: f.hideInForm || false,
       hideInList: f.hideInList || false,
+      visibleEmails: f.visibleEmails || [],
+      visibleEmailsStr: f.visibleEmails ? f.visibleEmails.join(', ') : '',
       systemLocked: isSystemManagedField(f)
     }
     if (!row.columnName) {
@@ -2173,7 +2207,8 @@ const submitFormAndCreateTable = async () => {
     _filterSource: f.filterOptionsSql ? 'sql' : 'manual',
     hideInForm: f.hideInForm,
     hideInList: f.hideInList,
-    options: f.options || null
+    options: f.options || null,
+    visibleEmails: f.visibleEmails || []
   }))
 
   const payload = {
@@ -2230,6 +2265,8 @@ const loadFormForEdit = async () => {
           filterOptions: f.filterOptions || [],
           filterOptionsSql: f.filterOptionsSql || '',
           _filterSource: f.filterOptionsSql ? 'sql' : 'manual',
+          visibleEmails: f.visibleEmails || [],
+          visibleEmailsStr: f.visibleEmails ? f.visibleEmails.join(', ') : '',
           systemLocked: isSystemManagedField(f)
         }))
     }
@@ -2279,6 +2316,7 @@ const updateFormMeta = async () => {
     folderId: formMeta.folderId || null,
     forms: JSON.stringify(fields.value.map(f => {
       const { id_mark, systemLocked, ...rest } = f
+      rest.visibleEmails = f.visibleEmails || []
       return rest
     })),
     kvConfig: formMeta.kvConfig,

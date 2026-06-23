@@ -552,6 +552,27 @@ public class DynamicDataDmlService {
         if (form == null) throw new RuntimeException("表单不存在");
         checkAddPermission(form, isAdmin);
 
+        // 过滤用户无权可见的字段，防止越权写入
+        if (!isAdmin && userEmail != null && form.getForms() != null) {
+            try {
+                List<FieldDef> fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
+                for (FieldDef field : fields) {
+                    if (field.getVisibleEmails() != null && !field.getVisibleEmails().isEmpty()) {
+                        boolean isAllowed = false;
+                        for (String email : field.getVisibleEmails()) {
+                            if (email.trim().equalsIgnoreCase(userEmail.trim())) {
+                                isAllowed = true;
+                                break;
+                            }
+                        }
+                        if (!isAllowed) {
+                            rowData.remove(field.getColumnName());
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+
         LocalDateTime now = LocalDateTime.now();
         if (form.getDeadline() != null && "ACTIVE".equalsIgnoreCase(form.getStatus())) {
             if (now.isAfter(form.getDeadline())) {
@@ -874,6 +895,28 @@ public class DynamicDataDmlService {
         DataFillForm form = formMapper.selectById(formId);
         if (form == null) throw new RuntimeException("表单不存在");
         checkEditPermission(form, isAdmin);
+
+        // 过滤用户无权可见的字段，防止越权修改并防止清空未显示字段
+        if (!isAdmin && operatorEmail != null && form.getForms() != null) {
+            try {
+                List<FieldDef> fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
+                for (FieldDef field : fields) {
+                    if (field.getVisibleEmails() != null && !field.getVisibleEmails().isEmpty()) {
+                        boolean isAllowed = false;
+                        for (String email : field.getVisibleEmails()) {
+                            if (email.trim().equalsIgnoreCase(operatorEmail.trim())) {
+                                isAllowed = true;
+                                break;
+                            }
+                        }
+                        if (!isAllowed) {
+                            rowData.remove(field.getColumnName());
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         String tableName = form.getTableName();
         String fullTableName = schema + "." + tableName;
@@ -983,16 +1026,7 @@ public class DynamicDataDmlService {
             args.add(userEmail);
         }
 
-        if (filters != null) {
-            for (Map.Entry<String, String> f : filters.entrySet()) {
-                if (f.getValue() == null || f.getValue().trim().isEmpty()) continue;
-                String physicalCol = resolvePhysicalColumn(physicalColumns, f.getKey());
-                if (physicalCol != null) {
-                    where.append(" AND CAST(\"").append(physicalCol).append("\" AS TEXT) = ?");
-                    args.add(f.getValue());
-                }
-            }
-        }
+        appendFilterConditions(filters, physicalColumns, where, args);
 
         Long total = jdbcTemplate.queryForObject("SELECT COUNT(1) FROM " + SqlUtil.quoteTable(fullTableName) + where, Long.class, args.toArray());
         String order = hasColumn(physicalColumns, "w_insert_dt") ? " ORDER BY w_insert_dt DESC" : "";
@@ -1262,16 +1296,7 @@ public class DynamicDataDmlService {
         }
         // ------------------------------------
 
-        if (filters != null) {
-            for (Map.Entry<String, String> f : filters.entrySet()) {
-                if (f.getValue() == null || f.getValue().trim().isEmpty()) continue;
-                String physicalCol = resolvePhysicalColumn(physicalColumns, f.getKey());
-                if (physicalCol != null) {
-                    where.append(" AND CAST(\"").append(physicalCol).append("\" AS TEXT) = ?");
-                    args.add(f.getValue());
-                }
-            }
-        }
+        appendFilterConditions(filters, physicalColumns, where, args);
 
         if (hasColumn(physicalColumns, "delete_flag") && !isHardDeleteMode) {
             where.append(" AND \"delete_flag\" = FALSE ");
@@ -1435,5 +1460,80 @@ public class DynamicDataDmlService {
             log.error("Failed to query distinct values for column: " + columnName, e);
             return Collections.emptyList();
         }
+    }
+
+    private void appendFilterConditions(Map<String, String> filters, java.util.Map<String, String> physicalColumns, StringBuilder where, List<Object> args) {
+        if (filters == null) return;
+        for (Map.Entry<String, String> f : filters.entrySet()) {
+            String val = f.getValue();
+            if (val == null || val.trim().isEmpty()) continue;
+            String physicalCol = resolvePhysicalColumn(physicalColumns, f.getKey());
+            if (physicalCol == null) continue;
+
+            // 检查是否为范围查询 (形如 "2026-06-01,2026-06-30")
+            if (val.contains(",")) {
+                String[] parts = val.split(",", -1);
+                if (parts.length == 2) {
+                    String start = parts[0].trim();
+                    String end = parts[1].trim();
+                    String colType = physicalColumns.get(physicalCol);
+                    log.info("Range filter key: '{}', resolved column: '{}', detected database type: '{}'", f.getKey(), physicalCol, colType);
+                    boolean isIntOrNumeric = colType != null && (colType.contains("int") || colType.contains("numeric") || colType.contains("decimal"));
+
+                    if (!start.isEmpty()) {
+                        Object startVal;
+                        if (isIntOrNumeric) {
+                            startVal = convertDateToType(start, colType);
+                            log.info("Column '{}' type is numeric, converted start date '{}' to '{}'", physicalCol, start, startVal);
+                        } else {
+                            // 如果看起来像日期 (yyyy-MM-dd)，自动补上当天起始时间以精确比对时间戳
+                            if (start.matches("^\\d{4}-\\d{2}-\\d{2}$")) {
+                                start = start + " 00:00:00";
+                            }
+                            startVal = start;
+                        }
+                        where.append(" AND \"").append(physicalCol).append("\" >= ?");
+                        args.add(startVal);
+                    }
+                    if (!end.isEmpty()) {
+                        Object endVal;
+                        if (isIntOrNumeric) {
+                            endVal = convertDateToType(end, colType);
+                            log.info("Column '{}' type is numeric, converted end date '{}' to '{}'", physicalCol, end, endVal);
+                        } else {
+                            // 如果看起来像日期 (yyyy-MM-dd)，自动补上当天结束时间以精确比对时间戳
+                            if (end.matches("^\\d{4}-\\d{2}-\\d{2}$")) {
+                                end = end + " 23:59:59";
+                            }
+                            endVal = end;
+                        }
+                        where.append(" AND \"").append(physicalCol).append("\" <= ?");
+                        args.add(endVal);
+                    }
+                    continue;
+                }
+            }
+
+            // 默认精确匹配
+            where.append(" AND CAST(\"").append(physicalCol).append("\" AS TEXT) = ?");
+            args.add(val);
+        }
+    }
+
+    private Object convertDateToType(String val, String colType) {
+        if (colType != null && (colType.contains("int") || colType.contains("numeric") || colType.contains("decimal"))) {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(\\d{4})[-/]?(\\d{2})[-/]?(\\d{2})").matcher(val);
+            if (m.find()) {
+                try {
+                    String yyyymmdd = m.group(1) + m.group(2) + m.group(3);
+                    if (colType.contains("bigint") || colType.contains("int8")) {
+                        return Long.parseLong(yyyymmdd);
+                    } else {
+                        return Integer.parseInt(yyyymmdd);
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        return val;
     }
 }

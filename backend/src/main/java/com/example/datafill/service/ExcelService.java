@@ -1034,7 +1034,8 @@ public class ExcelService {
                         }
 
                         if (kvStr != null && !kvStr.isEmpty() && vvObj != null && !"".equals(vvObj)) {
-                            dynamicExtras.computeIfAbsent(pc.targetJsonCol(), k -> new LinkedHashMap<>()).put(kvStr,vvObj);
+                            Map<String, Object> extraMap = dynamicExtras.computeIfAbsent(pc.targetJsonCol(), k -> new LinkedHashMap<>());
+                            extraMap.put(kvStr, mergeValues(extraMap.get(kvStr), vvObj));
                             consumed.add(pc.fk());
                             consumed.add(pc.fv());
                         }
@@ -1305,8 +1306,20 @@ public class ExcelService {
         }
     }
 
-
-
+    private Object mergeValues(Object oldVal, Object newVal) {
+        if (oldVal == null) return newVal;
+        if (newVal == null) return oldVal;
+        String s1 = oldVal.toString().trim();
+        String s2 = newVal.toString().trim();
+        if (NUMBER_PATTERN.matcher(s1).matches() && NUMBER_PATTERN.matcher(s2).matches()) {
+            try {
+                java.math.BigDecimal d1 = new java.math.BigDecimal(s1);
+                java.math.BigDecimal d2 = new java.math.BigDecimal(s2);
+                return d1.add(d2).stripTrailingZeros().toPlainString();
+            } catch (Exception ignored) {}
+        }
+        return s1 + ", " + s2;
+    }
 
     private void flushImportBuffer(String formId, List<Map<String, Object>> rows, boolean isAdmin) {
         try {
@@ -3026,7 +3039,8 @@ public class ExcelService {
             String kvStr = (kc == null) ? null : dataFormatter.formatCellValue(kc).trim();
             Object vvObj = parseCellValue(vc, pc.fv(), dateColumnChecked, isDateColumn, dataFormatter);
             if (kvStr != null && !kvStr.isEmpty() && vvObj != null && !"".equals(vvObj)) {
-                dynamicExtras.computeIfAbsent(pc.targetJsonCol(), k -> new LinkedHashMap<>()).put(kvStr, vvObj);
+                Map<String, Object> extraMap = dynamicExtras.computeIfAbsent(pc.targetJsonCol(), k -> new LinkedHashMap<>());
+                extraMap.put(kvStr, mergeValues(extraMap.get(kvStr), vvObj));
                 consumed.add(pc.fk()); consumed.add(pc.fv());
             }
         }

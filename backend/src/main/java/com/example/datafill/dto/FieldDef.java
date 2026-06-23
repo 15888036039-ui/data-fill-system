@@ -25,6 +25,7 @@ public class FieldDef {
     private Boolean hideInForm;  // 是否在填报模版/表单中隐藏
     private Boolean hideInList;  // 是否在列表展示中隐藏
     private Boolean systemLocked; // 是否为系统锁定字段 (禁止修改列名或删除)
+    private List<String> visibleEmails; // 填报可见权限控制：允许查看/填报此字段的邮箱列表，不配置则所有人可见
 
     // 进阶校验：自定义 SQL 校验 (维度表关联)
     private String validationSql;    // 自定义校验 SQL，如：SELECT 1 FROM dim_table WHERE code = :val

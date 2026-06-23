@@ -258,6 +258,38 @@ const currentUser = inject('currentUser', ref(''))
 const userEmail = computed(() => currentUser.value)
 
 const searchParams = ref({})
+const getSerializedSearchParams = () => {
+  const params = { ...searchParams.value }
+  for (const key in params) {
+    if (Array.isArray(params[key])) {
+      if (params[key].length === 2 && params[key][0] && params[key][1]) {
+        params[key] = params[key].join(',')
+      } else {
+        delete params[key]
+      }
+    } else if (key.endsWith('_start')) {
+      const baseKey = key.slice(0, -6)
+      const start = params[key]
+      const end = params[baseKey + '_end']
+      
+      if (start || end) {
+        params[baseKey] = `${start || ''},${end || ''}`
+      }
+      delete params[key]
+      delete params[baseKey + '_end']
+    } else if (key.endsWith('_end')) {
+      const baseKey = key.slice(0, -4)
+      if (!params[baseKey + '_start']) {
+        const end = params[key]
+        if (end) {
+          params[baseKey] = `,${end}`
+        }
+      }
+      delete params[key]
+    }
+  }
+  return params
+}
 const selectedIds = ref([])
 const isSelectAllFiltered = ref(false)
 
@@ -498,12 +530,24 @@ const getRowValue = (row, key) => {
   return foundKey ? row[foundKey] : undefined
 }
 
+const filterByVisibility = (fieldsList) => {
+  if (isAdmin.value) return fieldsList
+  const email = (userEmail.value || '').trim().toLowerCase()
+  return fieldsList.filter(f => {
+    if (!f.visibleEmails || !Array.isArray(f.visibleEmails) || f.visibleEmails.length === 0) {
+      return true
+    }
+    return f.visibleEmails.some(e => e.trim().toLowerCase() === email)
+  })
+}
+
 const tableFields = computed(() => {
   if (!formMeta.value || !formMeta.value.forms) return []
   try {
     const allFields = JSON.parse(formMeta.value.forms)
-    // 列表模式：过滤掉勾选了“列表隐藏”的字段
-    return allFields.filter(f => !f.hideInList)
+    // 列表模式：过滤掉勾选了“列表隐藏”的字段，再根据可见权限过滤
+    const listFields = allFields.filter(f => !f.hideInList)
+    return filterByVisibility(listFields)
   } catch (e) {
     return []
   }
@@ -513,8 +557,9 @@ const formFields = computed(() => {
   if (!formMeta.value || !formMeta.value.forms) return []
   try {
     const allFields = JSON.parse(formMeta.value.forms)
-    // 填报模式：过滤掉勾选了“填报隐藏”的字段（Excel 模板和单行填报表单共用此逻辑）
-    return allFields.filter(f => !f.hideInForm)
+    // 填报模式：过滤掉勾选了“填报隐藏”的字段，再根据可见权限过滤
+    const fillFields = allFields.filter(f => !f.hideInForm)
+    return filterByVisibility(fillFields)
   } catch (e) {
     return []
   }
@@ -529,7 +574,8 @@ const loadDynamicFilterOptions = async () => {
   if (!formMeta.value || !formMeta.value.forms) return
   try {
     const allFields = JSON.parse(formMeta.value.forms)
-    const targetFields = allFields.filter(f => 
+    const visibleAllFields = filterByVisibility(allFields)
+    const targetFields = visibleAllFields.filter(f => 
       f.filterable && 
       f.filterType === 'select' && 
       (!f.filterOptions || f.filterOptions.length === 0) && 
@@ -593,7 +639,7 @@ const loadFormMeta = async () => {
 
 const loadTableData = async () => {
   tableLoading.value = true
-  const params = { ...searchParams.value }
+  const params = getSerializedSearchParams()
   
   try {
     const res = await axios.post(`/api/fill/data/${formId}/list?userEmail=${userEmail.value}&isAdmin=${isAdmin.value}`, params, {
@@ -649,7 +695,7 @@ const handleBatchDelete = async () => {
     
     if (isSelectAllFiltered.value) {
       // 调用批量删除所有过滤数据的接口
-      await axios.post(`/api/fill/data/${formId}/deleteAllFiltered`, searchParams.value, {
+      await axios.post(`/api/fill/data/${formId}/deleteAllFiltered`, getSerializedSearchParams(), {
         params: { userEmail: userEmail.value, isAdmin: isAdmin.value }
       })
     } else {

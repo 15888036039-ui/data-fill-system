@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS data_fill_form (
     allow_add       BOOLEAN DEFAULT TRUE,
     allow_edit      BOOLEAN DEFAULT TRUE,
     allow_delete    BOOLEAN DEFAULT TRUE,
+    default_filter_policy VARCHAR(50) DEFAULT 'FIRST_THREE',
     UNIQUE (schema_name, table_name)
 );
 
@@ -144,6 +145,9 @@ ALTER TABLE data_fill_form
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS allow_delete BOOLEAN DEFAULT TRUE;
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS default_filter_policy VARCHAR(50) DEFAULT 'FIRST_THREE';
 
 -- 修正唯一性约束：从单一 table_name 改为 (schema_name, table_name) 复合约束
 -- 1. 移除旧的单列唯一约束

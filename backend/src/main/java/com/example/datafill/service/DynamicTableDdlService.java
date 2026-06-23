@@ -766,6 +766,7 @@ public class DynamicTableDdlService {
 
         exist.setGroupTag(incoming.getGroupTag());
         exist.setDescription(incoming.getDescription());
+        exist.setDefaultFilterPolicy(incoming.getDefaultFilterPolicy());
 
         if (incoming.getAllowAdd() != null) {
             exist.setAllowAdd(incoming.getAllowAdd());
