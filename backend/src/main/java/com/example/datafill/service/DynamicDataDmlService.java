@@ -1479,6 +1479,7 @@ public class DynamicDataDmlService {
                     String colType = physicalColumns.get(physicalCol);
                     log.info("Range filter key: '{}', resolved column: '{}', detected database type: '{}'", f.getKey(), physicalCol, colType);
                     boolean isIntOrNumeric = colType != null && (colType.contains("int") || colType.contains("numeric") || colType.contains("decimal"));
+                    boolean isTemporal = colType != null && (colType.contains("timestamp") || colType.contains("date") || colType.contains("time"));
 
                     if (!start.isEmpty()) {
                         Object startVal;
@@ -1492,7 +1493,11 @@ public class DynamicDataDmlService {
                             }
                             startVal = start;
                         }
-                        where.append(" AND \"").append(physicalCol).append("\" >= ?");
+                        if (isTemporal) {
+                            where.append(" AND \"").append(physicalCol).append("\" >= CAST(? AS ").append(colType).append(")");
+                        } else {
+                            where.append(" AND \"").append(physicalCol).append("\" >= ?");
+                        }
                         args.add(startVal);
                     }
                     if (!end.isEmpty()) {
@@ -1507,7 +1512,11 @@ public class DynamicDataDmlService {
                             }
                             endVal = end;
                         }
-                        where.append(" AND \"").append(physicalCol).append("\" <= ?");
+                        if (isTemporal) {
+                            where.append(" AND \"").append(physicalCol).append("\" <= CAST(? AS ").append(colType).append(")");
+                        } else {
+                            where.append(" AND \"").append(physicalCol).append("\" <= ?");
+                        }
                         args.add(endVal);
                     }
                     continue;
