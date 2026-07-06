@@ -1,7 +1,7 @@
 <template>
   <div class="data-fill-page">
     <div class="header-nav flat-header">
-      <el-page-header @back="isAdmin ? $router.push('/forms') : $router.push('/tasks')">
+      <el-page-header @back="isAdmin ? $router.push('/forms' + ($route.query.folderId ? '?folderId=' + $route.query.folderId : '')) : $router.push('/tasks' + ($route.query.folderId ? '?folderId=' + $route.query.folderId : ''))">
         <template #content>
           <div class="header-content-box">
             <span class="nav-form-name">{{ formMeta?.name }}</span>

@@ -185,7 +185,7 @@
                     size="small"
                     :icon="scope.row.taskStatus === 'pending' ? 'Edit' : 'View'"
                     round
-                    @click="$router.push(`/fill/${scope.row.formId}`)"
+                    @click="$router.push(`/fill/${scope.row.formId}` + (selectedFolderId ? `?folderId=${selectedFolderId}` : ''))"
                   >
                     {{ scope.row.taskStatus === 'pending' ? '立即填报' : '查看/修改' }}
                   </el-button>

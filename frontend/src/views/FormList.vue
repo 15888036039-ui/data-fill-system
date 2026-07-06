@@ -181,7 +181,7 @@
               <template #default="scope">
                 <div class="action-cell">
                   <el-tooltip content="查看/填写数据" placement="top">
-                    <el-button circle size="small" type="primary" plain icon="List" @click="$router.push(`/fill/${scope.row.id}?admin=true`)" />
+                    <el-button circle size="small" type="primary" plain icon="List" @click="$router.push(`/fill/${scope.row.id}?admin=true` + (selectedFolderId ? `&folderId=${selectedFolderId}` : ''))" />
                   </el-tooltip>
                   <el-tooltip v-if="isAdmin" content="设计模板" placement="top">
                     <el-button circle size="small" type="success" plain icon="Edit" @click="$router.push(`/designer/${scope.row.id}`)" />
