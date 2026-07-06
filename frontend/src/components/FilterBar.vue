@@ -32,6 +32,19 @@
             clearable
             class="filter-input filter-input-range"
           />
+          <el-date-picker
+            v-else-if="field.filterType === 'monthrange'"
+            v-model="internalParams[field.columnName]"
+            type="monthrange"
+            single-panel
+            placement="bottom-start"
+            range-separator="-"
+            start-placeholder="开始月份"
+            end-placeholder="结束月份"
+            value-format="YYYY-MM"
+            clearable
+            class="filter-input filter-input-range"
+          />
           <el-input
             v-else
             v-model="internalParams[field.columnName]"

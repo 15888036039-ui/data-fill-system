@@ -22,7 +22,6 @@
             ref="folderTreeRef"
             :data="folderTree"
             node-key="id"
-            default-expand-all
             highlight-current
             :draggable="isAdmin"
             :expand-on-click-node="false"

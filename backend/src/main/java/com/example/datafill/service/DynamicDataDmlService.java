@@ -1490,6 +1490,8 @@ public class DynamicDataDmlService {
                             // 如果看起来像日期 (yyyy-MM-dd)，自动补上当天起始时间以精确比对时间戳
                             if (start.matches("^\\d{4}-\\d{2}-\\d{2}$")) {
                                 start = start + " 00:00:00";
+                            } else if (start.matches("^\\d{4}-\\d{2}$")) {
+                                start = start + "-01 00:00:00";
                             }
                             startVal = start;
                         }
@@ -1509,6 +1511,13 @@ public class DynamicDataDmlService {
                             // 如果看起来像日期 (yyyy-MM-dd)，自动补上当天结束时间以精确比对时间戳
                             if (end.matches("^\\d{4}-\\d{2}-\\d{2}$")) {
                                 end = end + " 23:59:59";
+                            } else if (end.matches("^\\d{4}-\\d{2}$")) {
+                                try {
+                                    java.time.YearMonth ym = java.time.YearMonth.parse(end);
+                                    end = ym.atEndOfMonth().toString() + " 23:59:59";
+                                } catch (Exception ignored) {
+                                    end = end + "-28 23:59:59";
+                                }
                             }
                             endVal = end;
                         }
@@ -1531,6 +1540,7 @@ public class DynamicDataDmlService {
 
     private Object convertDateToType(String val, String colType) {
         if (colType != null && (colType.contains("int") || colType.contains("numeric") || colType.contains("decimal"))) {
+            // yyyy-MM-dd
             java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(\\d{4})[-/]?(\\d{2})[-/]?(\\d{2})").matcher(val);
             if (m.find()) {
                 try {
@@ -1539,6 +1549,18 @@ public class DynamicDataDmlService {
                         return Long.parseLong(yyyymmdd);
                     } else {
                         return Integer.parseInt(yyyymmdd);
+                    }
+                } catch (NumberFormatException ignored) {}
+            }
+            // yyyy-MM
+            java.util.regex.Matcher m2 = java.util.regex.Pattern.compile("^(\\d{4})[-/]?(\\d{2})$").matcher(val);
+            if (m2.find()) {
+                try {
+                    String yyyymm = m2.group(1) + m2.group(2);
+                    if (colType.contains("bigint") || colType.contains("int8")) {
+                        return Long.parseLong(yyyymm);
+                    } else {
+                        return Integer.parseInt(yyyymm);
                     }
                 } catch (NumberFormatException ignored) {}
             }

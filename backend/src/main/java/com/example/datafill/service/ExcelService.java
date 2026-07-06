@@ -633,6 +633,21 @@ public class ExcelService {
         boolean isAutoIncrement = dataDmlService.isColumnAutoIncrement(schema, form.getTableName(), pk);
         boolean shouldExcludePk = hasPkCol && isNumericPk && isAutoIncrement;
 
+        // 动态补齐缺失的系统审计列（load_user 等），确保 Excel 导入时写入物理表
+        String[] auditCols = {"load_user", "w_insert_dt", "w_update_dt", "delete_flag"};
+        for (String auditCol : auditCols) {
+            boolean hasInPhysical = physicalColumns.containsKey(auditCol.toLowerCase());
+            boolean hasInFields = fields.stream().anyMatch(f -> auditCol.equalsIgnoreCase(f.getColumnName()));
+            if (hasInPhysical && !hasInFields) {
+                FieldDef f = new FieldDef();
+                f.setColumnName(auditCol);
+                f.setOriginalColumnName(auditCol);
+                f.setName(auditCol);
+                f.setSystemLocked(true);
+                fields.add(f);
+            }
+        }
+
         if (form.getReferenceTemplateConfig() != null && !form.getReferenceTemplateConfig().trim().isEmpty()) {
             try {
                 Map<String, Object> referenceConfig = objectMapper.readValue(
@@ -3259,6 +3274,9 @@ public class ExcelService {
                 String errorMsg = e.getMessage();
                 if (errorMsg != null && errorMsg.contains("duplicate key value")) {
                     throw new RuntimeException("导入失败：数据中存在重复的主键，或与数据库中已有的主键发生冲突，请检查后再试。");
+                }
+                if (errorMsg != null && errorMsg.contains("out of range for type integer") && errorMsg.toLowerCase().contains("column " + pk.toLowerCase())) {
+                    throw new RuntimeException("导入失败：主键没有设置自增属性。");
                 }
                 throw new RuntimeException("数据库原子写入失败: " + errorMsg, e);
             }

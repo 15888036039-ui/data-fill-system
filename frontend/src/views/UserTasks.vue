@@ -25,7 +25,6 @@
               v-if="folderTree.length > 0"
               :data="folderTree"
               node-key="id"
-              default-expand-all
               highlight-current
               :expand-on-click-node="false"
               :props="{ label: 'name', children: 'children' }"

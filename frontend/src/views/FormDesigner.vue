@@ -624,6 +624,7 @@
                               <el-option label="输入框" value="input" />
                               <el-option label="下拉选择" value="select" />
                               <el-option label="日期范围" value="daterange" />
+                              <el-option label="月份范围" value="monthrange" />
                             </el-select>
                           </div>
                           <div v-if="scope.row.filterType === 'select'" style="flex: 2;">
@@ -1212,6 +1213,7 @@ const handlePkConflictConfirm = async () => {
       return 0
     })
     
+    ensureSystemFields(mappedFields)
     fields.value = mappedFields
     
     formMeta.tableName = info.tableName
@@ -1771,6 +1773,7 @@ const inspectExistingTable = async (sName, tName, silent = false) => {
         return 0
       })
       
+      ensureSystemFields(mappedFields)
       fields.value = mappedFields
       
       formMeta.tableName = tableName
@@ -1881,6 +1884,7 @@ const syncUntrackedColumns = async () => {
         }
       }
 
+      ensureSystemFields(currentFields)
       fields.value = currentFields
       ElMessage.success(`操作完成：新增 ${addedCount} 个，绑定重命名 ${updatedCount} 个。`)
       untrackedBusinessColumns.value = []
@@ -2026,6 +2030,38 @@ const isSystemManagedField = (field) => {
   return reserved.includes((field?.columnName || '').toLowerCase())
 }
 
+const ensureSystemFields = (fieldsArray) => {
+  if (!fieldsArray) return
+  const systemFields = [
+    { name: 'ID', columnName: 'id', dbType: 'INTEGER', type: 'int', systemLocked: true, required: true, hideInForm: true, hideInList: true },
+    { name: '创建时间', columnName: 'w_insert_dt', dbType: 'TIMESTAMP', type: 'datetime', systemLocked: true, required: false, hideInForm: true, hideInList: true },
+    { name: '更新时间', columnName: 'w_update_dt', dbType: 'TIMESTAMP', type: 'datetime', systemLocked: true, required: false, hideInForm: true, hideInList: true },
+    { name: '导入用户', columnName: 'load_user', dbType: 'VARCHAR(100)', type: 'input', systemLocked: true, required: false, hideInForm: true, hideInList: true },
+    { name: '删除标记', columnName: 'delete_flag', dbType: 'BOOLEAN', type: 'boolean', systemLocked: true, required: true, hideInForm: true, hideInList: true }
+  ]
+  systemFields.forEach(sf => {
+    if (!fieldsArray.some(f => (f.columnName || '').toLowerCase() === sf.columnName.toLowerCase())) {
+      fieldsArray.push({
+        _uid: _fieldUidCounter++,
+        ...sf,
+        originalColumnName: sf.columnName,
+        filterType: 'input',
+        filterOptions: [],
+        filterOptionsSql: '',
+        _filterSource: 'manual',
+        visibleEmails: []
+      })
+    }
+  })
+  
+  // 确保 ID 放在第一行
+  const idIdx = fieldsArray.findIndex(f => (f.columnName || '').toLowerCase() === 'id')
+  if (idIdx > 0) {
+    const idField = fieldsArray.splice(idIdx, 1)[0]
+    fieldsArray.unshift(idField)
+  }
+}
+
 const generateColumnName = (label) => {
   if (!label) return ''
   let name = label.toLowerCase().trim()
@@ -2095,6 +2131,7 @@ const applyParsedResults = (data) => {
     return 0
   })
   
+  ensureSystemFields(mappedFields)
   fields.value = mappedFields
     
   ElMessage.success(`成功识别出 ${fields.value.length} 个字段。`)
@@ -2269,6 +2306,7 @@ const loadFormForEdit = async () => {
           visibleEmailsStr: f.visibleEmails ? f.visibleEmails.join(', ') : '',
           systemLocked: isSystemManagedField(f)
         }))
+        ensureSystemFields(fields.value)
     }
     if (res.data.kvConfig) {
       try {
@@ -2346,6 +2384,7 @@ onMounted(() => {
        setTimeout(initDragSort, 500)
     })
   } else {
+    ensureSystemFields(fields.value)
     setTimeout(initDragSort, 500)
   }
 })
