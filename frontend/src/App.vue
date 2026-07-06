@@ -270,6 +270,7 @@ body {
   background-color: var(--bg-color);
   color: #1e293b;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
 }
 
 .loading-state {
@@ -315,6 +316,7 @@ body {
   display: flex;
   align-items: center;
   padding: 0 24px;
+  box-sizing: border-box;
 }
 
 .nav-menu {
