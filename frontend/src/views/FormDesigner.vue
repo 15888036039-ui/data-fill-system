@@ -140,7 +140,7 @@
             </el-row>
 
             <el-row :gutter="16">
-              <el-col :span="8">
+              <el-col :span="12">
                 <el-form-item label="允许普通用户新增">
                    <el-select v-model="formMeta.allowAdd" style="width: 100%">
                      <el-option label="允许" :value="true" />
@@ -148,7 +148,7 @@
                    </el-select>
                 </el-form-item>
               </el-col>
-              <el-col :span="8">
+              <el-col :span="12">
                 <el-form-item label="允许普通用户修改">
                    <el-select v-model="formMeta.allowEdit" style="width: 100%">
                      <el-option label="允许" :value="true" />
@@ -156,9 +156,20 @@
                    </el-select>
                 </el-form-item>
               </el-col>
-              <el-col :span="8">
+            </el-row>
+
+            <el-row :gutter="16">
+              <el-col :span="12">
                 <el-form-item label="允许普通用户删除">
                    <el-select v-model="formMeta.allowDelete" style="width: 100%">
+                     <el-option label="允许" :value="true" />
+                     <el-option label="禁止" :value="false" />
+                   </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="允许普通用户导出">
+                   <el-select v-model="formMeta.allowExport" style="width: 100%">
                      <el-option label="允许" :value="true" />
                      <el-option label="禁止" :value="false" />
                    </el-select>
@@ -1123,7 +1134,8 @@ const formMeta = reactive({
   defaultFilterPolicy: 'FIRST_THREE',
   allowAdd: true,
   allowEdit: true,
-  allowDelete: true
+  allowDelete: true,
+  allowExport: true
 })
 
 let _fieldUidCounter = 1
@@ -2262,6 +2274,7 @@ const submitFormAndCreateTable = async () => {
     allowAdd: formMeta.allowAdd !== false,
     allowEdit: formMeta.allowEdit !== false,
     allowDelete: formMeta.allowDelete !== false,
+    allowExport: formMeta.allowExport !== false,
     creator: currentUser.value
   }
 
@@ -2363,6 +2376,7 @@ const updateFormMeta = async () => {
     allowAdd: formMeta.allowAdd !== false,
     allowEdit: formMeta.allowEdit !== false,
     allowDelete: formMeta.allowDelete !== false,
+    allowExport: formMeta.allowExport !== false,
     creator: formMeta.creator || currentUser.value
   }
   try {

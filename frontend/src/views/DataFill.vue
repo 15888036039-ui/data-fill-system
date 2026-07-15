@@ -115,6 +115,7 @@
               <el-button icon="Upload" :loading="isUploading" :disabled="!canUpload" class="action-btn">上传数据</el-button>
             </el-upload>
             <el-button icon="Memo" @click="logVisible = true" class="action-btn">操作日志</el-button>
+            <el-button type="warning" plain icon="Download" @click="handleExport" :loading="isExporting" :disabled="!canExport" class="action-btn">导出当前数据</el-button>
           </div>
           
           <div class="right-group">
@@ -246,6 +247,7 @@ const loading = ref(true)
 const tableLoading = ref(false)
 const isFilling = ref(false)
 const isUploading = ref(false)
+const isExporting = ref(false)
 const tableData = ref([])
 const totalCount = ref(0)
 const currentPage = ref(1)
@@ -365,6 +367,11 @@ const canEdit = computed(() => {
 const canDelete = computed(() => {
   if (isAdmin.value) return true
   return !isLocked.value && formMeta.value?.allowDelete !== false
+})
+
+const canExport = computed(() => {
+  if (isAdmin.value) return true
+  return formMeta.value?.allowExport !== false
 })
 
 const nextFillTime = computed(() => {
@@ -748,7 +755,35 @@ const handleDelete = async (dataId) => {
   }
 }
 
-const downloadTemplate = () => window.open(`/api/fill/template/${formId}`)
+const downloadTemplate = () => window.open(`/datafill/api/fill/template/${formId}`)
+
+const handleExport = async () => {
+  isExporting.value = true
+  const loading = ElLoading.service({
+    lock: true,
+    text: '数据正在导出中，请稍候...',
+    background: 'rgba(255, 255, 255, 0.8)'
+  })
+  try {
+    const serializedParams = getSerializedSearchParams()
+    const res = await axios.post(`/api/fill/data/${formId}/export?userEmail=${encodeURIComponent(userEmail.value)}`, serializedParams, {
+      responseType: 'blob'
+    })
+    const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const link = document.createElement('a')
+    link.href = window.URL.createObjectURL(blob)
+    link.download = `${formMeta.value?.name || '数据导出'}_数据导出.xlsx`
+    link.click()
+    window.URL.revokeObjectURL(link.href)
+    ElMessage.success('数据导出成功')
+  } catch (e) {
+    console.error('Export failed:', e)
+    ElMessage.error('导出失败，请重试或联系管理员')
+  } finally {
+    isExporting.value = false
+    loading.close()
+  }
+}
 
 const handleUpload = async (options) => {
   const file = options.file
@@ -789,7 +824,7 @@ const handleImportSuccess = (response) => {
   } else if (response.hasValidationErrors) {
     // 处理大批量数据的校验错误提示
     const summary = `检测到共 <strong style="color: #ef4444; font-size: 15px;">${response.errorCount}</strong> 处数据不合规。为了保障数据一致性，本次导入已全部安全回滚（未向数据库写入任何记录）。`
-    const downloadUrl = `/api/fill/import/error-report/${response.reportId}`
+    const downloadUrl = `/datafill/api/fill/import/error-report/${response.reportId}`
     
     ElMessageBox.confirm(
       `${summary}<br/><br/><span style="color: #64748b; font-size: 13px; font-weight: 500;">请下载详细错误清单，修改后重新上传。</span>`,

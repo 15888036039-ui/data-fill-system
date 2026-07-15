@@ -571,6 +571,203 @@ public class ExcelService {
 
     }
 
+    @Transactional(value = "dynamicTransactionManager", readOnly = true)
+    public void exportData(String formId, Map<String, String> filters, String userEmail, boolean isAdmin, OutputStream outputStream) throws IOException {
+        long startTime = System.currentTimeMillis();
+        log.info("[ExportData] 开始导出表单数据, formId={}, userEmail={}, filters={}", formId, userEmail, filters);
+
+        com.example.datafill.entity.DataFillForm form = formMapper.selectById(formId);
+        if (form == null) {
+            log.error("[ExportData] 表单不存在, formId={}", formId);
+            throw new RuntimeException("表单不存在");
+        }
+        
+        List<FieldDef> fields;
+        try {
+            fields = objectMapper.readValue(form.getForms(), new TypeReference<List<FieldDef>>() {});
+        } catch (JsonProcessingException e) {
+            log.error("[ExportData] 表单解析错误, formId={}", formId, e);
+            throw new RuntimeException("表单解析错误", e);
+        }
+        
+        // 构建所需查询的物理列（仅选择表单中定义的列 and 必要的系统审计列，减少宽表多余列的网络传输延迟）
+        String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
+        java.util.Map<String, String> physicalColumns = dataDmlService.loadPhysicalColumns(schema, form.getTableName());
+        List<String> selectColumns = new ArrayList<>();
+        if (physicalColumns.containsKey("id")) selectColumns.add("id");
+        if (physicalColumns.containsKey("load_user")) selectColumns.add("load_user");
+        if (physicalColumns.containsKey("w_insert_dt")) selectColumns.add("w_insert_dt");
+        if (physicalColumns.containsKey("w_update_dt")) selectColumns.add("w_update_dt");
+        for (FieldDef f : fields) {
+            String col = f.getColumnName();
+            if (col != null) {
+                String lowerCol = col.toLowerCase();
+                if (physicalColumns.containsKey(lowerCol) && !selectColumns.contains(lowerCol)) {
+                    selectColumns.add(lowerCol);
+                }
+            }
+        }
+        log.info("[ExportData] 表单物理列解析完成, fieldsCount={}, selectColumnsCount={}", fields.size(), selectColumns.size());
+
+        // 构建底层执行的 SQL 语句和参数集合，以进行游标流式分批读取（FetchSize），避免将全部记录一次性载入 JVM 内存导致的内存溢出（OOM）
+        String fullTableName = schema + "." + form.getTableName();
+        StringBuilder where = new StringBuilder(" WHERE 1=1 ");
+        List<Object> args = new ArrayList<>();
+        if (physicalColumns.containsKey("delete_flag")) {
+            where.append(" AND \"delete_flag\" = FALSE ");
+        }
+        if (!isAdmin && userEmail != null && physicalColumns.containsKey("load_user")) {
+            where.append(" AND (\"load_user\" = ? OR \"load_user\" IS NULL) ");
+            args.add(userEmail);
+        }
+
+        dataDmlService.appendFilterConditions(filters, physicalColumns, where, args);
+
+        String order = physicalColumns.containsKey("w_insert_dt") ? " ORDER BY w_insert_dt DESC" : "";
+        
+        String selectClause = "SELECT *";
+        if (!selectColumns.isEmpty()) {
+            StringBuilder sb = new StringBuilder("SELECT ");
+            for (int i = 0; i < selectColumns.size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append("\"").append(selectColumns.get(i)).append("\"");
+            }
+            selectClause = sb.toString();
+        }
+        
+        String sql = selectClause + " FROM " + com.example.datafill.util.SqlUtil.quoteTable(fullTableName) + where + order;
+        log.info("[ExportData] 构建 SQL 完成: {}, 参数: {}", sql, args);
+        
+        // 预定义内部结构以存储需要导出的列位置映射，彻底避免在每行循环中重复进行字符串查找和列名转换
+        int fieldsSize = fields.size();
+        int[] rsColIndices = new int[fieldsSize];
+        for (int c = 0; c < fieldsSize; c++) {
+            FieldDef f = fields.get(c);
+            String col = f.getColumnName();
+            if (col != null) {
+                String lowerCol = col.toLowerCase();
+                int idx = selectColumns.indexOf(lowerCol);
+                if (idx != -1) {
+                    rsColIndices[c] = idx + 1; // ResultSet 列索引从 1 开始
+                } else {
+                    rsColIndices[c] = 0;
+                }
+            } else {
+                rsColIndices[c] = 0;
+            }
+        }
+
+        // 复用格式化器以避免在嵌套循环中频繁创建数百个格式化器对象造成 GC 负担
+        java.time.format.DateTimeFormatter dtf = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
+        log.info("[ExportData] 开始流式执行 SQL 查询并写入 Excel...");
+        long queryStartTime = System.currentTimeMillis();
+
+        // 使用 SXSSFWorkbook 开启流式导出（仅在内存保留 100 行，其余缓存入临时磁盘文件），可节省 90% 以上 of JVM heap memory
+        try (org.apache.poi.xssf.streaming.SXSSFWorkbook workbook = new org.apache.poi.xssf.streaming.SXSSFWorkbook(100)) {
+            Sheet sheet = workbook.createSheet("数据导出");
+            
+            // 写入表头
+            Row headerRow = sheet.createRow(0);
+            for (int i = 0; i < fieldsSize; i++) {
+                FieldDef f = fields.get(i);
+                Cell cell = headerRow.createCell(i);
+                cell.setCellValue(f.getName() != null ? f.getName() : f.getColumnName());
+            }
+            
+            // 写入数据行（使用 RowCallbackHandler 流式抓取，数据库每返回一行就写入并释放一行，内存中仅保存 1 行，彻底实现零内存积压）
+            final int[] rowIdx = { 1 };
+            final long[] lastLogTime = { System.currentTimeMillis() };
+            final long[] totalCallbackTimeNano = { 0 };
+            final long[] dbFetchTimeNano = { 0 };
+            final long[] excelWriteTimeNano = { 0 };
+
+            jdbcTemplate.query(
+                con -> {
+                    java.sql.PreparedStatement ps = con.prepareStatement(sql);
+                    // 开启游标分批读取，每次拉取 1000 条
+                    ps.setFetchSize(1000);
+                    for (int i = 0; i < args.size(); i++) {
+                        ps.setObject(i + 1, args.get(i));
+                    }
+                    return ps;
+                },
+                rs -> {
+                    long cbStart = System.nanoTime();
+                    
+                    long t0 = System.nanoTime();
+                    Row row = sheet.createRow(rowIdx[0]++);
+                    long t1 = System.nanoTime();
+                    excelWriteTimeNano[0] += (t1 - t0);
+
+                    for (int c = 0; c < fieldsSize; c++) {
+                        int rsColIdx = rsColIndices[c];
+                        if (rsColIdx > 0) {
+                            long t2 = System.nanoTime();
+                            Object val = rs.getObject(rsColIdx); // 极速：基于数字索引 of 寻址定位
+                            long t3 = System.nanoTime();
+                            dbFetchTimeNano[0] += (t3 - t2);
+
+                            if (val != null) {
+                                long t4 = System.nanoTime();
+                                Cell cell = row.createCell(c);
+                                if (val instanceof Number) {
+                                    cell.setCellValue(((Number) val).doubleValue());
+                                } else if (val instanceof Boolean) {
+                                    cell.setCellValue((Boolean) val);
+                                } else if (val instanceof java.time.LocalDateTime) {
+                                    cell.setCellValue(((java.time.LocalDateTime) val).format(dtf));
+                                } else if (val instanceof java.util.Date) {
+                                    cell.setCellValue(sdf.format((java.util.Date) val));
+                                } else {
+                                    cell.setCellValue(val.toString());
+                                }
+                                long t5 = System.nanoTime();
+                                excelWriteTimeNano[0] += (t5 - t4);
+                            }
+                        }
+                    }
+                    // 每 5000 行打印一次速度 and 进度日志
+                    int currentIdx = rowIdx[0] - 1;
+                    if (currentIdx % 5000 == 0) {
+                        long nowTime = System.currentTimeMillis();
+                        long elapsed = nowTime - lastLogTime[0];
+                        lastLogTime[0] = nowTime;
+                        log.info("[ExportData] 进度日志: 已流式导出数据 {} 条, 最近 5000 条数据处理耗时 {} ms", currentIdx, elapsed);
+                    }
+
+                    totalCallbackTimeNano[0] += (System.nanoTime() - cbStart);
+                }
+            );
+            
+            long queryEndTime = System.currentTimeMillis();
+            long queryTotalTimeMs = queryEndTime - queryStartTime;
+            long callbackTimeMs = totalCallbackTimeNano[0] / 1_000_000;
+            long dbOverheadMs = queryTotalTimeMs - callbackTimeMs;
+            long dbFetchMs = dbFetchTimeNano[0] / 1_000_000;
+            long excelWriteMs = excelWriteTimeNano[0] / 1_000_000;
+
+            log.info("[ExportData] 性能细分分析 -> 总查询与填充时间: {} ms", queryTotalTimeMs);
+            log.info("[ExportData] 性能细分分析 -> 数据库行读取/网络传输等待时间 (rs.next): {} ms", dbOverheadMs);
+            log.info("[ExportData] 性能细分分析 -> JDBC 值类型转化时间 (getObject): {} ms", dbFetchMs);
+            log.info("[ExportData] 性能细分分析 -> Excel 单元格创建与数据写入(含SXSSF硬盘写)时间: {} ms", excelWriteMs);
+            log.info("[ExportData] 数据流式读取并填入 Excel 完成, 共 {} 条记录", rowIdx[0] - 1);
+            
+            // 设置默认列宽为 20 个字符（避免在大数据量下执行 AWT 字体宽度计算导致极高耗时）
+            sheet.setDefaultColumnWidth(20);
+            
+            log.info("[ExportData] 开始写入输出文件流...");
+            long writeStartTime = System.currentTimeMillis();
+            workbook.write(outputStream);
+            log.info("[ExportData] 输出文件流写入完成, 耗时: {} ms", (System.currentTimeMillis() - writeStartTime));
+            
+            // 主动清理流式导出的临时磁盘文件缓存
+            workbook.dispose();
+        }
+        log.info("[ExportData] 导出流程彻底完成, 总耗时: {} ms", (System.currentTimeMillis() - startTime));
+    }
+
     
 	/**
      * 

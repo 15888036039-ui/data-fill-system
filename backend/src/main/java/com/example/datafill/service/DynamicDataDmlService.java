@@ -76,11 +76,11 @@ public class DynamicDataDmlService {
         return result;
     }
 
-    private boolean hasColumn(java.util.Map<String, String> physicalColumns, String columnName) {
+    boolean hasColumn(java.util.Map<String, String> physicalColumns, String columnName) {
         return columnName != null && physicalColumns.containsKey(columnName.toLowerCase());
     }
 
-    private String resolvePhysicalColumn(java.util.Map<String, String> physicalColumns, String configuredColumn) {
+    String resolvePhysicalColumn(java.util.Map<String, String> physicalColumns, String configuredColumn) {
         if (configuredColumn == null) return null;
         String raw = configuredColumn.trim();
         if (raw.isEmpty()) return null;
@@ -1011,6 +1011,10 @@ public class DynamicDataDmlService {
     }
 
     public Map<String, Object> getTableDataPage(String formId, int page, int size, Map<String, String> filters, String userEmail, boolean isAdmin) {
+        return getTableDataPage(formId, page, size, filters, userEmail, isAdmin, null);
+    }
+
+    public Map<String, Object> getTableDataPage(String formId, int page, int size, Map<String, String> filters, String userEmail, boolean isAdmin, List<String> selectColumns) {
         DataFillForm form = formMapper.selectById(formId);
         String schema = (form.getSchemaName() != null && !form.getSchemaName().trim().isEmpty()) ? form.getSchemaName() : "public";
         String fullTableName = schema + "." + form.getTableName();
@@ -1031,7 +1035,18 @@ public class DynamicDataDmlService {
         Long total = jdbcTemplate.queryForObject("SELECT COUNT(1) FROM " + SqlUtil.quoteTable(fullTableName) + where, Long.class, args.toArray());
         String order = hasColumn(physicalColumns, "w_insert_dt") ? " ORDER BY w_insert_dt DESC" : "";
         args.add(size); args.add((page - 1) * size);
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT * FROM " + SqlUtil.quoteTable(fullTableName) + where + order + " LIMIT ? OFFSET ?", args.toArray());
+        
+        String selectClause = "SELECT *";
+        if (selectColumns != null && !selectColumns.isEmpty()) {
+            StringBuilder sb = new StringBuilder("SELECT ");
+            for (int i = 0; i < selectColumns.size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append("\"").append(selectColumns.get(i)).append("\"");
+            }
+            selectClause = sb.toString();
+        }
+        
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(selectClause + " FROM " + SqlUtil.quoteTable(fullTableName) + where + order + " LIMIT ? OFFSET ?", args.toArray());
 
         Map<String, Object> res = new HashMap<>();
         res.put("total", total);
@@ -1462,7 +1477,7 @@ public class DynamicDataDmlService {
         }
     }
 
-    private void appendFilterConditions(Map<String, String> filters, java.util.Map<String, String> physicalColumns, StringBuilder where, List<Object> args) {
+    void appendFilterConditions(Map<String, String> filters, java.util.Map<String, String> physicalColumns, StringBuilder where, List<Object> args) {
         if (filters == null) return;
         for (Map.Entry<String, String> f : filters.entrySet()) {
             String val = f.getValue();

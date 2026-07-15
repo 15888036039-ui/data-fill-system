@@ -3,6 +3,7 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
+  base: '/datafill/',
   plugins: [vue()],
   resolve: {
     alias: {
@@ -11,7 +12,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': {
+      '/datafill/api': {
         target: 'http://localhost:8080',
         changeOrigin: true
       }

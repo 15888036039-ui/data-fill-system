@@ -73,10 +73,10 @@ public class UserController {
             // 简单 base64 编码（和前端 crypto.js 一致: u_ + btoa(encodeURIComponent(user))）
             String encoded = "u_" + java.util.Base64.getEncoder().encodeToString(
                     java.net.URLEncoder.encode(username, "UTF-8").getBytes());
-            response.sendRedirect("/#/tasks?user=" + encoded);
+            response.sendRedirect("/datafill/#/tasks?user=" + encoded);
         } else {
             // token 无效时，跳转到前端（会显示登录页）
-            response.sendRedirect("/#/tasks");
+            response.sendRedirect("/datafill/#/tasks");
         }
     }
 

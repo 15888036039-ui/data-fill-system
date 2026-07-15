@@ -138,6 +138,9 @@ public class DataFillForm {
     @TableField("allow_delete")
     private Boolean allowDelete; // 允许普通用户删除现有数据
 
+    @TableField("allow_export")
+    private Boolean allowExport; // 允许普通用户导出当前数据
+
     @TableField("default_filter_policy")
     private String defaultFilterPolicy; // 默认筛选器策略：NONE, FIRST_THREE 等
 }

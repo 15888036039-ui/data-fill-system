@@ -777,6 +777,9 @@ public class DynamicTableDdlService {
         if (incoming.getAllowDelete() != null) {
             exist.setAllowDelete(incoming.getAllowDelete());
         }
+        if (incoming.getAllowExport() != null) {
+            exist.setAllowExport(incoming.getAllowExport());
+        }
 
         // 重新计算截止时间（如果是循环模式）
         schedulerService.initOrRefreshDeadline(exist, now);

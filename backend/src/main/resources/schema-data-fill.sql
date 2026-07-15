@@ -40,8 +40,8 @@ CREATE TABLE IF NOT EXISTS data_fill_form (
     update_dt_column VARCHAR(100),
     delete_flag_column VARCHAR(100),
     allow_add       BOOLEAN DEFAULT TRUE,
-    allow_edit      BOOLEAN DEFAULT TRUE,
     allow_delete    BOOLEAN DEFAULT TRUE,
+    allow_export    BOOLEAN DEFAULT TRUE,
     default_filter_policy VARCHAR(50) DEFAULT 'FIRST_THREE',
     UNIQUE (schema_name, table_name)
 );
@@ -145,6 +145,9 @@ ALTER TABLE data_fill_form
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS allow_delete BOOLEAN DEFAULT TRUE;
+
+ALTER TABLE data_fill_form
+    ADD COLUMN IF NOT EXISTS allow_export BOOLEAN DEFAULT TRUE;
 
 ALTER TABLE data_fill_form
     ADD COLUMN IF NOT EXISTS default_filter_policy VARCHAR(50) DEFAULT 'FIRST_THREE';

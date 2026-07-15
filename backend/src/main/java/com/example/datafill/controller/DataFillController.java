@@ -440,6 +440,34 @@ public class DataFillController {
         excelService.exportTemplate(formId, response.getOutputStream());
     }
 
+    @PostMapping("/data/{formId}/export")
+    public void exportData(
+            @PathVariable String formId,
+            @RequestParam(required = false) String userEmail,
+            @RequestBody(required = false) Map<String, String> filters,
+            HttpServletResponse response) throws IOException {
+        DataFillForm form = formMapper.selectById(formId);
+        if (form == null) {
+            response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+            return;
+        }
+
+        String fileName = (form.getName() != null ? form.getName() : form.getTableName()) + "_数据导出.xlsx";
+        String encodedFileName = URLEncoder.encode(fileName, "UTF-8");
+
+        response.setContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encodedFileName);
+
+        boolean isAdmin = isUserAdmin(userEmail);
+        if (!isAdmin && Boolean.FALSE.equals(form.getAllowExport())) {
+            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+            return;
+        }
+        excelService.exportData(formId, filters, userEmail, isAdmin, response.getOutputStream());
+        
+        recordLog(formId, userEmail, "EXPORT", "导出了筛选后的数据记录");
+    }
+
     /**
      * 上传 Excel，将数据批量写入动态物理表
      */
