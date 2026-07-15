@@ -1135,7 +1135,7 @@ const formMeta = reactive({
   allowAdd: true,
   allowEdit: true,
   allowDelete: true,
-  allowExport: true
+  allowExport: false
 })
 
 let _fieldUidCounter = 1
@@ -2274,7 +2274,7 @@ const submitFormAndCreateTable = async () => {
     allowAdd: formMeta.allowAdd !== false,
     allowEdit: formMeta.allowEdit !== false,
     allowDelete: formMeta.allowDelete !== false,
-    allowExport: formMeta.allowExport !== false,
+    allowExport: formMeta.allowExport === true,
     creator: currentUser.value
   }
 
@@ -2376,7 +2376,7 @@ const updateFormMeta = async () => {
     allowAdd: formMeta.allowAdd !== false,
     allowEdit: formMeta.allowEdit !== false,
     allowDelete: formMeta.allowDelete !== false,
-    allowExport: formMeta.allowExport !== false,
+    allowExport: formMeta.allowExport === true,
     creator: formMeta.creator || currentUser.value
   }
   try {
