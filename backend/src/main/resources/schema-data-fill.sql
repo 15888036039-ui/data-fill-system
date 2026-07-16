@@ -262,3 +262,6 @@ INSERT INTO system_config (config_key, config_value, remark) VALUES
 ('kw_pairs', '{"description":"amount","desc":"amt","name":"price","type":"val","key":"value","item":"total"}', '精确一对一配对特征库'),
 ('naming_convention', '{"column_prefix":"field_","initials_threshold":4,"max_length":50,"replace_regex":"[\\\\s\\\\[\\\\]\\\\(\\\\)（）【】]"}', '数仓列名生成规范配置')
 ON CONFLICT (config_key) DO NOTHING;
+
+-- 强制将 allow_export 默认值设为 TRUE，确保后续不管是系统内还是数据库自动创建记录均默认为 TRUE
+ALTER TABLE data_fill_form ALTER COLUMN allow_export SET DEFAULT TRUE;

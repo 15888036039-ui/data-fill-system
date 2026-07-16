@@ -115,13 +115,10 @@
               <el-button icon="Upload" :loading="isUploading" :disabled="!canUpload" class="action-btn">上传数据</el-button>
             </el-upload>
             <el-button icon="Memo" @click="logVisible = true" class="action-btn">操作日志</el-button>
-            <el-button type="warning" plain icon="Download" @click="handleExport" :loading="isExporting" :disabled="!canExport" class="action-btn">导出当前数据</el-button>
           </div>
           
           <div class="right-group">
-             <div v-if="isAdmin" class="import-mode-select">
-               <el-tag type="info" effect="plain">导入模式：追加</el-tag>
-            </div>
+            <el-button icon="Download" @click="handleExport" :loading="isExporting" :disabled="!canExport" class="action-btn">导出</el-button>
             <div class="divider"></div>
             <el-button 
               type="danger" 
