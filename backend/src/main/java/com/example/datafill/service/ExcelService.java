@@ -1245,7 +1245,7 @@ public class ExcelService {
                             }
                         }
 
-                        if (kvStr != null && !kvStr.isEmpty() && vvObj != null && !"".equals(vvObj)) {
+                        if (kvStr != null && !kvStr.isEmpty() && vvObj != null && !isBlankValue(vvObj)) {
                             Map<String, Object> extraMap = dynamicExtras.computeIfAbsent(pc.targetJsonCol(), k -> new LinkedHashMap<>());
                             extraMap.put(kvStr, mergeValues(extraMap.get(kvStr), vvObj));
                             consumed.add(pc.fk());
@@ -1311,7 +1311,7 @@ public class ExcelService {
                             }
                         }
 
-                        if (val != null && !"".equals(val)) {
+                        if (val != null && !isBlankValue(val)) {
                             empty = false;
                             String dbCol = cachedDbCols[c];
                             if (dbCol != null) {
