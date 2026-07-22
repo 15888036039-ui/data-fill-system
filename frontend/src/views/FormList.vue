@@ -181,10 +181,10 @@
               <template #default="scope">
                 <div class="action-cell">
                   <el-tooltip content="查看/填写数据" placement="top">
-                    <el-button circle size="small" type="primary" plain icon="List" @click="$router.push(`/fill/${scope.row.id}?admin=true` + (selectedFolderId ? `&folderId=${selectedFolderId}` : ''))" />
+                    <el-button circle size="small" type="primary" plain icon="List" @click="$router.push({ path: `/fill/${scope.row.id}`, query: { admin: 'true', ...$route.query } })" />
                   </el-tooltip>
                   <el-tooltip v-if="isAdmin" content="设计模板" placement="top">
-                    <el-button circle size="small" type="success" plain icon="Edit" @click="$router.push(`/designer/${scope.row.id}`)" />
+                    <el-button circle size="small" type="success" plain icon="Edit" @click="$router.push({ path: `/designer/${scope.row.id}`, query: $route.query })" />
                   </el-tooltip>
                   
                   <el-dropdown v-if="isAdmin" trigger="click">
@@ -428,14 +428,29 @@ const allTemplateCount = computed(() => {
   return folderTree.value.reduce((sum, node) => sum + (node.templateCount || 0), 0)
 })
 
-const updateRouteFolder = async (folderId) => {
+const updateQueryParams = async (overrideFolderId) => {
   const query = { ...route.query }
-  if (folderId) {
-    query.folderId = folderId
+  const folderIdToUse = overrideFolderId !== undefined ? overrideFolderId : selectedFolderId.value
+  if (folderIdToUse) {
+    query.folderId = folderIdToUse
   } else {
     delete query.folderId
   }
+  if (appliedSearchQuery.value) {
+    query.search = appliedSearchQuery.value
+  } else {
+    delete query.search
+  }
+  if (appliedStatusFilter.value) {
+    query.status = appliedStatusFilter.value
+  } else {
+    delete query.status
+  }
   await router.replace({ query })
+}
+
+const updateRouteFolder = async (folderId) => {
+  await updateQueryParams(folderId)
 }
 
 const findFolderIdByPath = (segments) => {
@@ -471,10 +486,8 @@ const resetFilter = async () => {
   appliedSearchQuery.value = ''
   appliedStatusFilter.value = ''
   currentPage.value = 1
-  if (selectedFolderId.value) {
-    selectedFolderId.value = ''
-    await updateRouteFolder('')
-  }
+  selectedFolderId.value = ''
+  await updateQueryParams('')
   await loadForms()
 }
 
@@ -482,6 +495,7 @@ const handleFilter = async () => {
   appliedSearchQuery.value = searchQuery.value
   appliedStatusFilter.value = statusFilter.value
   currentPage.value = 1
+  await updateQueryParams()
   await loadForms()
 }
 
@@ -759,6 +773,14 @@ const confirmDeleteForm = async () => {
 onMounted(async () => {
   document.addEventListener('click', hideContextMenu)
   selectedFolderId.value = route.query.folderId || ''
+  if (route.query.search) {
+    searchQuery.value = route.query.search
+    appliedSearchQuery.value = route.query.search
+  }
+  if (route.query.status) {
+    statusFilter.value = route.query.status
+    appliedStatusFilter.value = route.query.status
+  }
   await Promise.all([loadFolders(), loadForms()])
 })
 

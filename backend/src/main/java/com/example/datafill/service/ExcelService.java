@@ -560,8 +560,15 @@ public class ExcelService {
                 // 如果是新追加的字段，则显示其中文名（display）
                 headerCell.setCellValue(display);
 
-                // 自适应列宽
-                sheet.autoSizeColumn(colIndex);
+                // 动态设置列宽，确保中文表头展示宽敞美观
+                int charLen = 0;
+                if (display != null) {
+                    for (char ch : display.toCharArray()) {
+                        charLen += (ch > 127) ? 2 : 1;
+                    }
+                }
+                int colWidth = Math.max(16 * 256, (charLen + 6) * 256);
+                sheet.setColumnWidth(colIndex, Math.min(255 * 256, colWidth));
                 colIndex++;
             }
 
@@ -807,14 +814,20 @@ public class ExcelService {
             if (f.getColumnName() != null) {
                 String columnName = f.getColumnName().trim();
                 headerMap.put(columnName, f.getColumnName());
-                normalizedHeaderMap.putIfAbsent(normalizeHeaderKey(columnName), f.getColumnName());
+                String normCol = normalizeHeaderKey(columnName);
+                if (normCol != null && !normCol.isEmpty()) {
+                    normalizedHeaderMap.putIfAbsent(normCol, f.getColumnName());
+                }
                 fieldColumnNames.add(columnName.toLowerCase());
             }
             if (f.getName() != null) {
                 String displayName = f.getName().trim();
                 headerMap.put(displayName, f.getColumnName());
                 headerMap.put(f.getName().replaceAll("[\\r\\n]+", "").trim(), f.getColumnName());
-                normalizedHeaderMap.putIfAbsent(normalizeHeaderKey(displayName), f.getColumnName());
+                String normName = normalizeHeaderKey(displayName);
+                if (normName != null && !normName.isEmpty()) {
+                    normalizedHeaderMap.putIfAbsent(normName, f.getColumnName());
+                }
             }
         }
 
@@ -876,7 +889,10 @@ public class ExcelService {
                         }
                         headerMap.put(excelHeader, columnName);
                         headerMap.put(excelHeader.replaceAll("[\\r\\n]+", "").trim(), columnName);
-                        normalizedHeaderMap.putIfAbsent(normalizeHeaderKey(excelHeader), columnName);
+                        String normExcel = normalizeHeaderKey(excelHeader);
+                        if (normExcel != null && !normExcel.isEmpty()) {
+                            normalizedHeaderMap.putIfAbsent(normExcel, columnName);
+                        }
                         referenceHeaderMappings.add(new com.example.datafill.dto.ReferenceFieldMapping(null,
                                 excelHeader, columnName, jsonMapped));
                     }
@@ -1048,6 +1064,45 @@ public class ExcelService {
                         .collect(java.util.stream.Collectors.toList());
                 log.warn("参考模板导入存在未映射表头, formId={}, unresolvedCount={}, samples={}",
                         formId, unresolvedHeaders.size(), unresolvedSamples);
+            }
+
+            // --- 强校验：比对 Excel 导入模板的表头与当前填报模板定义的字段 ---
+            java.util.Set<String> allowedSystemHeaders = new java.util.HashSet<>(java.util.Arrays.asList(
+                "id", "w_insert_dt", "w_update_dt", "load_user", "delete_flag", 
+                "create_time", "update_time", "creator", "pk"
+            ));
+            java.util.List<String> invalidHeaders = new java.util.ArrayList<>();
+            int matchedBusinessCols = 0;
+            for (int c = 0; c < lastCol; c++) {
+                String header = headers[c];
+                if (header == null || header.trim().isEmpty()) {
+                    continue;
+                }
+                String dbCol = cachedDbCols[c];
+                if (dbCol == null) {
+                    String cleanHeader = header.trim().toLowerCase();
+                    String normHeader = normalizeHeaderKey(header);
+                    boolean isDefinedInForm = (normHeader != null && !normHeader.isEmpty() && normalizedHeaderMap.containsKey(normHeader))
+                            || headerMap.containsKey(header.trim())
+                            || fieldColumnNames.contains(cleanHeader)
+                            || allowedSystemHeaders.contains(cleanHeader)
+                            || importSystemColumns.contains(cleanHeader);
+                    if (!isDefinedInForm) {
+                        invalidHeaders.add(header.trim());
+                    }
+                } else {
+                    String lowerDbCol = dbCol.toLowerCase();
+                    if (!allowedSystemHeaders.contains(lowerDbCol) && !importSystemColumns.contains(lowerDbCol)) {
+                        matchedBusinessCols++;
+                    }
+                }
+            }
+
+            if (!invalidHeaders.isEmpty()) {
+                throw new RuntimeException("导入模板与系统填报模板不一致！Excel中包含未定义的表头: " + invalidHeaders);
+            }
+            if (matchedBusinessCols == 0) {
+                throw new RuntimeException("导入模板不正确！上传的 Excel 未包含当前填报模板定义的任何业务字段，请检查是否上传了正确的 Excel 文件。");
             }
 
             class KVPairConfig {
@@ -2793,15 +2848,16 @@ public class ExcelService {
         if (value == null) {
             return "";
         }
-        // 统一兼容：
-        // Billing Source / billing_source / billingSource / BILLING-SOURCE ->
-        // billingsource
+        // 统一全半角符号与格式兼容：全角括号（）-> 半角()，全角冒号：-> 半角:
         String normalized = value
+                .replace("（", "(")
+                .replace("）", ")")
+                .replace("：", ":")
                 .replaceAll("([a-z0-9])([A-Z])", "$1_$2")
                 .replaceAll("[\\r\\n]+", " ")
                 .trim()
                 .toLowerCase();
-        return normalized.replaceAll("[^a-z0-9]", "");
+        return normalized.replaceAll("[^a-z0-9\\u4e00-\\u9fa5]", "");
     }
 
     private boolean isBlankValue(Object value) {

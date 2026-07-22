@@ -1463,11 +1463,14 @@ public class DynamicDataDmlService {
         sql.append(where).append(" ORDER BY \"").append(physicalCol).append("\" ASC");
 
         try {
-            List<String> list = jdbcTemplate.queryForList(sql.toString(), String.class, args.toArray());
+            List<Object> list = jdbcTemplate.queryForList(sql.toString(), Object.class, args.toArray());
             List<String> result = new ArrayList<>();
-            for (String val : list) {
-                if (val != null && !val.trim().isEmpty()) {
-                    result.add(val.trim());
+            for (Object val : list) {
+                if (val != null) {
+                    String strVal = String.valueOf(val).trim();
+                    if (!strVal.isEmpty()) {
+                        result.add(strVal);
+                    }
                 }
             }
             return result;

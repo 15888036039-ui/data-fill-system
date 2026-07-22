@@ -1,7 +1,7 @@
 <template>
   <div class="data-fill-page">
     <div class="header-nav flat-header">
-      <el-page-header @back="isAdmin ? $router.push('/forms' + ($route.query.folderId ? '?folderId=' + $route.query.folderId : '')) : $router.push('/tasks' + ($route.query.folderId ? '?folderId=' + $route.query.folderId : ''))">
+      <el-page-header @back="isAdmin ? $router.push({ path: '/forms', query: $route.query }) : $router.push({ path: '/tasks', query: $route.query })">
         <template #content>
           <div class="header-content-box">
             <span class="nav-form-name">{{ formMeta?.name }}</span>
@@ -118,7 +118,7 @@
           </div>
           
           <div class="right-group">
-            <el-button icon="Download" @click="handleExport" :loading="isExporting" :disabled="!canExport" class="action-btn">导出</el-button>
+            <el-button icon="Download" link @click="handleExport" :loading="isExporting" :disabled="!canExport" class="action-btn">导出</el-button>
             <div class="divider"></div>
             <el-button 
               type="danger" 
@@ -595,10 +595,16 @@ const loadDynamicFilterOptions = async () => {
               userEmail: userEmail.value
             }
           })
-          dynamicFilterOptions.value[f.columnName] = res.data || []
+          dynamicFilterOptions.value = {
+            ...dynamicFilterOptions.value,
+            [f.columnName]: res.data || []
+          }
         } else {
           const res = await axios.get(`/api/fill/data/${formId}/distinct/${f.columnName}?userEmail=${userEmail.value}&isAdmin=${isAdmin.value}`)
-          dynamicFilterOptions.value[f.columnName] = res.data || []
+          dynamicFilterOptions.value = {
+            ...dynamicFilterOptions.value,
+            [f.columnName]: res.data || []
+          }
         }
       } catch (err) {
         console.warn(`Failed to fetch dynamic filter options for column: ${f.columnName}`, err)

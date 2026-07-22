@@ -3,7 +3,7 @@
     <div class="page-header sticky-header">
       <div class="header-info">
         <div class="header-breadcrumb">
-          <span class="breadcrumb-item" @click="$router.push('/forms')">模板管理</span>
+          <span class="breadcrumb-item" @click="$router.push({ path: '/forms', query: $route.query })">模板管理</span>
           <el-icon><ArrowRight /></el-icon>
           <span class="breadcrumb-current">{{ isEditMode ? '编辑填报模板' : '创建新模板' }}</span>
         </div>
@@ -12,7 +12,7 @@
         </h1>
       </div>
       <div class="header-actions">
-        <el-button @click="$router.push('/forms')" class="btn-cancel">取消并返回</el-button>
+        <el-button @click="$router.push({ path: '/forms', query: $route.query })" class="btn-cancel">取消并返回</el-button>
         <el-button v-if="!isEditMode" type="primary" icon="Platform" @click="submitFormAndCreateTable">{{ bindExistingTableMode ? '确认绑定并发布' : '创建并发布模板' }}</el-button>
         <el-button v-else type="primary" icon="Check" @click="updateFormMeta">完成并保存</el-button>
       </div>
@@ -2282,7 +2282,7 @@ const submitFormAndCreateTable = async () => {
     const url = bindExistingTableMode.value ? '/api/fill/forms/bindExistingTable' : '/api/fill/forms/createTable'
     await axios.post(url, payload, { params: { userEmail: currentUser.value } })
     ElMessage.success(bindExistingTableMode.value ? '绑定发布成功！' : '发布成功！')
-    router.push('/forms')
+    router.push({ path: '/forms', query: route.query })
   } catch (error) {
     ElMessage.error(error.response?.data?.message || '发布失败')
   }
@@ -2382,7 +2382,7 @@ const updateFormMeta = async () => {
   try {
     await axios.put(`/api/fill/forms/${id}`, payload, { params: { userEmail: formMeta.creator || currentUser.value } })
     ElMessage.success('修改成功')
-    router.push('/forms')
+    router.push({ path: '/forms', query: route.query })
   } catch (e) {
     ElMessage.error(e.response?.data?.message || '保存失败')
   }
