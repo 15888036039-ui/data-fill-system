@@ -2044,13 +2044,32 @@ const isSystemManagedField = (field) => {
 
 const ensureSystemFields = (fieldsArray) => {
   if (!fieldsArray) return
+
+  // 检查当前物理表/表单是否有自己的业务主键
+  const hasCustomPk = fieldsArray.some(f => 
+    f.isPk || 
+    f.pk || 
+    ((f.columnName || '').toLowerCase() === (formMeta.pkColumn || '').toLowerCase() && (f.columnName || '').toLowerCase() !== 'id') ||
+    ((f.columnName || '').toLowerCase().endsWith('_id') && (f.columnName || '').toLowerCase() !== 'id')
+  )
+
+  // 如果已经有了非 id 的业务主键，则彻底清理掉之前误追加的假 id 字段
+  if (hasCustomPk) {
+    const bogusIdIdx = fieldsArray.findIndex(f => (f.columnName || '').toLowerCase() === 'id' && !f.isPk && !f.pk)
+    if (bogusIdIdx !== -1) {
+      fieldsArray.splice(bogusIdIdx, 1)
+    }
+  }
+
   const systemFields = [
-    { name: 'ID', columnName: 'id', dbType: 'INTEGER', type: 'int', systemLocked: true, required: true, hideInForm: true, hideInList: true },
+    // 只有在完全没有其他业务主键时，才补充默认的 ID 系统列
+    ...(!hasCustomPk ? [{ name: 'ID', columnName: 'id', dbType: 'INTEGER', type: 'int', systemLocked: true, required: true, hideInForm: true, hideInList: true }] : []),
     { name: '创建时间', columnName: 'w_insert_dt', dbType: 'TIMESTAMP', type: 'datetime', systemLocked: true, required: false, hideInForm: true, hideInList: true },
     { name: '更新时间', columnName: 'w_update_dt', dbType: 'TIMESTAMP', type: 'datetime', systemLocked: true, required: false, hideInForm: true, hideInList: true },
     { name: '导入用户', columnName: 'load_user', dbType: 'VARCHAR(100)', type: 'input', systemLocked: true, required: false, hideInForm: true, hideInList: true },
     { name: '删除标记', columnName: 'delete_flag', dbType: 'BOOLEAN', type: 'boolean', systemLocked: true, required: true, hideInForm: true, hideInList: true }
   ]
+
   systemFields.forEach(sf => {
     if (!fieldsArray.some(f => (f.columnName || '').toLowerCase() === sf.columnName.toLowerCase())) {
       fieldsArray.push({
@@ -2066,8 +2085,8 @@ const ensureSystemFields = (fieldsArray) => {
     }
   })
   
-  // 确保 ID 放在第一行
-  const idIdx = fieldsArray.findIndex(f => (f.columnName || '').toLowerCase() === 'id')
+  // 确保主键或 ID 放在第一行
+  const idIdx = fieldsArray.findIndex(f => (f.columnName || '').toLowerCase() === 'id' || f.isPk || f.pk)
   if (idIdx > 0) {
     const idField = fieldsArray.splice(idIdx, 1)[0]
     fieldsArray.unshift(idField)

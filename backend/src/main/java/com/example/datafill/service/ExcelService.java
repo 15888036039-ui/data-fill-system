@@ -1512,7 +1512,7 @@ public class ExcelService {
                         }
                     }
 
-                    writeRowToStaging(writer, rowData, fields, pk, shouldExcludePk, hasPkCol, creator, row.getRowNum() + 1);
+                    writeRowToStaging(writer, rowData, fields, pk, shouldExcludePk, hasPkCol, creator, row.getRowNum() + 1, physicalColumns);
                     totalCount++;
                     if (validationErrors.size() >= maxErrorsToCollect) {
                         break;
@@ -3438,13 +3438,16 @@ public class ExcelService {
         }
     }
 
-    private void writeRowToStaging(java.io.BufferedWriter writer, Map<String, Object> rowData, List<FieldDef> fields, String pk, boolean isNumericPk, boolean hasPkCol, String creator, int rowNum) throws java.io.IOException {
+    private void writeRowToStaging(java.io.BufferedWriter writer, Map<String, Object> rowData, List<FieldDef> fields, String pk, boolean isNumericPk, boolean hasPkCol, String creator, int rowNum, java.util.Map<String, String> physicalColumns) throws java.io.IOException {
         StringBuilder sb = new StringBuilder();
         boolean first = true;
         for (FieldDef f : fields) {
             String colName = f.getColumnName();
             if (colName == null || colName.trim().isEmpty()) continue;
             
+            // 物理列过滤：如果物理数据库表中不存在该列（如被误塞入的假 id 字段），绝对不写入
+            if (physicalColumns != null && !physicalColumns.containsKey(colName.toLowerCase())) continue;
+
             // 如果是自增数字主键，则不写入，由数据库生成
             if (hasPkCol && isNumericPk && colName.equalsIgnoreCase(pk)) continue;
 
@@ -3505,10 +3508,14 @@ public class ExcelService {
         String tableName = schema + "." + form.getTableName();
         String quotedTableName = com.example.datafill.util.SqlUtil.quoteTable(tableName);
 
+        java.util.Map<String, String> physicalColumns = dataDmlService.loadPhysicalColumns(schema, form.getTableName());
+
         List<String> cols = new ArrayList<>();
         for (FieldDef f : fields) {
             String colName = f.getColumnName();
             if (colName != null && !colName.trim().isEmpty()) {
+                // 物理列过滤：如果物理数据库表中不存在该列（如被误塞入的假 id 字段），绝对不加入 COPY 列名中
+                if (physicalColumns != null && !physicalColumns.containsKey(colName.toLowerCase())) continue;
                 // 如果是自增数字主键，则不加入 COPY 列名列表
                 if (hasPkCol && isNumericPk && colName.equalsIgnoreCase(pk)) continue;
                 cols.add("\"" + colName + "\"");
